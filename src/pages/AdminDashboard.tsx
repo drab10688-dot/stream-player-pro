@@ -2,13 +2,14 @@ import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAdminAuth } from '@/contexts/AdminAuthContext';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Tv, Users, Megaphone, Store, LogOut, LayoutDashboard } from 'lucide-react';
+import { Tv, Users, Megaphone, Store, LogOut, LayoutDashboard, Bell } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import AdminStats from '@/components/admin/AdminStats';
 import ChannelsManager from '@/components/admin/ChannelsManager';
 import ClientsManager from '@/components/admin/ClientsManager';
 import AdsManager from '@/components/admin/AdsManager';
 import ResellersManager from '@/components/admin/ResellersManager';
+import ExpirationAlerts from '@/components/admin/ExpirationAlerts';
 import omnisyncLogo from '@/assets/omnisync-logo.png';
 
 const AdminDashboard = () => {
@@ -73,6 +74,9 @@ const AdminDashboard = () => {
             <TabsTrigger value="ads" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
               <Megaphone className="w-4 h-4" /> Publicidad
             </TabsTrigger>
+            <TabsTrigger value="alerts" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
+              <Bell className="w-4 h-4" /> Alertas
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="dashboard"><AdminStats /></TabsContent>
@@ -80,6 +84,7 @@ const AdminDashboard = () => {
           <TabsContent value="clients"><ClientsManager /></TabsContent>
           <TabsContent value="resellers"><ResellersManager /></TabsContent>
           <TabsContent value="ads"><AdsManager /></TabsContent>
+          <TabsContent value="alerts"><ExpirationAlerts /></TabsContent>
         </Tabs>
       </main>
     </div>
