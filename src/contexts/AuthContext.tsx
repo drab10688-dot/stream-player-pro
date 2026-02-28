@@ -80,12 +80,16 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           body: { action: 'login', username, password, device_id: getDeviceId() }
         });
 
+        console.log('client-auth result:', JSON.stringify(result.data), 'error:', result.error);
+
         if (result.error) {
-          return { success: false, error: 'Error de conexión' };
+          // Check if the error response contains data with an error message
+          const errMsg = (result.error as any)?.message || 'Error de conexión';
+          return { success: false, error: errMsg };
         }
         data = result.data;
-        if (data.error) {
-          return { success: false, error: data.error };
+        if (!data || data.error) {
+          return { success: false, error: data?.error || 'Respuesta inválida del servidor' };
         }
       }
 
