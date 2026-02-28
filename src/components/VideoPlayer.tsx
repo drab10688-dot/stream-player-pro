@@ -24,11 +24,9 @@ const getYouTubeId = (url: string): string | null => {
 const detectStreamType = (url: string): 'hls' | 'ts' | 'youtube' | 'native' => {
   if (getYouTubeId(url)) return 'youtube';
   if (/\.m3u8?(\?|$)/i.test(url)) return 'hls';
-  // Restream proxy with ?type=hls query param
-  if (/[?&]type=hls/.test(url)) return 'hls';
+  // All /api/restream/ URLs now serve HLS (FFmpeg converts TS→HLS on server)
+  if (/\/api\/restream\//.test(url)) return 'hls';
   if (/\.ts(\?|$)/i.test(url) || /\/\d+\.ts/.test(url)) return 'ts';
-  // Restream proxy URLs are raw MPEG-TS streams by default
-  if (/\/api\/restream\//.test(url)) return 'ts';
   return 'native';
 };
 

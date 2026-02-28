@@ -197,11 +197,10 @@ app.get('/api/channels/public', async (req, res) => {
   const { rows } = await pool.query(
     'SELECT id, name, url, category, logo_url, sort_order FROM channels WHERE is_active = true ORDER BY sort_order'
   );
-  // YouTube mantiene URL, HLS marca tipo, TS oculta URL
+  // YouTube mantiene URL original, el resto se oculta (acceso vía /api/restream)
   const safe = rows.map(ch => {
     const isYouTube = /youtube\.com|youtu\.be/.test(ch.url);
-    const isHLS = /\.m3u8?(\?|$)/i.test(ch.url);
-    return { ...ch, url: isYouTube ? ch.url : null, is_hls: isHLS };
+    return { ...ch, url: isYouTube ? ch.url : null };
   });
   res.json(safe);
 });
@@ -460,15 +459,13 @@ app.post('/api/client/login', async (req, res) => {
       pool.query('SELECT id, title, message, image_url FROM ads WHERE is_active = true')
     ]);
 
-    // RESTREAMING: Convertir URLs a rutas de proxy dinámico
-    // YouTube mantiene su URL original (el reproductor lo maneja con iframe)
-    // HLS agrega ?type=hls para que el reproductor lo detecte
+    // RESTREAMING: Todo pasa por HLS unificado
+    // YouTube mantiene su URL original (iframe), todo lo demás es HLS via restream
     const safeChannels = channelsRes.rows.map(ch => {
       const isYouTube = /youtube\.com|youtu\.be/.test(ch.url);
-      const isHLS = /\.m3u8?(\?|$)/i.test(ch.url);
       return {
         ...ch,
-        url: isYouTube ? ch.url : `/api/restream/${ch.id}${isHLS ? '?type=hls' : ''}`,
+        url: isYouTube ? ch.url : `/api/restream/${ch.id}`,
       };
     });
 
@@ -514,92 +511,201 @@ app.get('/api/validate-stream', async (req, res) => {
 });
 
 // =============================================
-// SISTEMA DE CACHÉ DE STREAMS
-// Una sola conexión al origen sirve a múltiples clientes
-// Caché de segmentos TS y manifiestos M3U8
-// Limpieza automática a medianoche
+// SISTEMA DE RESTREAMING UNIFICADO CON FFMPEG
+// Todos los streams (TS, HLS) se convierten a HLS local
+// UNA sola conexión al origen por canal
+// FFmpeg transcodifica TS → HLS con segmentos en disco
+// HLS nativo se proxea con caché de segmentos
 // =============================================
-const streamCache = new Map(); // channelId -> { data, contentType, timestamp, clients, sourceReq }
-const CACHE_DIR = '/tmp/streambox-cache';
+const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-// Crear directorio de caché si no existe
-if (!fs.existsSync(CACHE_DIR)) {
-  fs.mkdirSync(CACHE_DIR, { recursive: true });
+const HLS_DIR = '/tmp/streambox-hls';
+const activeTranscoders = new Map(); // channelId -> { ffmpeg, clients, lastAccess, type }
+
+// Crear directorio base
+if (!fs.existsSync(HLS_DIR)) {
+  fs.mkdirSync(HLS_DIR, { recursive: true });
 }
 
-// Limpieza automática a medianoche
-const scheduleCacheCleanup = () => {
-  const now = new Date();
-  const midnight = new Date(now);
-  midnight.setDate(midnight.getDate() + 1);
-  midnight.setHours(0, 0, 0, 0);
-  const msUntilMidnight = midnight.getTime() - now.getTime();
+// Limpiar directorio de un canal
+function cleanChannelDir(channelId) {
+  const dir = path.join(HLS_DIR, channelId);
+  if (fs.existsSync(dir)) {
+    try {
+      fs.readdirSync(dir).forEach(f => fs.unlinkSync(path.join(dir, f)));
+      fs.rmdirSync(dir);
+    } catch {}
+  }
+}
 
-  setTimeout(() => {
-    console.log('🧹 Limpieza de caché de streams a medianoche...');
-    // Limpiar caché en memoria
-    streamCache.forEach((entry, key) => {
-      if (entry.sourceReq) entry.sourceReq.destroy();
-      streamCache.delete(key);
-    });
-    // Limpiar archivos de caché
-    if (fs.existsSync(CACHE_DIR)) {
-      const files = fs.readdirSync(CACHE_DIR);
-      files.forEach(file => {
-        try { fs.unlinkSync(path.join(CACHE_DIR, file)); } catch {}
-      });
-    }
-    console.log(`✅ Caché limpiado: ${streamCache.size} entradas en memoria, ${fs.readdirSync(CACHE_DIR).length} archivos`);
-    // Programar siguiente limpieza
-    scheduleCacheCleanup();
-  }, msUntilMidnight);
+// =============================================
+// TRANSCODIFICADOR TS → HLS con FFmpeg
+// =============================================
+function startFFmpegTranscoder(channelId, sourceUrl) {
+  if (activeTranscoders.has(channelId)) {
+    const existing = activeTranscoders.get(channelId);
+    existing.clients++;
+    existing.lastAccess = Date.now();
+    return existing;
+  }
 
-  console.log(`⏰ Próxima limpieza de caché: ${midnight.toLocaleString()} (en ${Math.round(msUntilMidnight / 60000)} min)`);
-};
-scheduleCacheCleanup();
+  const channelDir = path.join(HLS_DIR, channelId);
+  if (!fs.existsSync(channelDir)) {
+    fs.mkdirSync(channelDir, { recursive: true });
+  }
 
-// Limpiar entradas de caché sin clientes activos (cada 5 min)
-setInterval(() => {
-  const now = Date.now();
-  streamCache.forEach((entry, key) => {
-    // Si han pasado más de 5 min sin clientes, eliminar
-    if (entry.clients === 0 && now - entry.timestamp > 5 * 60 * 1000) {
-      if (entry.sourceReq) entry.sourceReq.destroy();
-      streamCache.delete(key);
+  const manifestPath = path.join(channelDir, 'stream.m3u8');
+
+  console.log(`🎬 [${channelId}] Iniciando FFmpeg: ${sourceUrl}`);
+
+  const ffmpeg = spawn('ffmpeg', [
+    '-reconnect', '1',
+    '-reconnect_streamed', '1',
+    '-reconnect_delay_max', '10',
+    '-i', sourceUrl,
+    '-c:v', 'copy',          // No re-encodear video (solo re-empaquetar)
+    '-c:a', 'aac',           // Audio a AAC para compatibilidad HLS
+    '-b:a', '128k',
+    '-f', 'hls',
+    '-hls_time', '4',        // Segmentos de 4 segundos
+    '-hls_list_size', '10',  // Mantener últimos 10 segmentos en el manifiesto
+    '-hls_flags', 'delete_segments+append_list', // Borrar segmentos viejos automáticamente
+    '-hls_segment_filename', path.join(channelDir, 'seg_%05d.ts'),
+    '-hls_allow_cache', '1',
+    manifestPath,
+  ], {
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+
+  const entry = {
+    ffmpeg,
+    clients: 1,
+    lastAccess: Date.now(),
+    type: 'ffmpeg',
+    channelDir,
+    manifestPath,
+    ready: false,
+    retryCount: 0,
+    maxRetries: 5,
+  };
+  activeTranscoders.set(channelId, entry);
+
+  // Monitorear salida de FFmpeg
+  ffmpeg.stderr.on('data', (data) => {
+    const msg = data.toString();
+    // Detectar cuando el primer segmento está listo
+    if (!entry.ready && (msg.includes('Opening') || msg.includes('muxing'))) {
+      entry.ready = true;
+      console.log(`✅ [${channelId}] FFmpeg listo, generando segmentos HLS`);
     }
   });
-}, 5 * 60 * 1000);
 
-// Caché de segmentos TS de HLS (para compartir entre clientes)
+  ffmpeg.on('error', (err) => {
+    console.error(`❌ [${channelId}] FFmpeg error:`, err.message);
+  });
+
+  ffmpeg.on('close', (code) => {
+    console.log(`⚠️ [${channelId}] FFmpeg terminó (code: ${code})`);
+    activeTranscoders.delete(channelId);
+
+    // Reconectar si hay clientes
+    if (entry.clients > 0 && entry.retryCount < entry.maxRetries) {
+      entry.retryCount++;
+      const delay = Math.min(2000 * entry.retryCount, 15000);
+      console.log(`🔄 [${channelId}] Reiniciando FFmpeg en ${delay}ms (intento ${entry.retryCount}/${entry.maxRetries})`);
+      setTimeout(() => {
+        cleanChannelDir(channelId);
+        startFFmpegTranscoder(channelId, sourceUrl);
+        // Restaurar count de clientes
+        const newEntry = activeTranscoders.get(channelId);
+        if (newEntry) newEntry.clients = entry.clients;
+      }, delay);
+    } else {
+      cleanChannelDir(channelId);
+    }
+  });
+
+  return entry;
+}
+
+// Detener transcodificador cuando no hay clientes
+function releaseTranscoder(channelId) {
+  const entry = activeTranscoders.get(channelId);
+  if (!entry) return;
+
+  entry.clients--;
+  if (entry.clients <= 0) {
+    // Esperar 30 segundos antes de matar, por si alguien vuelve
+    setTimeout(() => {
+      const current = activeTranscoders.get(channelId);
+      if (current && current.clients <= 0) {
+        console.log(`🔴 [${channelId}] Sin clientes, deteniendo FFmpeg`);
+        if (current.type === 'ffmpeg' && current.ffmpeg) {
+          current.ffmpeg.kill('SIGTERM');
+        }
+        activeTranscoders.delete(channelId);
+        cleanChannelDir(channelId);
+      }
+    }, 30000);
+  }
+}
+
+// =============================================
+// PROXY HLS NATIVO (para canales que ya son m3u8)
+// Caché de manifiestos y segmentos compartido
+// =============================================
+const streamCache = new Map(); // cacheKey -> { data, timestamp }
 const segmentCache = new Map(); // url -> { data: Buffer, timestamp }
-const SEGMENT_CACHE_TTL = 15000; // 15 segundos (segmentos HLS suelen durar 2-10s)
+const SEGMENT_CACHE_TTL = 15000;
+const pendingSegments = new Map();
 
 // Limpiar segmentos viejos cada 30s
 setInterval(() => {
   const now = Date.now();
   segmentCache.forEach((entry, key) => {
-    if (now - entry.timestamp > SEGMENT_CACHE_TTL) {
-      segmentCache.delete(key);
-    }
+    if (now - entry.timestamp > SEGMENT_CACHE_TTL) segmentCache.delete(key);
   });
 }, 30000);
 
-// Función para obtener un m3u8 cacheado o descargarlo
+// Limpiar manifiestos viejos cada 5min
+setInterval(() => {
+  const now = Date.now();
+  streamCache.forEach((entry, key) => {
+    if (now - entry.timestamp > 60000) streamCache.delete(key);
+  });
+}, 5 * 60 * 1000);
+
+function startHLSProxy(channelId, sourceUrl) {
+  if (activeTranscoders.has(channelId)) {
+    const existing = activeTranscoders.get(channelId);
+    existing.clients++;
+    existing.lastAccess = Date.now();
+    return existing;
+  }
+
+  const entry = {
+    clients: 1,
+    lastAccess: Date.now(),
+    type: 'hls-proxy',
+    sourceUrl,
+    ready: true,
+  };
+  activeTranscoders.set(channelId, entry);
+  console.log(`📡 [${channelId}] Proxy HLS iniciado: ${sourceUrl}`);
+  return entry;
+}
+
+// Obtener manifiesto m3u8 con caché y reescritura de URLs
 const getCachedM3U8 = async (channelId, targetUrl) => {
   const cacheKey = `m3u8_${channelId}`;
   const cached = streamCache.get(cacheKey);
-  
-  // Cachear m3u8 por 5 segundos (se actualiza frecuentemente en live)
-  if (cached && Date.now() - cached.timestamp < 5000) {
-    return cached.data;
-  }
+  if (cached && Date.now() - cached.timestamp < 5000) return cached.data;
 
   return new Promise((resolve, reject) => {
     const parsedUrl = new URL(targetUrl);
     const httpClient = parsedUrl.protocol === 'https:' ? https : http;
-    
     const req = httpClient.request(targetUrl, {
       method: 'GET',
       headers: { 'User-Agent': 'StreamBox/1.0' },
@@ -608,17 +714,14 @@ const getCachedM3U8 = async (channelId, targetUrl) => {
       res.on('data', chunk => { body += chunk.toString(); });
       res.on('end', () => {
         const baseUrl = targetUrl.substring(0, targetUrl.lastIndexOf('/') + 1);
-        
-        // Reescribir URLs de segmentos TS para que pasen por nuestro proxy
         const rewritten = body.replace(/^(?!#)(.+\.ts.*)$/gm, (match) => {
           const fullUrl = match.startsWith('http') ? match : baseUrl + match;
-          return `/api/restream-segment/${channelId}?url=${encodeURIComponent(fullUrl)}`;
+          return `/api/hls-segment/${channelId}?url=${encodeURIComponent(fullUrl)}`;
         }).replace(/^(?!#)(.+\.m3u8.*)$/gm, (match) => {
           const fullUrl = match.startsWith('http') ? match : baseUrl + match;
-          return `/api/restream-hls/${channelId}?url=${encodeURIComponent(fullUrl)}`;
+          return `/api/hls-manifest/${channelId}?url=${encodeURIComponent(fullUrl)}`;
         });
-        
-        streamCache.set(cacheKey, { data: rewritten, timestamp: Date.now(), clients: 0 });
+        streamCache.set(cacheKey, { data: rewritten, timestamp: Date.now() });
         resolve(rewritten);
       });
     });
@@ -628,245 +731,15 @@ const getCachedM3U8 = async (channelId, targetUrl) => {
   });
 };
 
-// =============================================
-// RUTA: RESTREAMING COMPARTIDO
-// UNA sola conexión al origen → múltiples clientes
-// Buffer circular en memoria por canal
-// =============================================
-const activeStreams = new Map(); // channelId -> { clients: Set<res>, sourceReq, buffer: Buffer[], url }
-
-// Iniciar stream compartido para un canal
-function startSharedStream(channelId, targetUrl) {
-  if (activeStreams.has(channelId)) return activeStreams.get(channelId);
-
-  const stream = {
-    clients: new Set(),
-    sourceReq: null,
-    buffer: [],        // Últimos N chunks para enviar a nuevos clientes
-    maxBuffer: 20,     // Mantener últimos 20 chunks (~2-4 segundos)
-    url: targetUrl,
-    contentType: null,
-    reconnecting: false,
-    retryCount: 0,
-    maxRetries: 10,
-  };
-  activeStreams.set(channelId, stream);
-
-  function connect() {
-    if (stream.reconnecting) return;
-    stream.reconnecting = true;
-
-    const parsedUrl = new URL(targetUrl);
-    const httpClient = parsedUrl.protocol === 'https:' ? https : http;
-
-    console.log(`🔌 [${channelId}] Conectando al origen: ${targetUrl} (clientes: ${stream.clients.size})`);
-
-    const proxyReq = httpClient.request(targetUrl, {
-      method: 'GET',
-      headers: { 'User-Agent': 'StreamBox/1.0' },
-    }, (proxyRes) => {
-      stream.reconnecting = false;
-      stream.retryCount = 0;
-      stream.contentType = proxyRes.headers['content-type'] || 'video/mp2t';
-      stream.sourceReq = proxyReq;
-
-      console.log(`✅ [${channelId}] Conectado al origen (${stream.contentType})`);
-
-      proxyRes.on('data', (chunk) => {
-        // Agregar al buffer circular
-        stream.buffer.push(chunk);
-        if (stream.buffer.length > stream.maxBuffer) {
-          stream.buffer.shift();
-        }
-
-        // Enviar chunk a TODOS los clientes conectados
-        const deadClients = [];
-        stream.clients.forEach((clientRes) => {
-          try {
-            if (!clientRes.writableEnded) {
-              clientRes.write(chunk);
-            } else {
-              deadClients.push(clientRes);
-            }
-          } catch {
-            deadClients.push(clientRes);
-          }
-        });
-
-        // Limpiar clientes muertos
-        deadClients.forEach(c => stream.clients.delete(c));
-
-        // Si no quedan clientes, cerrar conexión al origen
-        if (stream.clients.size === 0) {
-          console.log(`🔴 [${channelId}] Sin clientes, cerrando conexión al origen`);
-          proxyReq.destroy();
-          activeStreams.delete(channelId);
-        }
-      });
-
-      proxyRes.on('end', () => {
-        console.log(`⚠️ [${channelId}] Stream del origen terminó`);
-        stream.sourceReq = null;
-        // Reconectar si hay clientes
-        if (stream.clients.size > 0) {
-          reconnect();
-        } else {
-          activeStreams.delete(channelId);
-        }
-      });
-
-      proxyRes.on('error', (err) => {
-        console.error(`❌ [${channelId}] Error en stream origen:`, err.message);
-        stream.sourceReq = null;
-        if (stream.clients.size > 0) {
-          reconnect();
-        } else {
-          activeStreams.delete(channelId);
-        }
-      });
-    });
-
-    proxyReq.on('error', (err) => {
-      console.error(`❌ [${channelId}] Error conectando al origen:`, err.message);
-      stream.reconnecting = false;
-      stream.sourceReq = null;
-      if (stream.clients.size > 0) {
-        reconnect();
-      } else {
-        activeStreams.delete(channelId);
-      }
-    });
-
-    proxyReq.setTimeout(30000, () => {
-      proxyReq.destroy();
-      stream.reconnecting = false;
-      if (stream.clients.size > 0) {
-        reconnect();
-      }
-    });
-
-    proxyReq.end();
-  }
-
-  function reconnect() {
-    stream.retryCount++;
-    if (stream.retryCount > stream.maxRetries) {
-      console.error(`💀 [${channelId}] Máximo de reintentos alcanzado, cerrando`);
-      stream.clients.forEach(c => { try { c.end(); } catch {} });
-      activeStreams.delete(channelId);
-      return;
-    }
-    const delay = Math.min(1000 * stream.retryCount, 10000);
-    console.log(`🔄 [${channelId}] Reconectando en ${delay}ms (intento ${stream.retryCount}/${stream.maxRetries})`);
-    setTimeout(() => {
-      stream.reconnecting = false;
-      connect();
-    }, delay);
-  }
-
-  connect();
-  return stream;
-}
-
-app.get('/api/restream/:channelId', async (req, res) => {
-  try {
-    // Validar cliente autenticado (opcional por query params)
-    const { user, pass } = req.query;
-    if (user && pass) {
-      const { rows } = await pool.query(
-        'SELECT id, is_active, expiry_date FROM clients WHERE username = $1 AND password = $2',
-        [user, pass]
-      );
-      if (rows.length === 0 || !rows[0].is_active || new Date(rows[0].expiry_date) < new Date()) {
-        return res.status(403).send('Forbidden');
-      }
-    }
-
-    // Obtener URL real del canal
-    const { rows: channels } = await pool.query(
-      'SELECT url FROM channels WHERE id = $1 AND is_active = true',
-      [req.params.channelId]
-    );
-
-    if (channels.length === 0) {
-      return res.status(404).json({ error: 'Canal no encontrado' });
-    }
-
-    const targetUrl = channels[0].url;
-    const channelId = req.params.channelId;
-
-    // Headers
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('X-Powered-By', 'StreamBox');
-    res.setHeader('Cache-Control', 'no-cache, no-store');
-
-    // Para HLS: cachear y servir manifiestos
-    const isHLS = targetUrl.includes('.m3u8');
-    if (isHLS) {
-      try {
-        const manifest = await getCachedM3U8(channelId, targetUrl);
-        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-        res.send(manifest);
-      } catch (err) {
-        console.error('HLS cache error:', err.message);
-        res.status(502).json({ error: 'No se pudo obtener el manifiesto HLS' });
-      }
-      return;
-    }
-
-    // Para TS/MP4: usar stream compartido
-    const stream = startSharedStream(channelId, targetUrl);
-
-    // Configurar headers para este cliente
-    if (stream.contentType) {
-      res.setHeader('Content-Type', stream.contentType);
-    } else {
-      res.setHeader('Content-Type', 'video/mp2t');
-    }
-
-    // Enviar buffer existente para que el nuevo cliente vea video inmediatamente
-    stream.buffer.forEach(chunk => {
-      try { res.write(chunk); } catch {}
-    });
-
-    // Registrar este cliente en el stream compartido
-    stream.clients.add(res);
-    console.log(`👤 [${channelId}] Cliente conectado (total: ${stream.clients.size})`);
-
-    // Cuando el cliente se desconecta
-    req.on('close', () => {
-      stream.clients.delete(res);
-      console.log(`👤 [${channelId}] Cliente desconectado (quedan: ${stream.clients.size})`);
-      // Si no quedan clientes, el stream se cerrará automáticamente en el próximo chunk
-    });
-  } catch (err) {
-    console.error('Restream error:', err);
-    res.status(500).json({ error: 'Error del servidor' });
-  }
-});
-
-// =============================================
-// PROXY DE SEGMENTOS HLS (caché compartido)
-// Un segmento se descarga UNA vez y se sirve a todos los clientes
-// =============================================
-const pendingSegments = new Map(); // url -> Promise<Buffer>
-
+// Descargar segmento con caché compartido
 const fetchSegment = (segmentUrl) => {
-  // Si ya se está descargando, reutilizar la promesa
-  if (pendingSegments.has(segmentUrl)) {
-    return pendingSegments.get(segmentUrl);
-  }
-
-  // Si está en caché, devolver directamente
+  if (pendingSegments.has(segmentUrl)) return pendingSegments.get(segmentUrl);
   const cached = segmentCache.get(segmentUrl);
-  if (cached && Date.now() - cached.timestamp < SEGMENT_CACHE_TTL) {
-    return Promise.resolve(cached.data);
-  }
+  if (cached && Date.now() - cached.timestamp < SEGMENT_CACHE_TTL) return Promise.resolve(cached.data);
 
   const promise = new Promise((resolve, reject) => {
     const parsedUrl = new URL(segmentUrl);
     const httpClient = parsedUrl.protocol === 'https:' ? https : http;
-
     const req = httpClient.request(segmentUrl, {
       method: 'GET',
       headers: { 'User-Agent': 'StreamBox/1.0' },
@@ -879,33 +752,121 @@ const fetchSegment = (segmentUrl) => {
         pendingSegments.delete(segmentUrl);
         resolve(buffer);
       });
-      res.on('error', (err) => {
-        pendingSegments.delete(segmentUrl);
-        reject(err);
-      });
+      res.on('error', (err) => { pendingSegments.delete(segmentUrl); reject(err); });
     });
-    req.on('error', (err) => {
-      pendingSegments.delete(segmentUrl);
-      reject(err);
-    });
-    req.setTimeout(15000, () => {
-      req.destroy();
-      pendingSegments.delete(segmentUrl);
-      reject(new Error('Timeout'));
-    });
+    req.on('error', (err) => { pendingSegments.delete(segmentUrl); reject(err); });
+    req.setTimeout(15000, () => { req.destroy(); pendingSegments.delete(segmentUrl); reject(new Error('Timeout')); });
     req.end();
   });
-
   pendingSegments.set(segmentUrl, promise);
   return promise;
 };
 
-// Proxy de segmentos TS de HLS
-app.get('/api/restream-segment/:channelId', async (req, res) => {
+// Limpieza general a medianoche
+const scheduleCacheCleanup = () => {
+  const now = new Date();
+  const midnight = new Date(now);
+  midnight.setDate(midnight.getDate() + 1);
+  midnight.setHours(0, 0, 0, 0);
+  setTimeout(() => {
+    console.log('🧹 Limpieza de caché a medianoche...');
+    // Matar todos los FFmpeg sin clientes
+    activeTranscoders.forEach((entry, key) => {
+      if (entry.clients <= 0) {
+        if (entry.type === 'ffmpeg' && entry.ffmpeg) entry.ffmpeg.kill('SIGTERM');
+        activeTranscoders.delete(key);
+        cleanChannelDir(key);
+      }
+    });
+    streamCache.clear();
+    segmentCache.clear();
+    scheduleCacheCleanup();
+  }, midnight.getTime() - now.getTime());
+  console.log(`⏰ Próxima limpieza: ${midnight.toLocaleString()}`);
+};
+scheduleCacheCleanup();
+
+// =============================================
+// ENDPOINT PRINCIPAL: /api/restream/:channelId
+// Sirve HLS para TODOS los tipos de canal
+// =============================================
+app.get('/api/restream/:channelId', async (req, res) => {
+  try {
+    const { rows: channels } = await pool.query(
+      'SELECT url FROM channels WHERE id = $1 AND is_active = true',
+      [req.params.channelId]
+    );
+    if (channels.length === 0) return res.status(404).json({ error: 'Canal no encontrado' });
+
+    const targetUrl = channels[0].url;
+    const channelId = req.params.channelId;
+    const isHLS = /\.m3u8?(\?|$)/i.test(targetUrl);
+
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cache-Control', 'no-cache, no-store');
+
+    if (isHLS) {
+      // Canal ya es HLS → proxy con caché
+      startHLSProxy(channelId, targetUrl);
+      try {
+        const manifest = await getCachedM3U8(channelId, targetUrl);
+        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+        res.send(manifest);
+      } catch (err) {
+        console.error('HLS proxy error:', err.message);
+        res.status(502).json({ error: 'No se pudo obtener el manifiesto HLS' });
+      }
+      // Liberar al terminar respuesta
+      res.on('finish', () => releaseTranscoder(channelId));
+    } else {
+      // Canal TS → FFmpeg → HLS
+      const entry = startFFmpegTranscoder(channelId, targetUrl);
+
+      // Esperar a que FFmpeg genere el manifiesto (máximo 15s)
+      let waited = 0;
+      const waitForManifest = () => {
+        if (fs.existsSync(entry.manifestPath)) {
+          const manifest = fs.readFileSync(entry.manifestPath, 'utf8');
+          // Reescribir rutas de segmentos para que pasen por nuestro endpoint
+          const rewritten = manifest.replace(/seg_\d+\.ts/g, (match) => {
+            return `/api/hls-local/${channelId}/${match}`;
+          });
+          res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+          res.send(rewritten);
+          res.on('finish', () => releaseTranscoder(channelId));
+        } else if (waited < 15000) {
+          waited += 500;
+          setTimeout(waitForManifest, 500);
+        } else {
+          releaseTranscoder(channelId);
+          res.status(504).json({ error: 'FFmpeg no generó el manifiesto a tiempo' });
+        }
+      };
+      waitForManifest();
+    }
+  } catch (err) {
+    console.error('Restream error:', err);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// Servir segmentos locales generados por FFmpeg
+app.get('/api/hls-local/:channelId/:filename', (req, res) => {
+  const filePath = path.join(HLS_DIR, req.params.channelId, req.params.filename);
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).send('Segment not found');
+  }
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Content-Type', 'video/mp2t');
+  res.setHeader('Cache-Control', 'public, max-age=10');
+  fs.createReadStream(filePath).pipe(res);
+});
+
+// Proxy de segmentos HLS remotos (para canales que ya son HLS)
+app.get('/api/hls-segment/:channelId', async (req, res) => {
   try {
     const segmentUrl = req.query.url;
     if (!segmentUrl) return res.status(400).send('Missing url');
-
     const data = await fetchSegment(segmentUrl);
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Content-Type', 'video/mp2t');
@@ -918,20 +879,18 @@ app.get('/api/restream-segment/:channelId', async (req, res) => {
 });
 
 // Proxy de sub-manifiestos HLS (multi-bitrate)
-app.get('/api/restream-hls/:channelId', async (req, res) => {
+app.get('/api/hls-manifest/:channelId', async (req, res) => {
   try {
     const hlsUrl = req.query.url;
     if (!hlsUrl) return res.status(400).send('Missing url');
-
-    const channelId = req.params.channelId;
-    const manifest = await getCachedM3U8(channelId + '_sub', hlsUrl);
+    const manifest = await getCachedM3U8(req.params.channelId + '_sub', hlsUrl);
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
     res.setHeader('Cache-Control', 'no-cache');
     res.send(manifest);
   } catch (err) {
     console.error('HLS sub-manifest error:', err.message);
-    res.status(502).send('HLS manifest fetch failed');
+    res.status(502).send('Manifest fetch failed');
   }
 });
 
