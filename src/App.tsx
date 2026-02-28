@@ -25,8 +25,10 @@ const AppRoutes = () => {
 
   return (
     <Routes>
-      <Route path="/login" element={isLoggedIn ? <Navigate to="/" replace /> : <LoginPage />} />
-      <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+      <Route path="/login" element={isLoggedIn ? <Navigate to="/player" replace /> : <LoginPage />} />
+      <Route path="/" element={<ProtectedRoute><Navigate to="/player" replace /></ProtectedRoute>} />
+      <Route path="/channels" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+      <Route path="/player" element={<ProtectedRoute><PlayerPage /></ProtectedRoute>} />
       <Route path="/player/:category" element={<ProtectedRoute><PlayerPage /></ProtectedRoute>} />
       <Route path="/admin" element={<AdminLogin />} />
       <Route path="/admin/panel" element={<AdminDashboard />} />
