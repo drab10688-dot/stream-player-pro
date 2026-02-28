@@ -128,25 +128,46 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   // Refresh channels & ads from DB
   const refreshChannels = useCallback(async () => {
-    if (!isLovablePreview()) return;
-    const { data } = await supabase
-      .from('channels')
-      .select('id, name, url, category, logo_url, sort_order')
-      .eq('is_active', true)
-      .order('sort_order');
-    if (data) {
-      // Pass original URLs directly - VideoPlayer handles playback natively
-      setChannels(data);
+    if (isLovablePreview()) {
+      const { data } = await supabase
+        .from('channels')
+        .select('id, name, url, category, logo_url, sort_order')
+        .eq('is_active', true)
+        .order('sort_order');
+      if (data) setChannels(data);
+    } else {
+      try {
+        const res = await fetch('/api/channels/public');
+        if (res.ok) {
+          const data = await res.json();
+          // In production, use server restream proxy
+          const mapped = data.map((ch: any) => ({ ...ch, url: `/api/restream/${ch.id}` }));
+          setChannels(mapped);
+        }
+      } catch (err) {
+        console.error('Error refreshing channels:', err);
+      }
     }
   }, []);
 
   const refreshAds = useCallback(async () => {
-    if (!isLovablePreview()) return;
-    const { data } = await supabase
-      .from('ads')
-      .select('id, title, message, image_url')
-      .eq('is_active', true);
-    if (data) setAds(data);
+    if (isLovablePreview()) {
+      const { data } = await supabase
+        .from('ads')
+        .select('id, title, message, image_url')
+        .eq('is_active', true);
+      if (data) setAds(data);
+    } else {
+      try {
+        const res = await fetch('/api/ads/public');
+        if (res.ok) {
+          const data = await res.json();
+          setAds(data);
+        }
+      } catch (err) {
+        console.error('Error refreshing ads:', err);
+      }
+    }
   }, []);
 
   // Subscribe to realtime changes when logged in
