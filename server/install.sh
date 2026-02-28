@@ -202,11 +202,15 @@ echo ""
 sleep 1
 
 # =============================================
-# PASO 3: Instalar dependencias del sistema
+# PASO 3: Actualizar sistema e instalar dependencias
 # =============================================
-log_step "📦 [2/8] Instalando dependencias del sistema..."
+log_step "📦 [2/9] Actualizando sistema e instalando dependencias..."
 
+log_info "Actualizando paquetes del sistema (esto puede tardar)..."
 apt update -qq 2>/dev/null
+apt upgrade -y -qq > /dev/null 2>&1
+log_ok "Sistema actualizado"
+
 apt install -y -qq postgresql postgresql-contrib nginx curl git build-essential netcat-openbsd lsof > /dev/null 2>&1
 
 # Instalar Node.js 20 si no está o es muy viejo
