@@ -3,7 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
 serve(async (req) => {
@@ -29,20 +29,20 @@ serve(async (req) => {
 
       if (error || !client) {
         return new Response(JSON.stringify({ error: 'Credenciales inválidas' }), {
-          status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
       }
 
       if (!client.is_active) {
         return new Response(JSON.stringify({ error: 'Cuenta suspendida. Contacta a tu proveedor.' }), {
-          status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
       }
 
       if (new Date(client.expiry_date) < new Date()) {
         await supabase.from('clients').update({ is_active: false }).eq('id', client.id);
         return new Response(JSON.stringify({ error: 'Suscripción expirada. Renueva tu plan.' }), {
-          status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
       }
 
@@ -60,7 +60,7 @@ serve(async (req) => {
           return new Response(JSON.stringify({ 
             error: `Límite de ${client.max_screens} pantalla(s) alcanzado. Cierra otra sesión.` 
           }), {
-            status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
           });
         }
 
