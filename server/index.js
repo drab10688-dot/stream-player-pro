@@ -1094,6 +1094,129 @@ app.get('/api/clients/expiring', authAdmin, async (req, res) => {
 });
 
 // =============================================
+// CLOUDFLARE TUNNEL - Gestión desde admin panel
+// =============================================
+const { spawn, execSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+
+let tunnelProcess = null;
+let tunnelUrl = null;
+let tunnelStatus = 'stopped'; // stopped | starting | running | error
+let tunnelError = null;
+
+// Check if cloudflared is installed
+const isCloudflaredInstalled = () => {
+  try {
+    execSync('which cloudflared', { stdio: 'ignore' });
+    return true;
+  } catch { return false; }
+};
+
+// Get tunnel status
+app.get('/api/tunnel/status', verifyAdmin, (req, res) => {
+  res.json({
+    installed: isCloudflaredInstalled(),
+    status: tunnelStatus,
+    url: tunnelUrl,
+    error: tunnelError,
+    https: tunnelUrl ? tunnelUrl.startsWith('https://') : false,
+  });
+});
+
+// Install cloudflared
+app.post('/api/tunnel/install', verifyAdmin, (req, res) => {
+  if (isCloudflaredInstalled()) {
+    return res.json({ success: true, message: 'cloudflared ya está instalado' });
+  }
+  try {
+    console.log('📦 Instalando cloudflared...');
+    execSync('curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null && echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main" | sudo tee /etc/apt/sources.list.d/cloudflared.list && sudo apt-get update && sudo apt-get install -y cloudflared', { stdio: 'pipe', timeout: 120000 });
+    res.json({ success: true, message: 'cloudflared instalado correctamente' });
+  } catch (err) {
+    // Fallback: download binary directly
+    try {
+      execSync('curl -fsSL -o /usr/local/bin/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 && chmod +x /usr/local/bin/cloudflared', { stdio: 'pipe', timeout: 60000 });
+      res.json({ success: true, message: 'cloudflared instalado (binario directo)' });
+    } catch (err2) {
+      res.status(500).json({ success: false, error: `Error instalando: ${err2.message}` });
+    }
+  }
+});
+
+// Start tunnel
+app.post('/api/tunnel/start', verifyAdmin, (req, res) => {
+  if (!isCloudflaredInstalled()) {
+    return res.status(400).json({ error: 'cloudflared no está instalado. Instálalo primero.' });
+  }
+  if (tunnelProcess) {
+    return res.json({ success: true, url: tunnelUrl, message: 'El túnel ya está corriendo' });
+  }
+
+  tunnelStatus = 'starting';
+  tunnelUrl = null;
+  tunnelError = null;
+
+  const targetPort = req.body.port || 80;
+  tunnelProcess = spawn('cloudflared', ['tunnel', '--url', `http://localhost:${targetPort}`, '--no-autoupdate'], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  let output = '';
+
+  const extractUrl = (data) => {
+    const text = data.toString();
+    output += text;
+    // Cloudflared prints the URL to stderr
+    const match = text.match(/https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com/);
+    if (match && !tunnelUrl) {
+      tunnelUrl = match[0];
+      tunnelStatus = 'running';
+      console.log(`🌐 Cloudflare Tunnel activo: ${tunnelUrl}`);
+    }
+  };
+
+  tunnelProcess.stdout.on('data', extractUrl);
+  tunnelProcess.stderr.on('data', extractUrl);
+
+  tunnelProcess.on('error', (err) => {
+    tunnelStatus = 'error';
+    tunnelError = err.message;
+    tunnelProcess = null;
+  });
+
+  tunnelProcess.on('exit', (code) => {
+    if (tunnelStatus !== 'stopped') {
+      tunnelStatus = code === 0 ? 'stopped' : 'error';
+      if (code !== 0) tunnelError = `Proceso terminó con código ${code}`;
+    }
+    tunnelProcess = null;
+    tunnelUrl = null;
+  });
+
+  // Wait a few seconds for URL to appear
+  setTimeout(() => {
+    res.json({ success: true, status: tunnelStatus, url: tunnelUrl, message: tunnelUrl ? 'Túnel iniciado' : 'Iniciando túnel, espera unos segundos...' });
+  }, 5000);
+});
+
+// Stop tunnel
+app.post('/api/tunnel/stop', verifyAdmin, (req, res) => {
+  if (tunnelProcess) {
+    tunnelStatus = 'stopped';
+    tunnelProcess.kill('SIGTERM');
+    tunnelProcess = null;
+    tunnelUrl = null;
+    tunnelError = null;
+    res.json({ success: true, message: 'Túnel detenido' });
+  } else {
+    tunnelStatus = 'stopped';
+    tunnelUrl = null;
+    res.json({ success: true, message: 'El túnel no estaba corriendo' });
+  }
+});
+
+// =============================================
 // INICIAR SERVIDOR
 // =============================================
 app.listen(PORT, '0.0.0.0', () => {
