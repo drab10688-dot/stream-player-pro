@@ -21,12 +21,11 @@ const getYouTubeId = (url: string): string | null => {
   return null;
 };
 
-// Extract original URL from proxy wrapper
-const getOriginalUrl = (src: string): string => {
-  try {
-    const u = new URL(src);
-    return u.searchParams.get('url') || src;
-  } catch { return src; }
+const detectStreamType = (url: string): 'hls' | 'ts' | 'youtube' | 'native' => {
+  if (getYouTubeId(url)) return 'youtube';
+  if (/\.m3u8?(\?|$)/i.test(url)) return 'hls';
+  if (/\.ts(\?|$)/i.test(url) || /\/\d+\.ts/.test(url)) return 'ts';
+  return 'native';
 };
 
 const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProps) => {
@@ -59,14 +58,13 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
     const video = videoRef.current;
     if (!video || !src) return;
 
+    const streamType = detectStreamType(src);
+    if (streamType === 'youtube') return; // handled by iframe render
+
     setError(null);
     setLoading(true);
     retryCountRef.current = 0;
     cleanup();
-
-    const originalUrl = getOriginalUrl(src);
-    const isHLS = originalUrl.includes('.m3u8');
-    const isTsStream = /\.ts(\?|$)/.test(originalUrl) || !!originalUrl.match(/\/\d+\.ts/);
 
     const reportError = (msg: string) => {
       setError(msg);
@@ -93,8 +91,24 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
       }, delay);
     };
 
-    if (isTsStream && !isHLS) {
-      // MPEG-TS stream → mpegts.js with aggressive buffering for slow connections
+    const attemptPlay = async (v: HTMLVideoElement) => {
+      try {
+        v.muted = false;
+        await v.play();
+        setLoading(false);
+      } catch {
+        v.muted = true;
+        try {
+          await v.play();
+          setLoading(false);
+          setTimeout(() => { v.muted = false; }, 500);
+        } catch {
+          setLoading(false);
+        }
+      }
+    };
+
+    if (streamType === 'ts') {
       if (mpegts.isSupported()) {
         const player = mpegts.createPlayer({
           type: 'mpegts',
@@ -103,9 +117,9 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
         }, {
           enableWorker: true,
           enableStashBuffer: true,
-          stashInitialSize: 1024 * 1024,        // 1MB initial buffer
+          stashInitialSize: 1024 * 1024,
           liveBufferLatencyChasing: true,
-          liveBufferLatencyMaxLatency: 8,        // Allow up to 8s latency for slow connections
+          liveBufferLatencyMaxLatency: 8,
           liveBufferLatencyMinRemain: 1,
           lazyLoad: false,
           autoCleanupSourceBuffer: true,
@@ -129,11 +143,10 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
 
         attemptPlay(video);
       } else {
-        // Fallback: native
         video.src = src;
         attemptPlay(video);
       }
-    } else if (isHLS) {
+    } else if (streamType === 'hls') {
       if (video.canPlayType('application/vnd.apple.mpegurl')) {
         video.src = src;
         attemptPlay(video);
@@ -141,27 +154,26 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
         const hls = new Hls({
           enableWorker: true,
           lowLatencyMode: false,
-          // Aggressive buffering for slow connections
-          abrEwmaDefaultEstimate: 300000,        // Start with low bitrate estimate (300kbps)
+          abrEwmaDefaultEstimate: 300000,
           abrEwmaFastLive: 2,
           abrEwmaSlowLive: 8,
           abrEwmaFastVoD: 2,
           abrEwmaSlowVoD: 8,
-          abrBandWidthFactor: 0.6,               // Conservative bandwidth usage
+          abrBandWidthFactor: 0.6,
           abrBandWidthUpFactor: 0.4,
-          maxBufferLength: 60,                   // Buffer up to 60s
-          maxMaxBufferLength: 120,               // Allow up to 120s buffer
-          maxBufferSize: 60 * 1000 * 1000,       // 60MB buffer
-          maxBufferHole: 1,                      // Tolerate 1s gaps
-          fragLoadingMaxRetry: 10,               // More retries
+          maxBufferLength: 60,
+          maxMaxBufferLength: 120,
+          maxBufferSize: 60 * 1000 * 1000,
+          maxBufferHole: 1,
+          fragLoadingMaxRetry: 10,
           fragLoadingRetryDelay: 1500,
           fragLoadingMaxRetryTimeout: 30000,
           manifestLoadingMaxRetry: 6,
           manifestLoadingRetryDelay: 1500,
           levelLoadingMaxRetry: 6,
           levelLoadingRetryDelay: 1500,
-          startLevel: 0,                         // Start with lowest quality
-          startFragPrefetch: true,               // Prefetch first fragment
+          startLevel: 0,
+          startFragPrefetch: true,
           testBandwidth: true,
           progressive: true,
         });
@@ -187,7 +199,6 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
             }
           }
         });
-        // Buffer stall recovery
         hls.on(Hls.Events.BUFFER_EOS, () => {
           if (!video.ended) retryStream();
         });
@@ -199,7 +210,7 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
       attemptPlay(video);
     }
 
-    // Stall recovery: if video stops buffering for too long, retry
+    // Stall recovery
     const stallCheck = setInterval(() => {
       if (video && !video.paused && video.readyState < 3 && !loading) {
         retryStream();
@@ -218,25 +229,8 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
     }
   }, [muted]);
 
-  const attemptPlay = async (video: HTMLVideoElement) => {
-    try {
-      video.muted = false;
-      await video.play();
-      setLoading(false);
-    } catch {
-      video.muted = true;
-      try {
-        await video.play();
-        setLoading(false);
-        setTimeout(() => { video.muted = false; }, 500);
-      } catch {
-        setLoading(false);
-      }
-    }
-  };
-
+  // YouTube render
   const youtubeId = getYouTubeId(src);
-
   if (youtubeId) {
     return (
       <div className="relative w-full h-full bg-black">
@@ -261,6 +255,7 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
         controls
         muted={muted}
         preload="auto"
+        crossOrigin="anonymous"
         onCanPlay={() => setLoading(false)}
         onWaiting={() => setLoading(true)}
         onPlaying={() => setLoading(false)}
