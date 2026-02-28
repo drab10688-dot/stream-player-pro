@@ -150,9 +150,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         if (res.ok) {
           const data = await res.json();
           // YouTube keeps original URL, others use restream proxy
+          // HLS channels get ?type=hls query param for player detection
           const mapped = data.map((ch: any) => ({
             ...ch,
-            url: ch.url || `/api/restream/${ch.id}`,
+            url: ch.url || `/api/restream/${ch.id}${ch.is_hls ? '?type=hls' : ''}`,
           }));
           setChannels(mapped);
         }

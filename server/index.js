@@ -197,10 +197,11 @@ app.get('/api/channels/public', async (req, res) => {
   const { rows } = await pool.query(
     'SELECT id, name, url, category, logo_url, sort_order FROM channels WHERE is_active = true ORDER BY sort_order'
   );
-  // Devolver URLs de YouTube tal cual, ocultar las demás (se accede vía /api/restream)
+  // YouTube mantiene URL, HLS marca tipo, TS oculta URL
   const safe = rows.map(ch => {
     const isYouTube = /youtube\.com|youtu\.be/.test(ch.url);
-    return { ...ch, url: isYouTube ? ch.url : null };
+    const isHLS = /\.m3u8?(\?|$)/i.test(ch.url);
+    return { ...ch, url: isYouTube ? ch.url : null, is_hls: isHLS };
   });
   res.json(safe);
 });
@@ -461,11 +462,13 @@ app.post('/api/client/login', async (req, res) => {
 
     // RESTREAMING: Convertir URLs a rutas de proxy dinámico
     // YouTube mantiene su URL original (el reproductor lo maneja con iframe)
+    // HLS agrega ?type=hls para que el reproductor lo detecte
     const safeChannels = channelsRes.rows.map(ch => {
       const isYouTube = /youtube\.com|youtu\.be/.test(ch.url);
+      const isHLS = /\.m3u8?(\?|$)/i.test(ch.url);
       return {
         ...ch,
-        url: isYouTube ? ch.url : `/api/restream/${ch.id}`,
+        url: isYouTube ? ch.url : `/api/restream/${ch.id}${isHLS ? '?type=hls' : ''}`,
       };
     });
 
@@ -569,6 +572,20 @@ setInterval(() => {
   });
 }, 5 * 60 * 1000);
 
+// Caché de segmentos TS de HLS (para compartir entre clientes)
+const segmentCache = new Map(); // url -> { data: Buffer, timestamp }
+const SEGMENT_CACHE_TTL = 15000; // 15 segundos (segmentos HLS suelen durar 2-10s)
+
+// Limpiar segmentos viejos cada 30s
+setInterval(() => {
+  const now = Date.now();
+  segmentCache.forEach((entry, key) => {
+    if (now - entry.timestamp > SEGMENT_CACHE_TTL) {
+      segmentCache.delete(key);
+    }
+  });
+}, 30000);
+
 // Función para obtener un m3u8 cacheado o descargarlo
 const getCachedM3U8 = async (channelId, targetUrl) => {
   const cacheKey = `m3u8_${channelId}`;
@@ -590,14 +607,15 @@ const getCachedM3U8 = async (channelId, targetUrl) => {
       let body = '';
       res.on('data', chunk => { body += chunk.toString(); });
       res.on('end', () => {
-        // Reescribir URLs relativas
         const baseUrl = targetUrl.substring(0, targetUrl.lastIndexOf('/') + 1);
+        
+        // Reescribir URLs de segmentos TS para que pasen por nuestro proxy
         const rewritten = body.replace(/^(?!#)(.+\.ts.*)$/gm, (match) => {
-          if (match.startsWith('http')) return match;
-          return baseUrl + match;
+          const fullUrl = match.startsWith('http') ? match : baseUrl + match;
+          return `/api/restream-segment/${channelId}?url=${encodeURIComponent(fullUrl)}`;
         }).replace(/^(?!#)(.+\.m3u8.*)$/gm, (match) => {
-          if (match.startsWith('http')) return match;
-          return baseUrl + match;
+          const fullUrl = match.startsWith('http') ? match : baseUrl + match;
+          return `/api/restream-hls/${channelId}?url=${encodeURIComponent(fullUrl)}`;
         });
         
         streamCache.set(cacheKey, { data: rewritten, timestamp: Date.now(), clients: 0 });
@@ -828,6 +846,95 @@ app.get('/api/restream/:channelId', async (req, res) => {
 });
 
 // =============================================
+// PROXY DE SEGMENTOS HLS (caché compartido)
+// Un segmento se descarga UNA vez y se sirve a todos los clientes
+// =============================================
+const pendingSegments = new Map(); // url -> Promise<Buffer>
+
+const fetchSegment = (segmentUrl) => {
+  // Si ya se está descargando, reutilizar la promesa
+  if (pendingSegments.has(segmentUrl)) {
+    return pendingSegments.get(segmentUrl);
+  }
+
+  // Si está en caché, devolver directamente
+  const cached = segmentCache.get(segmentUrl);
+  if (cached && Date.now() - cached.timestamp < SEGMENT_CACHE_TTL) {
+    return Promise.resolve(cached.data);
+  }
+
+  const promise = new Promise((resolve, reject) => {
+    const parsedUrl = new URL(segmentUrl);
+    const httpClient = parsedUrl.protocol === 'https:' ? https : http;
+
+    const req = httpClient.request(segmentUrl, {
+      method: 'GET',
+      headers: { 'User-Agent': 'StreamBox/1.0' },
+    }, (res) => {
+      const chunks = [];
+      res.on('data', chunk => chunks.push(chunk));
+      res.on('end', () => {
+        const buffer = Buffer.concat(chunks);
+        segmentCache.set(segmentUrl, { data: buffer, timestamp: Date.now() });
+        pendingSegments.delete(segmentUrl);
+        resolve(buffer);
+      });
+      res.on('error', (err) => {
+        pendingSegments.delete(segmentUrl);
+        reject(err);
+      });
+    });
+    req.on('error', (err) => {
+      pendingSegments.delete(segmentUrl);
+      reject(err);
+    });
+    req.setTimeout(15000, () => {
+      req.destroy();
+      pendingSegments.delete(segmentUrl);
+      reject(new Error('Timeout'));
+    });
+    req.end();
+  });
+
+  pendingSegments.set(segmentUrl, promise);
+  return promise;
+};
+
+// Proxy de segmentos TS de HLS
+app.get('/api/restream-segment/:channelId', async (req, res) => {
+  try {
+    const segmentUrl = req.query.url;
+    if (!segmentUrl) return res.status(400).send('Missing url');
+
+    const data = await fetchSegment(segmentUrl);
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Content-Type', 'video/mp2t');
+    res.setHeader('Cache-Control', 'public, max-age=10');
+    res.send(data);
+  } catch (err) {
+    console.error('Segment proxy error:', err.message);
+    res.status(502).send('Segment fetch failed');
+  }
+});
+
+// Proxy de sub-manifiestos HLS (multi-bitrate)
+app.get('/api/restream-hls/:channelId', async (req, res) => {
+  try {
+    const hlsUrl = req.query.url;
+    if (!hlsUrl) return res.status(400).send('Missing url');
+
+    const channelId = req.params.channelId;
+    const manifest = await getCachedM3U8(channelId + '_sub', hlsUrl);
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.send(manifest);
+  } catch (err) {
+    console.error('HLS sub-manifest error:', err.message);
+    res.status(502).send('HLS manifest fetch failed');
+  }
+});
+
 // RUTA: IMPORTAR CANALES DESDE M3U
 // Parsea listas M3U/M3U8 y las agrega como canales
 // =============================================
