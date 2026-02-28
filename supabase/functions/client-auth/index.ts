@@ -17,7 +17,7 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     );
 
-    const { action, username, password, device_id, user_id } = await req.json();
+    const { action, username, password, device_id, user_id, client_id, channel_id, error_message } = await req.json();
 
     if (action === 'login') {
       const { data: client, error } = await supabase
@@ -70,7 +70,7 @@ serve(async (req) => {
           .select('id')
           .eq('client_id', client.id)
           .eq('device_id', device_id)
-          .single();
+          .maybeSingle();
 
         if (existing) {
           await supabase.from('active_connections')
@@ -103,8 +103,56 @@ serve(async (req) => {
       });
     }
 
+    // Heartbeat - update last_heartbeat for active connection
+    if (action === 'heartbeat') {
+      if (!client_id || !device_id) {
+        return new Response(JSON.stringify({ error: 'client_id y device_id requeridos' }), {
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      const { data: existing } = await supabase
+        .from('active_connections')
+        .select('id')
+        .eq('client_id', client_id)
+        .eq('device_id', device_id)
+        .maybeSingle();
+
+      if (existing) {
+        await supabase.from('active_connections')
+          .update({ last_heartbeat: new Date().toISOString() })
+          .eq('id', existing.id);
+      } else {
+        await supabase.from('active_connections')
+          .insert({ client_id, device_id, last_heartbeat: new Date().toISOString() });
+      }
+
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+
+    // Report channel error
+    if (action === 'report_channel_error') {
+      if (!channel_id) {
+        return new Response(JSON.stringify({ error: 'channel_id requerido' }), {
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      await supabase.from('channel_health_logs').insert({
+        channel_id,
+        status: 'error',
+        error_message: error_message || 'Error de reproducción reportado por cliente',
+        checked_by: username ? `client:${username}` : 'client:unknown',
+      });
+
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+
     if (action === 'make_first_admin') {
-      // Only works if no admins exist yet
       const { data: existingAdmins } = await supabase.from('user_roles').select('id').limit(1);
       if (existingAdmins && existingAdmins.length > 0) {
         return new Response(JSON.stringify({ error: 'Ya existe un administrador' }), {

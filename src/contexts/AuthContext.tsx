@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 
 interface ClientInfo {
@@ -31,6 +31,7 @@ interface AuthContextType {
   ads: AdInfo[];
   login: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
+  reportChannelError: (channelId: string, errorMessage: string) => void;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -44,8 +45,6 @@ export const useAuth = () => {
 const getDeviceId = () => {
   let id = localStorage.getItem('device_id');
   if (!id) {
-    // crypto.randomUUID() solo funciona en HTTPS/localhost
-    // Fallback para HTTP en VPS
     try {
       id = crypto.randomUUID();
     } catch {
@@ -60,7 +59,6 @@ const getDeviceId = () => {
   return id;
 };
 
-// Detectar entorno automáticamente por hostname
 const isLovablePreview = () => {
   const host = window.location.hostname;
   return host.includes('lovable.app') || host.includes('lovable.dev') || host === 'localhost';
@@ -71,8 +69,64 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [client, setClient] = useState<ClientInfo | null>(null);
   const [channels, setChannels] = useState<ChannelInfo[]>([]);
   const [ads, setAds] = useState<AdInfo[]>([]);
+  const heartbeatRef = useRef<ReturnType<typeof setInterval>>();
 
-  // Refresh channels & ads from DB (works in Lovable preview with realtime)
+  // Heartbeat - send every 2 minutes to keep connection alive
+  useEffect(() => {
+    if (!isLoggedIn || !client) return;
+
+    const sendHeartbeat = async () => {
+      try {
+        if (isLovablePreview()) {
+          await supabase.functions.invoke('client-auth', {
+            body: { action: 'heartbeat', client_id: client.id, device_id: getDeviceId() },
+          });
+        } else {
+          await fetch('/api/client/heartbeat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ client_id: client.id, device_id: getDeviceId() }),
+          });
+        }
+      } catch (err) {
+        console.error('Heartbeat error:', err);
+      }
+    };
+
+    // Send immediately then every 2 minutes
+    sendHeartbeat();
+    heartbeatRef.current = setInterval(sendHeartbeat, 2 * 60 * 1000);
+
+    return () => {
+      if (heartbeatRef.current) clearInterval(heartbeatRef.current);
+    };
+  }, [isLoggedIn, client]);
+
+  // Report channel error
+  const reportChannelError = useCallback(async (channelId: string, errorMessage: string) => {
+    try {
+      if (isLovablePreview()) {
+        await supabase.functions.invoke('client-auth', {
+          body: {
+            action: 'report_channel_error',
+            channel_id: channelId,
+            error_message: errorMessage,
+            username: client?.username,
+          },
+        });
+      } else {
+        await fetch('/api/channel/report-error', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ channel_id: channelId, error_message: errorMessage, username: client?.username }),
+        });
+      }
+    } catch (err) {
+      console.error('Error reporting channel error:', err);
+    }
+  }, [client]);
+
+  // Refresh channels & ads from DB
   const refreshChannels = useCallback(async () => {
     if (!isLovablePreview()) return;
     const { data } = await supabase
@@ -99,7 +153,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     if (data) setAds(data);
   }, []);
 
-  // Subscribe to realtime changes when logged in (Lovable preview only)
+  // Subscribe to realtime changes when logged in
   useEffect(() => {
     if (!isLoggedIn || !isLovablePreview()) return;
 
@@ -167,6 +221,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const logout = () => {
+    if (heartbeatRef.current) clearInterval(heartbeatRef.current);
     setIsLoggedIn(false);
     setClient(null);
     setChannels([]);
@@ -174,7 +229,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ isLoggedIn, client, channels, ads, login, logout }}>
+    <AuthContext.Provider value={{ isLoggedIn, client, channels, ads, login, logout, reportChannelError }}>
       {children}
     </AuthContext.Provider>
   );
