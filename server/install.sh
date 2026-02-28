@@ -97,6 +97,36 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 # =============================================
+# PASO 0: Auto-actualizar desde Git
+# =============================================
+log_step "🔄 Verificando actualizaciones del código..."
+
+if [ -d "${PROJECT_DIR}/.git" ]; then
+  cd "${PROJECT_DIR}"
+  
+  # Guardar cambios locales si los hay
+  git stash > /dev/null 2>&1 || true
+  
+  # Intentar pull
+  if git pull origin main > /dev/null 2>&1 || git pull origin master > /dev/null 2>&1; then
+    log_ok "Código actualizado desde Git"
+  else
+    log_warn "No se pudo actualizar desde Git (sin conexión o sin remote)"
+    log_info "Usando archivos locales"
+  fi
+else
+  log_info "No es un repositorio Git, usando archivos locales"
+fi
+
+# Verificar que index.js existe
+if [ ! -f "${SCRIPT_DIR}/index.js" ]; then
+  log_err "No se encontró server/index.js"
+  exit 1
+fi
+log_ok "Archivos del proyecto verificados"
+echo ""
+
+# =============================================
 # PASO 1: Recopilar información
 # =============================================
 log_step "📋 Configuración inicial"
