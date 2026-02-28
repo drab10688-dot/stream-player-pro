@@ -64,22 +64,12 @@ serve(async (req) => {
           });
         }
 
-        // Upsert connection
-        const { data: existing } = await supabase
-          .from('active_connections')
-          .select('id')
-          .eq('client_id', client.id)
-          .eq('device_id', device_id)
-          .maybeSingle();
-
-        if (existing) {
-          await supabase.from('active_connections')
-            .update({ last_heartbeat: new Date().toISOString() })
-            .eq('id', existing.id);
-        } else {
-          await supabase.from('active_connections')
-            .insert({ client_id: client.id, device_id, last_heartbeat: new Date().toISOString() });
-        }
+        // Upsert connection (deduplicate by client_id + device_id)
+        await supabase.from('active_connections')
+          .upsert(
+            { client_id: client.id, device_id, last_heartbeat: new Date().toISOString() },
+            { onConflict: 'client_id,device_id', ignoreDuplicates: false }
+          );
       }
 
       const [channelsRes, adsRes] = await Promise.all([
@@ -87,16 +77,9 @@ serve(async (req) => {
         supabase.from('ads').select('id, title, message, image_url').eq('is_active', true)
       ]);
 
-      // Proxy URLs through video-proxy edge function to avoid CORS
-      const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-      const safeChannels = (channelsRes.data || []).map(ch => ({
-        ...ch,
-        url: `${supabaseUrl}/functions/v1/video-proxy?url=${encodeURIComponent(ch.url)}`,
-      }));
-
       return new Response(JSON.stringify({
         client: { id: client.id, username: client.username, max_screens: client.max_screens, expiry_date: client.expiry_date },
-        channels: safeChannels,
+        channels: channelsRes.data || [],
         ads: adsRes.data || []
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -111,21 +94,12 @@ serve(async (req) => {
         });
       }
 
-      const { data: existing } = await supabase
-        .from('active_connections')
-        .select('id')
-        .eq('client_id', client_id)
-        .eq('device_id', device_id)
-        .maybeSingle();
-
-      if (existing) {
-        await supabase.from('active_connections')
-          .update({ last_heartbeat: new Date().toISOString() })
-          .eq('id', existing.id);
-      } else {
-        await supabase.from('active_connections')
-          .insert({ client_id, device_id, last_heartbeat: new Date().toISOString() });
-      }
+      // Upsert heartbeat (deduplicate by client_id + device_id)
+      await supabase.from('active_connections')
+        .upsert(
+          { client_id, device_id, last_heartbeat: new Date().toISOString() },
+          { onConflict: 'client_id,device_id', ignoreDuplicates: false }
+        );
 
       return new Response(JSON.stringify({ ok: true }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
