@@ -134,7 +134,16 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         .select('id, name, url, category, logo_url, sort_order')
         .eq('is_active', true)
         .order('sort_order');
-      if (data) setChannels(data);
+      if (data) {
+        const proxyBase = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/video-proxy`;
+        const proxied = data.map((ch) => {
+          if (ch.url && !ch.url.includes('youtube.com') && !ch.url.includes('youtu.be')) {
+            return { ...ch, url: `${proxyBase}?url=${encodeURIComponent(ch.url)}` };
+          }
+          return ch;
+        });
+        setChannels(proxied);
+      }
     } else {
       try {
         const res = await fetch('/api/channels/public');
@@ -226,8 +235,17 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         return { success: false, error: data.error };
       }
 
+      // In Lovable preview, proxy TS/stream URLs through edge function to bypass CORS
+      const processedChannels = (data.channels || []).map((ch: any) => {
+        if (isLovablePreview() && ch.url && !ch.url.includes('youtube.com') && !ch.url.includes('youtu.be')) {
+          const proxyBase = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/video-proxy`;
+          return { ...ch, url: `${proxyBase}?url=${encodeURIComponent(ch.url)}` };
+        }
+        return ch;
+      });
+
       setClient(data.client);
-      setChannels(data.channels || []);
+      setChannels(processedChannels);
       setAds(data.ads || []);
       setIsLoggedIn(true);
       return { success: true };
