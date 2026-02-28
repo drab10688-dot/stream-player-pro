@@ -5,7 +5,8 @@
 # Uso: sudo bash install.sh
 # =============================================
 
-set -e
+# NO usar set -e para poder manejar errores manualmente
+# set -e
 
 # Colores
 RED='\033[0;31m'
@@ -93,21 +94,36 @@ echo -e "${GREEN}   ✅ PM2 instalado${NC}"
 # =============================================
 echo -e "${YELLOW}🗄️  [2/7] Configurando PostgreSQL...${NC}"
 
-systemctl start postgresql
+systemctl start postgresql || { echo -e "${RED}❌ No se pudo iniciar PostgreSQL${NC}"; exit 1; }
 systemctl enable postgresql > /dev/null 2>&1
 
 # Crear usuario y base de datos
-sudo -u postgres psql -c "DROP DATABASE IF EXISTS streambox;" > /dev/null 2>&1 || true
-sudo -u postgres psql -c "DROP USER IF EXISTS streambox_user;" > /dev/null 2>&1 || true
-sudo -u postgres psql -c "CREATE USER streambox_user WITH PASSWORD '${DB_PASS}';" > /dev/null 2>&1
-sudo -u postgres psql -c "CREATE DATABASE streambox OWNER streambox_user;" > /dev/null 2>&1
+echo -e "${CYAN}   Creando usuario y base de datos...${NC}"
+sudo -u postgres psql -c "DROP DATABASE IF EXISTS streambox;" 2>&1 || true
+sudo -u postgres psql -c "DROP USER IF EXISTS streambox_user;" 2>&1 || true
+sudo -u postgres psql -c "CREATE USER streambox_user WITH PASSWORD '${DB_PASS}';" 2>&1
+if [ $? -ne 0 ]; then
+  echo -e "${RED}❌ Error creando usuario PostgreSQL${NC}"
+  exit 1
+fi
+
+sudo -u postgres psql -c "CREATE DATABASE streambox OWNER streambox_user;" 2>&1
+if [ $? -ne 0 ]; then
+  echo -e "${RED}❌ Error creando base de datos${NC}"
+  exit 1
+fi
 
 # Importar schema
-sudo -u postgres psql -d streambox -f "${SCRIPT_DIR}/database/schema.sql" > /dev/null 2>&1
+echo -e "${CYAN}   Importando schema...${NC}"
+sudo -u postgres psql -d streambox -f "${SCRIPT_DIR}/database/schema.sql" 2>&1
+if [ $? -ne 0 ]; then
+  echo -e "${RED}❌ Error importando schema. Verifica que existe: ${SCRIPT_DIR}/database/schema.sql${NC}"
+  exit 1
+fi
 
 # Dar permisos
-sudo -u postgres psql -d streambox -c "GRANT ALL ON ALL TABLES IN SCHEMA public TO streambox_user;" > /dev/null 2>&1
-sudo -u postgres psql -d streambox -c "GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO streambox_user;" > /dev/null 2>&1
+sudo -u postgres psql -d streambox -c "GRANT ALL ON ALL TABLES IN SCHEMA public TO streambox_user;" 2>&1
+sudo -u postgres psql -d streambox -c "GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO streambox_user;" 2>&1
 
 echo -e "${GREEN}   ✅ PostgreSQL configurado${NC}"
 
