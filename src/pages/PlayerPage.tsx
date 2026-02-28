@@ -12,7 +12,7 @@ import omnisyncLogo from '@/assets/omnisync-logo.png';
 const PlayerPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { channels, ads } = useAuth();
+  const { channels, ads, reportChannelError } = useAuth();
 
   const initialChannel = location.state?.channel || channels[0];
   const [selectedChannel, setSelectedChannel] = useState(initialChannel);
@@ -336,7 +336,12 @@ const PlayerPage = () => {
 
         {/* Video Player - Full area */}
         <div className="flex-1 relative bg-black min-h-[100vh] lg:min-h-0">
-          <VideoPlayer src={selectedChannel.url} muted={muted} />
+          <VideoPlayer
+            src={selectedChannel.url}
+            channelId={selectedChannel.id}
+            muted={muted}
+            onError={(msg) => reportChannelError(selectedChannel.id, msg)}
+          />
 
           {/* Ad Banner - Fixed bottom, auto-hide with controls */}
           {currentAd && (

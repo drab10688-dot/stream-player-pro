@@ -73,6 +73,44 @@ export type Database = {
         }
         Relationships: []
       }
+      channel_health_logs: {
+        Row: {
+          channel_id: string
+          checked_at: string
+          checked_by: string | null
+          error_message: string | null
+          id: string
+          response_code: number | null
+          status: string
+        }
+        Insert: {
+          channel_id: string
+          checked_at?: string
+          checked_by?: string | null
+          error_message?: string | null
+          id?: string
+          response_code?: number | null
+          status?: string
+        }
+        Update: {
+          channel_id?: string
+          checked_at?: string
+          checked_by?: string | null
+          error_message?: string | null
+          id?: string
+          response_code?: number | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "channel_health_logs_channel_id_fkey"
+            columns: ["channel_id"]
+            isOneToOne: false
+            referencedRelation: "channels"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       channels: {
         Row: {
           category: string
