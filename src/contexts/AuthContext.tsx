@@ -1,5 +1,4 @@
 import React, { createContext, useContext, useState, ReactNode } from 'react';
-import { supabase } from '@/integrations/supabase/client';
 
 interface ClientInfo {
   id: string;
@@ -50,13 +49,8 @@ const getDeviceId = () => {
   return id;
 };
 
-// Detectar automáticamente si estamos en Lovable Cloud o en un servidor local/VPS.
-const isLovableCloud = typeof window !== 'undefined' && (
-  window.location.hostname.includes('lovable.app') || 
-  window.location.hostname.includes('lovableproject.com')
-);
-const LOCAL_API_URL = import.meta.env.VITE_LOCAL_API_URL || '';
-const useLocalApi = !isLovableCloud || !!LOCAL_API_URL;
+// API base URL: vacío = relativo al mismo servidor (VPS/local)
+const API_BASE = import.meta.env.VITE_LOCAL_API_URL || '';
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -66,37 +60,19 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const login = async (username: string, password: string) => {
     try {
-      let data: any;
+      const response = await fetch(`${API_BASE}/api/client/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password, device_id: getDeviceId() }),
+      });
+      const data = await response.json();
 
-      if (useLocalApi) {
-        // Modo local/VPS: llamar a la API Node.js (relativa o absoluta)
-        const baseUrl = LOCAL_API_URL || '';
-        const response = await fetch(`${baseUrl}/api/client/login`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username, password, device_id: getDeviceId() }),
-        });
-        data = await response.json();
-        if (!response.ok) {
-          return { success: false, error: data.error || 'Error de conexión' };
-        }
-      } else {
-        // Modo Cloud: usar edge function
-        const result = await supabase.functions.invoke('client-auth', {
-          body: { action: 'login', username, password, device_id: getDeviceId() }
-        });
+      if (!response.ok) {
+        return { success: false, error: data.error || 'Credenciales inválidas' };
+      }
 
-        console.log('client-auth result:', JSON.stringify(result.data), 'error:', result.error);
-
-        if (result.error) {
-          // Check if the error response contains data with an error message
-          const errMsg = (result.error as any)?.message || 'Error de conexión';
-          return { success: false, error: errMsg };
-        }
-        data = result.data;
-        if (!data || data.error) {
-          return { success: false, error: data?.error || 'Respuesta inválida del servidor' };
-        }
+      if (data.error) {
+        return { success: false, error: data.error };
       }
 
       setClient(data.client);
