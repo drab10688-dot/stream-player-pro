@@ -44,7 +44,17 @@ export const useAuth = () => {
 const getDeviceId = () => {
   let id = localStorage.getItem('device_id');
   if (!id) {
-    id = crypto.randomUUID();
+    // crypto.randomUUID() solo funciona en HTTPS/localhost
+    // Fallback para HTTP en VPS
+    try {
+      id = crypto.randomUUID();
+    } catch {
+      id = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+        const r = (Math.random() * 16) | 0;
+        const v = c === 'x' ? r : (r & 0x3) | 0x8;
+        return v.toString(16);
+      });
+    }
     localStorage.setItem('device_id', id);
   }
   return id;
