@@ -6,6 +6,18 @@ interface VideoPlayerProps {
   muted?: boolean;
 }
 
+const getYouTubeId = (url: string): string | null => {
+  const patterns = [
+    /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/,
+    /youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/,
+  ];
+  for (const pattern of patterns) {
+    const match = url.match(pattern);
+    if (match) return match[1];
+  }
+  return null;
+};
+
 const VideoPlayer = ({ src, muted = false }: VideoPlayerProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
@@ -117,6 +129,23 @@ const VideoPlayer = ({ src, muted = false }: VideoPlayerProps) => {
       }
     }
   };
+
+  const youtubeId = getYouTubeId(src);
+
+  if (youtubeId) {
+    return (
+      <div className="relative w-full h-full bg-black">
+        <iframe
+          className="w-full h-full"
+          src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&mute=${muted ? 1 : 0}&rel=0&modestbranding=1`}
+          title="YouTube video"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          allowFullScreen
+          style={{ border: 'none' }}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="relative w-full h-full bg-black">
