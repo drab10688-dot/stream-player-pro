@@ -133,8 +133,10 @@ const Dashboard = () => {
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
                     transition={{ delay: i * 0.02 }}
+                    tabIndex={0}
                     onClick={() => navigate(`/player/${ch.category}`, { state: { channel: ch } })}
-                    className="group glass-strong rounded-2xl p-4 text-left hover:border-primary/30 transition-all duration-300 cursor-pointer relative overflow-hidden"
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') navigate(`/player/${ch.category}`, { state: { channel: ch } }); }}
+                    className="group glass-strong rounded-2xl p-4 text-left hover:border-primary/30 transition-all duration-300 cursor-pointer relative overflow-hidden tv-focusable"
                   >
                     {/* Hover glow */}
                     <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 bg-gradient-to-br from-primary/5 to-transparent" />
