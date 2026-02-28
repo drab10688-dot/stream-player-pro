@@ -63,12 +63,12 @@ const LoginPage = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background relative overflow-hidden bg-grid">
-      {/* Ambient glow effects */}
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full bg-primary/5 blur-[150px]" />
-        <div className="absolute bottom-0 left-1/4 w-[400px] h-[400px] rounded-full bg-accent/5 blur-[120px]" />
-        <div className="absolute top-1/4 right-1/4 w-[300px] h-[300px] rounded-full bg-primary/3 blur-[100px]" />
+    <div className="min-h-screen flex items-center justify-center bg-background relative overflow-hidden">
+      {/* Soft ambient shapes */}
+      <div className="absolute inset-0 pointer-events-none overflow-hidden">
+        <div className="absolute top-[-20%] right-[-10%] w-[600px] h-[600px] rounded-full bg-primary/8 blur-[120px]" />
+        <div className="absolute bottom-[-15%] left-[-10%] w-[500px] h-[500px] rounded-full bg-accent/6 blur-[100px]" />
+        <div className="absolute top-[40%] left-[30%] w-[300px] h-[300px] rounded-full bg-primary/5 blur-[80px]" />
       </div>
 
       <motion.div
