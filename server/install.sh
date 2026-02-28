@@ -156,13 +156,13 @@ echo -e "${GREEN}   ✅ Frontend compilado y desplegado${NC}"
 # =============================================
 echo -e "${YELLOW}🌐 [5/7] Configurando Nginx...${NC}"
 
-# Generar config de Nginx con los valores correctos
+# Generar config de Nginx con protecciones de IP
 cat > /etc/nginx/sites-available/streambox << NGINXEOF
 server {
     listen ${WEB_PORT};
     server_name _;
+    server_tokens off;
 
-    # Frontend React
     root /var/www/streambox;
     index index.html;
 
@@ -170,7 +170,6 @@ server {
         try_files \$uri \$uri/ /index.html;
     }
 
-    # API Node.js
     location /api/ {
         proxy_pass http://127.0.0.1:3001;
         proxy_http_version 1.1;
@@ -181,7 +180,7 @@ server {
         proxy_set_header X-Real-IP \$remote_addr;
     }
 
-    # Proxy de Streams
+    # Proxy de Streams - IP origen OCULTA
     location /stream/ {
         auth_request /auth-stream;
         proxy_pass http://${STREAM_ORIGIN}/;
@@ -192,15 +191,33 @@ server {
         proxy_connect_timeout 300;
         proxy_send_timeout 300;
         proxy_read_timeout 300;
+
+        # SEGURIDAD: Ocultar todo sobre el origen
+        proxy_hide_header X-Powered-By;
+        proxy_hide_header Server;
+        proxy_hide_header Via;
+        proxy_hide_header X-Real-IP;
+        proxy_hide_header X-Forwarded-For;
+        proxy_hide_header X-Forwarded-Host;
+        proxy_hide_header X-Upstream;
+        proxy_hide_header X-Backend;
+        proxy_hide_header X-Request-Id;
+        proxy_set_header Host \$host;
+        proxy_set_header Referer "";
+        proxy_set_header Origin "";
+        proxy_redirect off;
     }
 
-    # Validación interna
     location = /auth-stream {
         internal;
         proxy_pass http://127.0.0.1:3001/api/validate-stream?username=\$arg_user&password=\$arg_pass;
         proxy_pass_request_body off;
         proxy_set_header Content-Length "";
         proxy_set_header X-Original-URI \$request_uri;
+    }
+
+    location ~ /\. {
+        deny all;
     }
 }
 NGINXEOF
