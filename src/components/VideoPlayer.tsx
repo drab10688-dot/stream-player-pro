@@ -35,7 +35,25 @@ const VideoPlayer = ({ src, muted = false }: VideoPlayerProps) => {
       } else if (Hls.isSupported()) {
         const hls = new Hls({
           enableWorker: true,
-          lowLatencyMode: true,
+          lowLatencyMode: false,
+          // Adaptive bitrate - like Netflix/YouTube
+          abrEwmaDefaultEstimate: 500000, // Start with low estimate (500kbps)
+          abrEwmaFastLive: 3,
+          abrEwmaSlowLive: 9,
+          abrEwmaFastVoD: 3,
+          abrEwmaSlowVoD: 9,
+          abrBandWidthFactor: 0.7, // Conservative bandwidth usage
+          abrBandWidthUpFactor: 0.5, // Slow to upgrade quality
+          maxBufferLength: 30, // Buffer up to 30s
+          maxMaxBufferLength: 60, // Allow up to 60s buffer
+          maxBufferSize: 30 * 1000 * 1000, // 30MB max buffer
+          maxBufferHole: 0.5,
+          // Recovery settings for bad connections
+          fragLoadingMaxRetry: 6,
+          fragLoadingRetryDelay: 1000,
+          manifestLoadingMaxRetry: 4,
+          levelLoadingMaxRetry: 4,
+          startLevel: -1, // Auto-select starting quality
         });
         hlsRef.current = hls;
         hls.loadSource(src);
@@ -46,8 +64,19 @@ const VideoPlayer = ({ src, muted = false }: VideoPlayerProps) => {
         });
         hls.on(Hls.Events.ERROR, (_, data) => {
           if (data.fatal) {
-            setError('Error al cargar el stream HLS');
-            setLoading(false);
+            switch (data.type) {
+              case Hls.ErrorTypes.NETWORK_ERROR:
+                // Try to recover from network errors
+                hls.startLoad();
+                break;
+              case Hls.ErrorTypes.MEDIA_ERROR:
+                hls.recoverMediaError();
+                break;
+              default:
+                setError('Error al cargar el stream');
+                setLoading(false);
+                break;
+            }
           }
         });
       } else {
@@ -79,14 +108,12 @@ const VideoPlayer = ({ src, muted = false }: VideoPlayerProps) => {
       await video.play();
       setLoading(false);
     } catch {
-      // Try muted autoplay
       video.muted = true;
       try {
         await video.play();
         setLoading(false);
       } catch {
         setLoading(false);
-        // User needs to click to play
       }
     }
   };
