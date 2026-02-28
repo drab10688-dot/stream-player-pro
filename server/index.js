@@ -597,6 +597,50 @@ app.get('/api/stats', authAdmin, async (req, res) => {
 });
 
 // =============================================
+// RUTA: CLIENTES POR EXPIRAR
+// =============================================
+app.get('/api/clients/expiring', authAdmin, async (req, res) => {
+  try {
+    const now = new Date();
+    const in1Day = new Date(Date.now() + 1 * 24 * 60 * 60 * 1000).toISOString();
+    const in3Days = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+    const in7Days = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    const nowISO = now.toISOString();
+
+    const { rows } = await pool.query(
+      `SELECT id, username, max_screens, expiry_date, notes, reseller_id 
+       FROM clients 
+       WHERE is_active = true AND expiry_date > $1 AND expiry_date <= $2 
+       ORDER BY expiry_date ASC`,
+      [nowISO, in7Days]
+    );
+
+    const clients = rows.map(c => {
+      const expDate = new Date(c.expiry_date);
+      let urgency = 'low';
+      if (expDate <= new Date(in1Day)) urgency = 'critical';
+      else if (expDate <= new Date(in3Days)) urgency = 'high';
+      
+      const diffMs = expDate.getTime() - now.getTime();
+      const days_left = Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
+      const hours_left = Math.max(0, Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)));
+
+      return { ...c, urgency, days_left, hours_left };
+    });
+
+    res.json({
+      total: clients.length,
+      critical: clients.filter(c => c.urgency === 'critical').length,
+      high: clients.filter(c => c.urgency === 'high').length,
+      low: clients.filter(c => c.urgency === 'low').length,
+      clients,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// =============================================
 // INICIAR SERVIDOR
 // =============================================
 app.listen(PORT, '0.0.0.0', () => {
