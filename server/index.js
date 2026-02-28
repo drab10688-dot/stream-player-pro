@@ -1096,9 +1096,7 @@ app.get('/api/clients/expiring', authAdmin, async (req, res) => {
 // =============================================
 // CLOUDFLARE TUNNEL - Gestión desde admin panel
 // =============================================
-const { spawn, execSync } = require('child_process');
-const fs = require('fs');
-const path = require('path');
+const { execSync } = require('child_process');
 
 let tunnelProcess = null;
 let tunnelUrl = null;
