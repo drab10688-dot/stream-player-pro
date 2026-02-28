@@ -1,12 +1,15 @@
 #!/bin/bash
 # =============================================
-# 🚀 StreamBox - Instalador Automático
+# 🚀 Omnisync - Instalador Automático v2.0
 # Sistema IPTV completo para Ubuntu Server
 # Uso: sudo bash install.sh
 # =============================================
-
-# NO usar set -e para poder manejar errores manualmente
-# set -e
+# Características:
+# • Detección y resolución automática de puertos ocupados
+# • Verificación de salud post-instalación
+# • Auto-corrección de errores comunes
+# • Reintentos automáticos
+# =============================================
 
 # Colores
 RED='\033[0;31m'
@@ -15,16 +18,77 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
+# =============================================
+# FUNCIONES AUXILIARES
+# =============================================
+
+log_ok()    { echo -e "${GREEN}   ✅ $1${NC}"; }
+log_warn()  { echo -e "${YELLOW}   ⚠️  $1${NC}"; }
+log_err()   { echo -e "${RED}   ❌ $1${NC}"; }
+log_info()  { echo -e "${CYAN}   ℹ️  $1${NC}"; }
+log_step()  { echo -e "${YELLOW}$1${NC}"; }
+
+# Encontrar un puerto libre a partir de uno dado
+find_free_port() {
+  local port=$1
+  while lsof -i :$port &>/dev/null || ss -tlnp | grep -q ":$port "; do
+    log_warn "Puerto $port está ocupado"
+    port=$((port + 1))
+  done
+  echo $port
+}
+
+# Liberar un puerto matando el proceso que lo usa
+kill_port() {
+  local port=$1
+  local pids=$(lsof -ti :$port 2>/dev/null)
+  if [ -n "$pids" ]; then
+    echo "$pids" | xargs kill -9 2>/dev/null || true
+    sleep 1
+    log_info "Puerto $port liberado"
+  fi
+}
+
+# Esperar a que un servicio esté listo
+wait_for_port() {
+  local port=$1
+  local name=$2
+  local max_wait=${3:-15}
+  local waited=0
+  while ! nc -z localhost $port 2>/dev/null; do
+    sleep 1
+    waited=$((waited + 1))
+    if [ $waited -ge $max_wait ]; then
+      return 1
+    fi
+  done
+  return 0
+}
+
+# Verificar salud de un endpoint HTTP
+check_health() {
+  local url=$1
+  local expected=$2
+  local response=$(curl -s -o /dev/null -w "%{http_code}" "$url" 2>/dev/null)
+  [ "$response" = "$expected" ]
+}
+
 echo -e "${CYAN}"
 echo "╔══════════════════════════════════════════╗"
-echo "║       🚀 StreamBox Installer v1.0        ║"
+echo "║       🚀 Omnisync Installer v2.0         ║"
 echo "║     Sistema IPTV Local para Ubuntu        ║"
 echo "╚══════════════════════════════════════════╝"
 echo -e "${NC}"
 
 # Verificar root
 if [ "$EUID" -ne 0 ]; then
-  echo -e "${RED}❌ Ejecuta este script como root: sudo bash install.sh${NC}"
+  log_err "Ejecuta este script como root: sudo bash install.sh"
+  exit 1
+fi
+
+# Verificar Ubuntu/Debian
+if ! command -v apt &> /dev/null; then
+  log_err "Este script requiere un sistema basado en Debian/Ubuntu"
   exit 1
 fi
 
@@ -35,11 +99,11 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 # =============================================
 # PASO 1: Recopilar información
 # =============================================
-echo -e "${YELLOW}📋 Configuración inicial${NC}"
+log_step "📋 Configuración inicial"
 echo ""
 
-read -p "📧 Email del administrador [admin@streambox.local]: " ADMIN_EMAIL
-ADMIN_EMAIL=${ADMIN_EMAIL:-admin@streambox.local}
+read -p "📧 Email del administrador [admin@omnisync.local]: " ADMIN_EMAIL
+ADMIN_EMAIL=${ADMIN_EMAIL:-admin@omnisync.local}
 
 read -sp "🔐 Contraseña del administrador [admin123]: " ADMIN_PASS
 ADMIN_PASS=${ADMIN_PASS:-admin123}
@@ -49,133 +113,226 @@ read -sp "🗄️  Contraseña para PostgreSQL [streambox_db_pass]: " DB_PASS
 DB_PASS=${DB_PASS:-streambox_db_pass}
 echo ""
 
-read -p "📺 IP origen de streams [201.182.249.222:8281]: " STREAM_ORIGIN
-STREAM_ORIGIN=${STREAM_ORIGIN:-201.182.249.222:8281}
-
-read -p "🌐 Puerto web [80]: " WEB_PORT
+read -p "🌐 Puerto web (Nginx) [80]: " WEB_PORT
 WEB_PORT=${WEB_PORT:-80}
 
 # Detectar IP del servidor
 SERVER_IP=$(hostname -I | awk '{print $1}')
 echo ""
-echo -e "${CYAN}🔍 IP detectada del servidor: ${SERVER_IP}${NC}"
-echo ""
+log_info "IP detectada del servidor: ${SERVER_IP}"
 
 # Generar JWT secret aleatorio
 JWT_SECRET=$(openssl rand -hex 32)
 
-echo -e "${GREEN}✅ Configuración lista. Iniciando instalación...${NC}"
+# =============================================
+# PASO 2: Verificar y resolver conflictos de puertos
+# =============================================
+log_step "🔍 [1/8] Verificando puertos..."
+
+# Puerto de la API (3001)
+API_PORT=3001
+if lsof -i :$API_PORT &>/dev/null; then
+  log_warn "Puerto $API_PORT ocupado. Intentando liberar..."
+  # Verificar si es una instalación anterior de streambox
+  PROC_NAME=$(lsof -i :$API_PORT -t 2>/dev/null | head -1 | xargs ps -p 2>/dev/null | tail -1 | awk '{print $NF}' 2>/dev/null)
+  
+  read -p "   ¿Liberar puerto $API_PORT (matar proceso)? [S/n]: " KILL_API
+  KILL_API=${KILL_API:-S}
+  if [[ "$KILL_API" =~ ^[Ss]$ ]]; then
+    kill_port $API_PORT
+  else
+    API_PORT=$(find_free_port $((API_PORT + 1)))
+    log_info "Usando puerto alternativo para API: $API_PORT"
+  fi
+fi
+
+# Puerto web (Nginx)
+if [ "$WEB_PORT" != "80" ] || lsof -i :$WEB_PORT &>/dev/null; then
+  if lsof -i :$WEB_PORT &>/dev/null; then
+    # Verificar si es nginx (normal si estamos reinstalando)
+    if lsof -i :$WEB_PORT 2>/dev/null | grep -q nginx; then
+      log_info "Puerto $WEB_PORT usado por Nginx (se reconfigurará)"
+    else
+      log_warn "Puerto $WEB_PORT ocupado por otro servicio"
+      read -p "   ¿Liberar puerto $WEB_PORT? [S/n]: " KILL_WEB
+      KILL_WEB=${KILL_WEB:-S}
+      if [[ "$KILL_WEB" =~ ^[Ss]$ ]]; then
+        kill_port $WEB_PORT
+      else
+        WEB_PORT=$(find_free_port $((WEB_PORT + 1)))
+        log_info "Usando puerto alternativo para web: $WEB_PORT"
+      fi
+    fi
+  fi
+fi
+
+log_ok "API: puerto $API_PORT | Web: puerto $WEB_PORT"
 echo ""
-sleep 2
+
+sleep 1
 
 # =============================================
-# PASO 2: Instalar dependencias del sistema
+# PASO 3: Instalar dependencias del sistema
 # =============================================
-echo -e "${YELLOW}📦 [1/7] Instalando dependencias del sistema...${NC}"
+log_step "📦 [2/8] Instalando dependencias del sistema..."
 
-apt update -qq
-apt install -y -qq postgresql postgresql-contrib nginx curl git build-essential > /dev/null 2>&1
+apt update -qq 2>/dev/null
+apt install -y -qq postgresql postgresql-contrib nginx curl git build-essential netcat-openbsd lsof > /dev/null 2>&1
 
-# Instalar Node.js 20 si no está instalado
+# Instalar Node.js 20 si no está o es muy viejo
 if ! command -v node &> /dev/null || [[ $(node -v | cut -d'.' -f1 | tr -d 'v') -lt 18 ]]; then
-  echo -e "${CYAN}   Instalando Node.js 20...${NC}"
+  log_info "Instalando Node.js 20..."
   curl -fsSL https://deb.nodesource.com/setup_20.x | bash - > /dev/null 2>&1
   apt install -y -qq nodejs > /dev/null 2>&1
 fi
-
-echo -e "${GREEN}   ✅ Node.js $(node -v) instalado${NC}"
+log_ok "Node.js $(node -v)"
 
 # Instalar PM2
 npm install -g pm2 > /dev/null 2>&1
-echo -e "${GREEN}   ✅ PM2 instalado${NC}"
+log_ok "PM2 instalado"
 
 # =============================================
-# PASO 3: Configurar PostgreSQL
+# PASO 4: Configurar PostgreSQL
 # =============================================
-echo -e "${YELLOW}🗄️  [2/7] Configurando PostgreSQL...${NC}"
+log_step "🗄️  [3/8] Configurando PostgreSQL..."
 
-systemctl start postgresql || { echo -e "${RED}❌ No se pudo iniciar PostgreSQL${NC}"; exit 1; }
+# Asegurar que PostgreSQL está corriendo
+systemctl start postgresql 2>/dev/null
 systemctl enable postgresql > /dev/null 2>&1
 
+if ! systemctl is-active --quiet postgresql; then
+  log_err "No se pudo iniciar PostgreSQL"
+  log_info "Intentando reparar..."
+  apt install -y --fix-broken postgresql > /dev/null 2>&1
+  systemctl start postgresql
+  if ! systemctl is-active --quiet postgresql; then
+    log_err "PostgreSQL no responde. Revisa: journalctl -u postgresql"
+    exit 1
+  fi
+fi
+
+# Limpiar instalación anterior
+sudo -u postgres psql -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'streambox' AND pid <> pg_backend_pid();" 2>/dev/null || true
+sudo -u postgres psql -c "DROP DATABASE IF EXISTS streambox;" 2>/dev/null || true
+sudo -u postgres psql -c "DROP USER IF EXISTS streambox_user;" 2>/dev/null || true
+
 # Crear usuario y base de datos
-echo -e "${CYAN}   Creando usuario y base de datos...${NC}"
-sudo -u postgres psql -c "DROP DATABASE IF EXISTS streambox;" 2>&1 || true
-sudo -u postgres psql -c "DROP USER IF EXISTS streambox_user;" 2>&1 || true
-sudo -u postgres psql -c "CREATE USER streambox_user WITH PASSWORD '${DB_PASS}';" 2>&1
+sudo -u postgres psql -c "CREATE USER streambox_user WITH PASSWORD '${DB_PASS}';" 2>/dev/null
 if [ $? -ne 0 ]; then
-  echo -e "${RED}❌ Error creando usuario PostgreSQL${NC}"
+  log_warn "Usuario ya existe, actualizando contraseña..."
+  sudo -u postgres psql -c "ALTER USER streambox_user WITH PASSWORD '${DB_PASS}';" 2>/dev/null
+fi
+
+sudo -u postgres psql -c "CREATE DATABASE streambox OWNER streambox_user;" 2>/dev/null
+if [ $? -ne 0 ]; then
+  log_err "Error creando base de datos"
   exit 1
 fi
 
-sudo -u postgres psql -c "CREATE DATABASE streambox OWNER streambox_user;" 2>&1
-if [ $? -ne 0 ]; then
-  echo -e "${RED}❌ Error creando base de datos${NC}"
-  exit 1
-fi
-
-# Importar schema (copiar a /tmp para evitar problemas de permisos)
-echo -e "${CYAN}   Importando schema...${NC}"
+# Importar schema
 cp "${SCRIPT_DIR}/database/schema.sql" /tmp/streambox_schema.sql
 chmod 644 /tmp/streambox_schema.sql
-sudo -u postgres psql -d streambox -f /tmp/streambox_schema.sql 2>&1
+sudo -u postgres psql -d streambox -f /tmp/streambox_schema.sql > /dev/null 2>&1
 rm -f /tmp/streambox_schema.sql
-if [ $? -ne 0 ]; then
-  echo -e "${RED}❌ Error importando schema. Verifica que existe: ${SCRIPT_DIR}/database/schema.sql${NC}"
-  exit 1
-fi
 
 # Dar permisos
-sudo -u postgres psql -d streambox -c "GRANT ALL ON ALL TABLES IN SCHEMA public TO streambox_user;" 2>&1
-sudo -u postgres psql -d streambox -c "GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO streambox_user;" 2>&1
+sudo -u postgres psql -d streambox -c "GRANT ALL ON ALL TABLES IN SCHEMA public TO streambox_user;" 2>/dev/null
+sudo -u postgres psql -d streambox -c "GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO streambox_user;" 2>/dev/null
+sudo -u postgres psql -d streambox -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO streambox_user;" 2>/dev/null
+sudo -u postgres psql -d streambox -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO streambox_user;" 2>/dev/null
 
-echo -e "${GREEN}   ✅ PostgreSQL configurado${NC}"
+# Verificar conexión
+if PGPASSWORD="${DB_PASS}" psql -h localhost -U streambox_user -d streambox -c "SELECT 1;" > /dev/null 2>&1; then
+  log_ok "PostgreSQL configurado y verificado"
+else
+  log_err "No se puede conectar a PostgreSQL con las credenciales"
+  log_info "Verifica pg_hba.conf y reinicia PostgreSQL"
+  # Intentar fix automático de pg_hba.conf
+  PG_HBA=$(find /etc/postgresql -name "pg_hba.conf" 2>/dev/null | head -1)
+  if [ -n "$PG_HBA" ]; then
+    if ! grep -q "streambox_user" "$PG_HBA"; then
+      echo "local   streambox   streambox_user   md5" >> "$PG_HBA"
+      echo "host    streambox   streambox_user   127.0.0.1/32   md5" >> "$PG_HBA"
+      systemctl restart postgresql
+      log_info "pg_hba.conf actualizado, reintentando..."
+      if PGPASSWORD="${DB_PASS}" psql -h localhost -U streambox_user -d streambox -c "SELECT 1;" > /dev/null 2>&1; then
+        log_ok "PostgreSQL conectado después de fix"
+      else
+        log_err "Aún no conecta. Revisa manualmente."
+        exit 1
+      fi
+    fi
+  fi
+fi
 
 # =============================================
-# PASO 4: Configurar la API
+# PASO 5: Configurar la API
 # =============================================
-echo -e "${YELLOW}⚙️  [3/7] Configurando API Node.js...${NC}"
+log_step "⚙️  [4/8] Configurando API Node.js..."
 
-# Crear directorio de instalación
+# Limpiar PM2 anterior
+pm2 delete streambox-api > /dev/null 2>&1 || true
+pm2 delete omnisync-api > /dev/null 2>&1 || true
+
+# Liberar puerto API por si acaso
+kill_port $API_PORT 2>/dev/null
+
+# Crear directorio
 mkdir -p /opt/streambox/server
 cp -r "${SCRIPT_DIR}"/* /opt/streambox/server/
 
-# Reemplazar configuración en index.js
+# Configurar index.js con los valores correctos
 sed -i "s|cambia-este-secreto-por-uno-seguro-abc123|${JWT_SECRET}|g" /opt/streambox/server/index.js
 sed -i "s|tu_password_seguro|${DB_PASS}|g" /opt/streambox/server/index.js
+sed -i "s|const PORT = 3001;|const PORT = ${API_PORT};|g" /opt/streambox/server/index.js
 
 # Instalar dependencias
 cd /opt/streambox/server
 npm install --production > /dev/null 2>&1
 
-echo -e "${GREEN}   ✅ API configurada${NC}"
+log_ok "API configurada en puerto $API_PORT"
 
 # =============================================
-# PASO 5: Compilar Frontend
+# PASO 6: Compilar Frontend
 # =============================================
-echo -e "${YELLOW}🎨 [4/7] Compilando frontend React...${NC}"
+log_step "🎨 [5/8] Compilando frontend React..."
 
 cd "${PROJECT_DIR}"
 
-# Crear .env para modo local
+# Determinar la URL de la API según el puerto web
+if [ "$WEB_PORT" = "80" ]; then
+  API_URL="http://${SERVER_IP}"
+else
+  API_URL="http://${SERVER_IP}:${WEB_PORT}"
+fi
+
 cat > .env.production << EOF
-VITE_LOCAL_API_URL=http://${SERVER_IP}
+VITE_LOCAL_API_URL=${API_URL}
 EOF
 
 npm install --legacy-peer-deps > /dev/null 2>&1
-npm run build > /dev/null 2>&1
+if ! npm run build > /dev/null 2>&1; then
+  log_warn "Error en build, reintentando con limpieza..."
+  rm -rf node_modules/.vite
+  npm run build > /dev/null 2>&1
+  if [ $? -ne 0 ]; then
+    log_err "Error compilando frontend. Revisa errores con: cd ${PROJECT_DIR} && npm run build"
+    exit 1
+  fi
+fi
 
 # Copiar build
 mkdir -p /var/www/streambox
+rm -rf /var/www/streambox/*
 cp -r dist/* /var/www/streambox/
 
-echo -e "${GREEN}   ✅ Frontend compilado y desplegado${NC}"
+log_ok "Frontend compilado y desplegado"
 
 # =============================================
-# PASO 6: Configurar Nginx
+# PASO 7: Configurar Nginx
 # =============================================
-echo -e "${YELLOW}🌐 [5/7] Configurando Nginx...${NC}"
+log_step "🌐 [6/8] Configurando Nginx..."
 
-# Generar config de Nginx con protecciones de IP
 cat > /etc/nginx/sites-available/streambox << NGINXEOF
 server {
     listen ${WEB_PORT};
@@ -185,55 +342,34 @@ server {
     root /var/www/streambox;
     index index.html;
 
+    # Frontend SPA
     location / {
         try_files \$uri \$uri/ /index.html;
     }
 
+    # API proxy
     location /api/ {
-        proxy_pass http://127.0.0.1:3001;
+        proxy_pass http://127.0.0.1:${API_PORT};
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection 'upgrade';
         proxy_set_header Host \$host;
         proxy_cache_bypass \$http_upgrade;
         proxy_set_header X-Real-IP \$remote_addr;
-    }
 
-    # Proxy de Streams - IP origen OCULTA
-    location /stream/ {
-        auth_request /auth-stream;
-        proxy_pass http://${STREAM_ORIGIN}/;
-        proxy_http_version 1.1;
-        proxy_set_header Connection "";
-        proxy_buffering off;
-        proxy_cache off;
+        # Timeout para restreaming
         proxy_connect_timeout 300;
         proxy_send_timeout 300;
         proxy_read_timeout 300;
 
-        # SEGURIDAD: Ocultar todo sobre el origen
-        proxy_hide_header X-Powered-By;
-        proxy_hide_header Server;
-        proxy_hide_header Via;
-        proxy_hide_header X-Real-IP;
-        proxy_hide_header X-Forwarded-For;
-        proxy_hide_header X-Forwarded-Host;
-        proxy_hide_header X-Upstream;
-        proxy_hide_header X-Backend;
-        proxy_hide_header X-Request-Id;
-        proxy_set_header Host \$host;
-        proxy_set_header Referer "";
-        proxy_set_header Origin "";
-        proxy_redirect off;
+        # Sin buffering para streams
+        proxy_buffering off;
     }
 
-    location = /auth-stream {
-        internal;
-        proxy_pass http://127.0.0.1:3001/api/validate-stream?username=\$arg_user&password=\$arg_pass;
-        proxy_pass_request_body off;
-        proxy_set_header Content-Length "";
-        proxy_set_header X-Original-URI \$request_uri;
-    }
+    # Seguridad
+    proxy_hide_header X-Powered-By;
+    proxy_hide_header Server;
+    proxy_hide_header Via;
 
     location ~ /\. {
         deny all;
@@ -243,71 +379,165 @@ NGINXEOF
 
 # Habilitar sitio
 rm -f /etc/nginx/sites-enabled/default
-ln -sf /etc/nginx/sites-available/streambox /etc/nginx/sites-enabled/
+rm -f /etc/nginx/sites-enabled/streambox 2>/dev/null
+ln -sf /etc/nginx/sites-available/streambox /etc/nginx/sites-enabled/streambox
 
-nginx -t > /dev/null 2>&1
+# Verificar config de Nginx
+if ! nginx -t > /dev/null 2>&1; then
+  log_err "Error en configuración de Nginx"
+  nginx -t
+  exit 1
+fi
+
 systemctl restart nginx
 systemctl enable nginx > /dev/null 2>&1
 
-echo -e "${GREEN}   ✅ Nginx configurado en puerto ${WEB_PORT}${NC}"
+log_ok "Nginx configurado en puerto $WEB_PORT"
 
 # =============================================
-# PASO 7: Iniciar API con PM2
+# PASO 8: Iniciar API con PM2
 # =============================================
-echo -e "${YELLOW}🚀 [6/7] Iniciando API...${NC}"
+log_step "🚀 [7/8] Iniciando API..."
 
 cd /opt/streambox/server
-pm2 delete streambox-api > /dev/null 2>&1 || true
-pm2 start index.js --name streambox-api > /dev/null 2>&1
+
+# Asegurar que el puerto está libre antes de iniciar
+kill_port $API_PORT 2>/dev/null
+
+pm2 start index.js --name streambox-api --max-restarts 10 --restart-delay 3000 > /dev/null 2>&1
 pm2 startup systemd -u root --hp /root > /dev/null 2>&1 || true
 pm2 save > /dev/null 2>&1
 
-echo -e "${GREEN}   ✅ API corriendo con PM2${NC}"
+# Esperar a que la API esté lista
+log_info "Esperando que la API responda..."
+if wait_for_port $API_PORT "API" 15; then
+  log_ok "API corriendo en puerto $API_PORT"
+else
+  log_err "La API no respondió en 15 segundos"
+  log_info "Revisando logs..."
+  pm2 logs streambox-api --lines 10 --nostream
+  echo ""
+  log_warn "Intentando reiniciar..."
+  pm2 restart streambox-api > /dev/null 2>&1
+  sleep 5
+  if wait_for_port $API_PORT "API" 10; then
+    log_ok "API corriendo después de reinicio"
+  else
+    log_err "API no arranca. Revisa: pm2 logs streambox-api"
+    exit 1
+  fi
+fi
 
 # =============================================
-# PASO 8: Crear administrador
+# PASO 9: Crear administrador y verificar salud
 # =============================================
-echo -e "${YELLOW}👤 [7/7] Creando administrador...${NC}"
+log_step "👤 [8/8] Creando administrador y verificando..."
 
-sleep 2  # Esperar a que la API esté lista
+sleep 2
 
-SETUP_RESPONSE=$(curl -s -X POST http://localhost:3001/api/admin/setup \
+SETUP_RESPONSE=$(curl -s -X POST http://localhost:${API_PORT}/api/admin/setup \
   -H "Content-Type: application/json" \
   -d "{\"email\":\"${ADMIN_EMAIL}\",\"password\":\"${ADMIN_PASS}\"}")
 
 if echo "$SETUP_RESPONSE" | grep -q "token"; then
-  echo -e "${GREEN}   ✅ Admin creado: ${ADMIN_EMAIL}${NC}"
+  log_ok "Admin creado: ${ADMIN_EMAIL}"
 else
-  echo -e "${YELLOW}   ⚠️  Admin ya existía o hubo un error: ${SETUP_RESPONSE}${NC}"
+  log_warn "Admin ya existía o error: $(echo $SETUP_RESPONSE | head -c 100)"
 fi
 
 # =============================================
-# Configurar firewall
+# VERIFICACIÓN DE SALUD COMPLETA
 # =============================================
+echo ""
+log_step "🏥 Verificación de salud del sistema..."
+
+HEALTH_OK=true
+
+# 1. PostgreSQL
+if systemctl is-active --quiet postgresql; then
+  log_ok "PostgreSQL: activo"
+else
+  log_err "PostgreSQL: inactivo"
+  HEALTH_OK=false
+fi
+
+# 2. API
+if wait_for_port $API_PORT "API" 3; then
+  log_ok "API (puerto $API_PORT): respondiendo"
+else
+  log_err "API (puerto $API_PORT): no responde"
+  HEALTH_OK=false
+fi
+
+# 3. Nginx
+if systemctl is-active --quiet nginx; then
+  log_ok "Nginx (puerto $WEB_PORT): activo"
+else
+  log_err "Nginx: inactivo"
+  HEALTH_OK=false
+fi
+
+# 4. Test end-to-end: login endpoint
+if check_health "http://localhost:${API_PORT}/api/channels/public" "200"; then
+  log_ok "Endpoint API: respondiendo correctamente"
+else
+  log_warn "Endpoint API: no devuelve 200 (puede ser normal si no hay canales)"
+fi
+
+# 5. Frontend
+if [ -f "/var/www/streambox/index.html" ]; then
+  log_ok "Frontend: desplegado"
+else
+  log_err "Frontend: no encontrado en /var/www/streambox/"
+  HEALTH_OK=false
+fi
+
+# Configurar firewall
 if command -v ufw &> /dev/null; then
   ufw allow ${WEB_PORT}/tcp > /dev/null 2>&1
   ufw allow 22/tcp > /dev/null 2>&1
 fi
 
 # =============================================
-# ¡LISTO!
+# RESULTADO FINAL
 # =============================================
 echo ""
-echo -e "${GREEN}╔══════════════════════════════════════════╗"
-echo "║      ✅ ¡StreamBox instalado con éxito!    ║"
-echo "╚══════════════════════════════════════════╝${NC}"
+if [ "$HEALTH_OK" = true ]; then
+  echo -e "${GREEN}╔══════════════════════════════════════════╗"
+  echo "║   ✅ ¡Omnisync instalado con éxito!       ║"
+  echo "╚══════════════════════════════════════════╝${NC}"
+else
+  echo -e "${YELLOW}╔══════════════════════════════════════════╗"
+  echo "║   ⚠️  Instalado con advertencias          ║"
+  echo "║   Revisa los errores arriba               ║"
+  echo "╚══════════════════════════════════════════╝${NC}"
+fi
+
 echo ""
-echo -e "${CYAN}🌐 Panel Admin:    http://${SERVER_IP}/admin${NC}"
-echo -e "${CYAN}📺 App Clientes:   http://${SERVER_IP}/login${NC}"
+if [ "$WEB_PORT" = "80" ]; then
+  echo -e "${CYAN}🌐 Panel Admin:    http://${SERVER_IP}/admin${NC}"
+  echo -e "${CYAN}📺 App Clientes:   http://${SERVER_IP}/login${NC}"
+else
+  echo -e "${CYAN}🌐 Panel Admin:    http://${SERVER_IP}:${WEB_PORT}/admin${NC}"
+  echo -e "${CYAN}📺 App Clientes:   http://${SERVER_IP}:${WEB_PORT}/login${NC}"
+fi
 echo -e "${CYAN}🔑 Admin Email:    ${ADMIN_EMAIL}${NC}"
+echo -e "${CYAN}⚙️  API Puerto:     ${API_PORT}${NC}"
+echo -e "${CYAN}🌐 Web Puerto:     ${WEB_PORT}${NC}"
 echo ""
 echo -e "${YELLOW}📋 Comandos útiles:${NC}"
-echo "   pm2 logs streambox-api    → Ver logs de la API"
-echo "   pm2 restart streambox-api → Reiniciar API"
-echo "   pm2 status                → Estado de servicios"
+echo "   pm2 logs streambox-api     → Ver logs de la API"
+echo "   pm2 restart streambox-api  → Reiniciar API"
+echo "   pm2 status                 → Estado de servicios"
+echo "   pm2 monit                  → Monitor en tiempo real"
 echo ""
 echo -e "${YELLOW}📁 Archivos instalados:${NC}"
-echo "   /var/www/streambox/       → Frontend"
-echo "   /opt/streambox/server/    → API Node.js"
-echo "   /etc/nginx/sites-available/streambox → Nginx"
+echo "   /var/www/streambox/            → Frontend"
+echo "   /opt/streambox/server/         → API Node.js"
+echo "   /etc/nginx/sites-available/    → Nginx config"
+echo ""
+echo -e "${YELLOW}🔧 Si hay problemas:${NC}"
+echo "   pm2 logs streambox-api --lines 50  → Ver errores"
+echo "   nginx -t                           → Verificar Nginx"
+echo "   systemctl status postgresql        → Estado de DB"
 echo ""
