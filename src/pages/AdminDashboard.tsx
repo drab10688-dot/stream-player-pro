@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAdminAuth } from '@/contexts/AdminAuthContext';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Tv, Users, Megaphone, Store, LogOut, LayoutDashboard, Bell, Activity } from 'lucide-react';
+import { Tv, Users, Megaphone, Store, LogOut, LayoutDashboard, Bell, Activity, Globe } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import AdminStats from '@/components/admin/AdminStats';
 import ChannelsManager from '@/components/admin/ChannelsManager';
@@ -11,6 +11,7 @@ import AdsManager from '@/components/admin/AdsManager';
 import ResellersManager from '@/components/admin/ResellersManager';
 import ExpirationAlerts from '@/components/admin/ExpirationAlerts';
 import ChannelMonitor from '@/components/admin/ChannelMonitor';
+import TunnelManager from '@/components/admin/TunnelManager';
 import omnisyncLogo from '@/assets/omnisync-logo.png';
 
 const AdminDashboard = () => {
@@ -81,6 +82,9 @@ const AdminDashboard = () => {
             <TabsTrigger value="monitor" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
               <Activity className="w-4 h-4" /> Monitoreo
             </TabsTrigger>
+            <TabsTrigger value="tunnel" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
+              <Globe className="w-4 h-4" /> Túnel
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="dashboard"><AdminStats /></TabsContent>
@@ -90,6 +94,7 @@ const AdminDashboard = () => {
           <TabsContent value="ads"><AdsManager /></TabsContent>
           <TabsContent value="alerts"><ExpirationAlerts /></TabsContent>
           <TabsContent value="monitor"><ChannelMonitor /></TabsContent>
+          <TabsContent value="tunnel"><TunnelManager /></TabsContent>
         </Tabs>
       </main>
     </div>
