@@ -3,6 +3,11 @@ const cors = require('cors');
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const http = require('http');
+const https = require('https');
+const { URL } = require('url');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 
 const app = express();
 app.use(cors());
@@ -241,23 +246,12 @@ app.post('/api/client/login', async (req, res) => {
       pool.query('SELECT id, title, message, image_url FROM ads WHERE is_active = true')
     ]);
 
-    // SEGURIDAD: Nunca exponer la URL real del origen.
-    // Convertir URLs a rutas de proxy local: /stream/{archivo}?user=X&pass=Y
-    const safeChannels = channelsRes.rows.map(ch => {
-      // Extraer solo el nombre del archivo/path (ej: "601.ts" de "http://1.2.3.4:8281/601.ts")
-      let streamPath = ch.url;
-      try {
-        const urlObj = new URL(ch.url);
-        streamPath = urlObj.pathname.replace(/^\//, '');
-      } catch {
-        // Si no es URL válida, asumir que ya es un path relativo
-        streamPath = ch.url.replace(/^\//, '');
-      }
-      return {
-        ...ch,
-        url: `/stream/${streamPath}`,
-      };
-    });
+    // RESTREAMING: Convertir URLs a rutas de proxy dinámico
+    // El cliente accede a /api/restream/{channelId} y el servidor hace proxy al origen
+    const safeChannels = channelsRes.rows.map(ch => ({
+      ...ch,
+      url: `/api/restream/${ch.id}`,
+    }));
 
     res.json({
       client: { id: client.id, username: client.username, max_screens: client.max_screens, expiry_date: client.expiry_date },
@@ -298,6 +292,190 @@ app.get('/api/validate-stream', async (req, res) => {
   }
 
   res.status(200).send('OK');
+});
+
+// =============================================
+// RUTA: RESTREAMING DINÁMICO
+// Proxy cualquier canal por su ID, ocultando la IP origen
+// Soporta: HLS (.m3u8), TS, MP4, y cualquier stream HTTP
+// =============================================
+app.get('/api/restream/:channelId', async (req, res) => {
+  try {
+    // Validar cliente autenticado (por query params o header)
+    const { user, pass } = req.query;
+    if (user && pass) {
+      const { rows } = await pool.query(
+        'SELECT id, is_active, expiry_date FROM clients WHERE username = $1 AND password = $2',
+        [user, pass]
+      );
+      if (rows.length === 0 || !rows[0].is_active || new Date(rows[0].expiry_date) < new Date()) {
+        return res.status(403).send('Forbidden');
+      }
+    }
+
+    // Obtener URL real del canal
+    const { rows: channels } = await pool.query(
+      'SELECT url FROM channels WHERE id = $1 AND is_active = true',
+      [req.params.channelId]
+    );
+
+    if (channels.length === 0) {
+      return res.status(404).json({ error: 'Canal no encontrado' });
+    }
+
+    const targetUrl = channels[0].url;
+
+    // Hacer proxy del stream
+    const parsedUrl = new URL(targetUrl);
+    const client = parsedUrl.protocol === 'https:' ? https : http;
+
+    const proxyReq = client.request(targetUrl, {
+      method: 'GET',
+      headers: {
+        'User-Agent': 'StreamBox/1.0',
+      },
+    }, (proxyRes) => {
+      // Copiar headers relevantes
+      const contentType = proxyRes.headers['content-type'];
+      if (contentType) res.setHeader('Content-Type', contentType);
+      if (proxyRes.headers['content-length']) res.setHeader('Content-Length', proxyRes.headers['content-length']);
+
+      // Headers de seguridad - no revelar origen
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('X-Powered-By', 'StreamBox');
+
+      // Para HLS: reescribir URLs internas del m3u8
+      if (contentType && contentType.includes('mpegurl') || targetUrl.includes('.m3u8')) {
+        let body = '';
+        proxyRes.on('data', (chunk) => { body += chunk.toString(); });
+        proxyRes.on('end', () => {
+          // Reescribir URLs relativas en el m3u8 para que pasen por nuestro proxy
+          const baseUrl = targetUrl.substring(0, targetUrl.lastIndexOf('/') + 1);
+          const rewritten = body.replace(/^(?!#)(.+\.ts.*)$/gm, (match) => {
+            if (match.startsWith('http')) return match; // Ya es absoluta
+            return baseUrl + match;
+          }).replace(/^(?!#)(.+\.m3u8.*)$/gm, (match) => {
+            if (match.startsWith('http')) return match;
+            return baseUrl + match;
+          });
+          res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+          res.send(rewritten);
+        });
+      } else {
+        // Para TS, MP4, etc: pipe directo
+        proxyRes.pipe(res);
+      }
+    });
+
+    proxyReq.on('error', (err) => {
+      console.error('Restream error:', err.message);
+      res.status(502).json({ error: 'No se pudo conectar al stream origen' });
+    });
+
+    proxyReq.setTimeout(30000, () => {
+      proxyReq.destroy();
+      res.status(504).json({ error: 'Timeout al conectar con el stream' });
+    });
+
+    proxyReq.end();
+
+    // Limpiar si el cliente se desconecta
+    req.on('close', () => {
+      proxyReq.destroy();
+    });
+  } catch (err) {
+    console.error('Restream error:', err);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// =============================================
+// RUTA: IMPORTAR CANALES DESDE M3U
+// Parsea listas M3U/M3U8 y las agrega como canales
+// =============================================
+app.post('/api/channels/import-m3u', authAdmin, async (req, res) => {
+  try {
+    const { m3u_content, m3u_url } = req.body;
+    let content = m3u_content;
+
+    // Si se proporcionó una URL, descargar el contenido
+    if (m3u_url && !content) {
+      const response = await new Promise((resolve, reject) => {
+        const client = m3u_url.startsWith('https') ? https : http;
+        client.get(m3u_url, (res) => {
+          let data = '';
+          res.on('data', chunk => data += chunk);
+          res.on('end', () => resolve(data));
+        }).on('error', reject);
+      });
+      content = response;
+    }
+
+    if (!content) {
+      return res.status(400).json({ error: 'Proporciona m3u_content o m3u_url' });
+    }
+
+    // Parsear M3U
+    const lines = content.split('\n').map(l => l.trim()).filter(l => l);
+    const channels = [];
+    let currentName = '';
+    let currentCategory = 'General';
+    let currentLogo = null;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+
+      if (line.startsWith('#EXTINF:')) {
+        // Extraer nombre
+        const nameMatch = line.match(/,(.+)$/);
+        currentName = nameMatch ? nameMatch[1].trim() : `Canal ${channels.length + 1}`;
+
+        // Extraer grupo/categoría
+        const groupMatch = line.match(/group-title="([^"]+)"/);
+        currentCategory = groupMatch ? groupMatch[1] : 'General';
+
+        // Extraer logo
+        const logoMatch = line.match(/tvg-logo="([^"]+)"/);
+        currentLogo = logoMatch ? logoMatch[1] : null;
+      } else if (!line.startsWith('#') && line.length > 0) {
+        // Es una URL de stream
+        channels.push({
+          name: currentName || `Canal ${channels.length + 1}`,
+          url: line,
+          category: currentCategory,
+          logo_url: currentLogo,
+          sort_order: channels.length,
+          is_active: true,
+        });
+        currentName = '';
+        currentCategory = 'General';
+        currentLogo = null;
+      }
+    }
+
+    if (channels.length === 0) {
+      return res.status(400).json({ error: 'No se encontraron canales en el contenido M3U' });
+    }
+
+    // Insertar canales
+    let inserted = 0;
+    for (const ch of channels) {
+      try {
+        await pool.query(
+          'INSERT INTO channels (name, url, category, logo_url, sort_order, is_active) VALUES ($1, $2, $3, $4, $5, $6)',
+          [ch.name, ch.url, ch.category, ch.logo_url, ch.sort_order, ch.is_active]
+        );
+        inserted++;
+      } catch (err) {
+        // Ignorar duplicados u otros errores individuales
+        console.error(`Error importando canal ${ch.name}:`, err.message);
+      }
+    }
+
+    res.json({ imported: inserted, total: channels.length });
+  } catch (err) {
+    res.status(500).json({ error: 'Error al importar M3U: ' + err.message });
+  }
 });
 
 // =============================================
