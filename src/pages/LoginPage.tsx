@@ -1,18 +1,46 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { motion } from 'framer-motion';
 import { Lock, User, Loader2, Play } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import omnisyncLogo from '@/assets/omnisync-logo.png';
+
+const SAVED_CREDS_KEY = 'omnisync_saved_credentials';
 
 const LoginPage = () => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [rememberMe, setRememberMe] = useState(false);
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
   const { toast } = useToast();
+
+  // Load saved credentials and auto-login
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(SAVED_CREDS_KEY);
+      if (saved) {
+        const { username: u, password: p } = JSON.parse(saved);
+        setUsername(u || '');
+        setPassword(p || '');
+        setRememberMe(true);
+        // Auto-login with saved credentials
+        if (u && p) {
+          setLoading(true);
+          login(u, p).then((result) => {
+            setLoading(false);
+            if (!result.success) {
+              localStorage.removeItem(SAVED_CREDS_KEY);
+            }
+          });
+        }
+      }
+    } catch {}
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -23,7 +51,13 @@ const LoginPage = () => {
     setLoading(true);
     const result = await login(username.trim(), password.trim());
     setLoading(false);
-    if (!result.success) {
+    if (result.success) {
+      if (rememberMe) {
+        localStorage.setItem(SAVED_CREDS_KEY, JSON.stringify({ username: username.trim(), password: password.trim() }));
+      } else {
+        localStorage.removeItem(SAVED_CREDS_KEY);
+      }
+    } else {
       toast({ title: 'Acceso denegado', description: result.error || 'Credenciales incorrectas', variant: 'destructive' });
     }
   };
@@ -96,6 +130,24 @@ const LoginPage = () => {
                 maxLength={50}
                 tabIndex={0}
               />
+            </motion.div>
+
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.45 }}
+              className="flex items-center gap-2"
+            >
+              <Checkbox
+                id="remember"
+                checked={rememberMe}
+                onCheckedChange={(checked) => setRememberMe(checked === true)}
+                className="tv-focusable"
+                tabIndex={0}
+              />
+              <Label htmlFor="remember" className="text-sm text-muted-foreground cursor-pointer">
+                Recordar credenciales
+              </Label>
             </motion.div>
 
             <motion.div
