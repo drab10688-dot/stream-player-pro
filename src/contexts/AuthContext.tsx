@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 
 interface ClientInfo {
@@ -72,12 +72,57 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [channels, setChannels] = useState<ChannelInfo[]>([]);
   const [ads, setAds] = useState<AdInfo[]>([]);
 
+  // Refresh channels & ads from DB (works in Lovable preview with realtime)
+  const refreshChannels = useCallback(async () => {
+    if (!isLovablePreview()) return;
+    const { data } = await supabase
+      .from('channels')
+      .select('id, name, url, category, logo_url, sort_order')
+      .eq('is_active', true)
+      .order('sort_order');
+    if (data) {
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const proxied = data.map(ch => ({
+        ...ch,
+        url: `${supabaseUrl}/functions/v1/video-proxy?url=${encodeURIComponent(ch.url)}`,
+      }));
+      setChannels(proxied);
+    }
+  }, []);
+
+  const refreshAds = useCallback(async () => {
+    if (!isLovablePreview()) return;
+    const { data } = await supabase
+      .from('ads')
+      .select('id, title, message, image_url')
+      .eq('is_active', true);
+    if (data) setAds(data);
+  }, []);
+
+  // Subscribe to realtime changes when logged in (Lovable preview only)
+  useEffect(() => {
+    if (!isLoggedIn || !isLovablePreview()) return;
+
+    const channel = supabase
+      .channel('client-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'channels' }, () => {
+        refreshChannels();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'ads' }, () => {
+        refreshAds();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [isLoggedIn, refreshChannels, refreshAds]);
+
   const login = async (username: string, password: string) => {
     try {
       let data: any;
 
       if (isLovablePreview()) {
-        // Lovable Cloud: usar edge function
         const { data: fnData, error: fnError } = await supabase.functions.invoke('client-auth', {
           body: { action: 'login', username, password, device_id: getDeviceId() },
         });
@@ -87,7 +132,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         }
         data = fnData;
       } else {
-        // VPS: usar API local relativa (Nginx proxy)
         const response = await fetch('/api/client/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
