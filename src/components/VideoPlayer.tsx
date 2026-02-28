@@ -1,5 +1,6 @@
 import { useRef, useEffect, useState } from 'react';
 import Hls from 'hls.js';
+import mpegts from 'mpegts.js';
 
 interface VideoPlayerProps {
   src: string;
@@ -23,6 +24,7 @@ const getYouTubeId = (url: string): string | null => {
 const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
+  const mpegtsRef = useRef<mpegts.Player | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -33,9 +35,17 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
     setError(null);
     setLoading(true);
 
+    // Cleanup previous players
     if (hlsRef.current) {
       hlsRef.current.destroy();
       hlsRef.current = null;
+    }
+    if (mpegtsRef.current) {
+      mpegtsRef.current.pause();
+      mpegtsRef.current.unload();
+      mpegtsRef.current.detachMediaElement();
+      mpegtsRef.current.destroy();
+      mpegtsRef.current = null;
     }
 
     // Detect stream type from the original URL (may be wrapped in proxy)
@@ -47,7 +57,7 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
       } catch { return src; }
     })();
     const isHLS = originalUrl.includes('.m3u8');
-    const isTsStream = originalUrl.endsWith('.ts') || originalUrl.match(/\/\d+\.ts/);
+    const isTsStream = originalUrl.endsWith('.ts') || !!originalUrl.match(/\/\d+\.ts/);
 
     const reportError = (msg: string) => {
       setError(msg);
@@ -56,9 +66,37 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
     };
 
     if (isTsStream && !isHLS) {
-      // Direct TS stream - play natively, HLS.js can't handle raw .ts
-      video.src = src;
-      attemptPlay(video);
+      // MPEG-TS stream → use mpegts.js for cross-browser support
+      if (mpegts.isSupported()) {
+        const player = mpegts.createPlayer({
+          type: 'mpegts',
+          isLive: true,
+          url: src,
+        }, {
+          enableWorker: true,
+          liveBufferLatencyChasing: true,
+          liveBufferLatencyMaxLatency: 3,
+          liveBufferLatencyMinRemain: 0.5,
+        });
+        mpegtsRef.current = player;
+        player.attachMediaElement(video);
+        player.load();
+
+        player.on(mpegts.Events.ERROR, (errorType: string, errorDetail: string) => {
+          console.error('mpegts error:', errorType, errorDetail);
+          reportError(`Error de stream: ${errorDetail || errorType}`);
+        });
+
+        player.on(mpegts.Events.LOADING_COMPLETE, () => {
+          setLoading(false);
+        });
+
+        attemptPlay(video);
+      } else {
+        // Fallback: try native playback
+        video.src = src;
+        attemptPlay(video);
+      }
     } else if (isHLS) {
       if (video.canPlayType('application/vnd.apple.mpegurl')) {
         video.src = src;
@@ -118,6 +156,15 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
       if (hlsRef.current) {
         hlsRef.current.destroy();
         hlsRef.current = null;
+      }
+      if (mpegtsRef.current) {
+        try {
+          mpegtsRef.current.pause();
+          mpegtsRef.current.unload();
+          mpegtsRef.current.detachMediaElement();
+          mpegtsRef.current.destroy();
+        } catch { /* ignore cleanup errors */ }
+        mpegtsRef.current = null;
       }
     };
   }, [src]);
