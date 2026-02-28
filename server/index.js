@@ -87,7 +87,17 @@ app.post('/api/admin/login', async (req, res) => {
 // RUTAS: CANALES (requiere admin)
 // =============================================
 app.get('/api/channels', authAdmin, async (req, res) => {
+  // Admin SÍ ve las URLs reales para poder editarlas
   const { rows } = await pool.query('SELECT * FROM channels ORDER BY sort_order');
+  res.json(rows);
+});
+
+// SEGURIDAD: Endpoint público de canales NO expone URLs reales
+app.get('/api/channels/public', async (req, res) => {
+  const { rows } = await pool.query(
+    'SELECT id, name, category, logo_url, sort_order FROM channels WHERE is_active = true ORDER BY sort_order'
+  );
+  // Solo devolver nombres, sin URLs
   res.json(rows);
 });
 
@@ -231,9 +241,27 @@ app.post('/api/client/login', async (req, res) => {
       pool.query('SELECT id, title, message, image_url FROM ads WHERE is_active = true')
     ]);
 
+    // SEGURIDAD: Nunca exponer la URL real del origen.
+    // Convertir URLs a rutas de proxy local: /stream/{archivo}?user=X&pass=Y
+    const safeChannels = channelsRes.rows.map(ch => {
+      // Extraer solo el nombre del archivo/path (ej: "601.ts" de "http://1.2.3.4:8281/601.ts")
+      let streamPath = ch.url;
+      try {
+        const urlObj = new URL(ch.url);
+        streamPath = urlObj.pathname.replace(/^\//, '');
+      } catch {
+        // Si no es URL válida, asumir que ya es un path relativo
+        streamPath = ch.url.replace(/^\//, '');
+      }
+      return {
+        ...ch,
+        url: `/stream/${streamPath}`,
+      };
+    });
+
     res.json({
       client: { id: client.id, username: client.username, max_screens: client.max_screens, expiry_date: client.expiry_date },
-      channels: channelsRes.rows,
+      channels: safeChannels,
       ads: adsRes.rows,
     });
   } catch (err) {
