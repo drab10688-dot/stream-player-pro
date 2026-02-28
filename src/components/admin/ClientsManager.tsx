@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '@/integrations/supabase/client';
+import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -27,8 +27,12 @@ const ClientsManager = () => {
   const [form, setForm] = useState({ username: '', password: '', max_screens: 1, expiry_date: '', notes: '' });
 
   const fetchClients = async () => {
-    const { data } = await supabase.from('clients').select('*').order('created_at', { ascending: false });
-    setClients(data || []);
+    try {
+      const data = await apiGet('/api/clients');
+      setClients(data || []);
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
     setLoading(false);
   };
 
@@ -47,19 +51,21 @@ const ClientsManager = () => {
       notes: form.notes.trim() || null,
     };
 
-    if (editingId) {
-      const { error } = await supabase.from('clients').update(payload).eq('id', editingId);
-      if (error) { toast({ title: 'Error', description: error.message, variant: 'destructive' }); return; }
-      toast({ title: 'Cliente actualizado' });
-    } else {
-      const { error } = await supabase.from('clients').insert({ ...payload, is_active: true });
-      if (error) { toast({ title: 'Error', description: error.message, variant: 'destructive' }); return; }
-      toast({ title: 'Cliente creado' });
+    try {
+      if (editingId) {
+        await apiPut(`/api/clients/${editingId}`, payload);
+        toast({ title: 'Cliente actualizado' });
+      } else {
+        await apiPost('/api/clients', { ...payload, is_active: true });
+        toast({ title: 'Cliente creado' });
+      }
+      setForm({ username: '', password: '', max_screens: 1, expiry_date: '', notes: '' });
+      setShowForm(false);
+      setEditingId(null);
+      fetchClients();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
     }
-    setForm({ username: '', password: '', max_screens: 1, expiry_date: '', notes: '' });
-    setShowForm(false);
-    setEditingId(null);
-    fetchClients();
   };
 
   const handleEdit = (c: Client) => {
@@ -75,15 +81,23 @@ const ClientsManager = () => {
   };
 
   const toggleActive = async (c: Client) => {
-    await supabase.from('clients').update({ is_active: !c.is_active }).eq('id', c.id);
-    fetchClients();
-    toast({ title: c.is_active ? 'Cliente suspendido' : 'Cliente activado' });
+    try {
+      await apiPut(`/api/clients/${c.id}`, { is_active: !c.is_active });
+      fetchClients();
+      toast({ title: c.is_active ? 'Cliente suspendido' : 'Cliente activado' });
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
   };
 
   const handleDelete = async (id: string) => {
-    await supabase.from('clients').delete().eq('id', id);
-    toast({ title: 'Cliente eliminado' });
-    fetchClients();
+    try {
+      await apiDelete(`/api/clients/${id}`);
+      toast({ title: 'Cliente eliminado' });
+      fetchClients();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
   };
 
   const isExpired = (date: string) => new Date(date) < new Date();
