@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { motion } from 'framer-motion';
-import { Lock, User, Loader2, Play } from 'lucide-react';
+import { Lock, User, Loader2, Play, Tv } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { useNavigate } from 'react-router-dom';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import omnisyncLogo from '@/assets/omnisync-logo.png';
@@ -18,6 +19,7 @@ const LoginPage = () => {
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
   const { toast } = useToast();
+  const navigate = useNavigate();
 
   // Load saved credentials and auto-login
   useEffect(() => {
@@ -165,6 +167,24 @@ const LoginPage = () => {
               </Button>
             </motion.div>
           </form>
+
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.6 }}
+            className="mt-5"
+          >
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => navigate('/install')}
+              tabIndex={0}
+              className="w-full h-12 2xl:h-14 rounded-xl border-primary/30 bg-primary/5 hover:bg-primary/10 text-primary font-medium text-base 2xl:text-lg tv-focusable gap-2"
+            >
+              <Tv className="w-5 h-5" />
+              Instalar en Smart TV
+            </Button>
+          </motion.div>
 
           <motion.div
             initial={{ opacity: 0 }}
