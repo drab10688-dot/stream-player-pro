@@ -8,3 +8,6 @@ verify_jwt = false
 
 [functions.import-m3u]
 verify_jwt = false
+
+[functions.channel-ping]
+verify_jwt = false

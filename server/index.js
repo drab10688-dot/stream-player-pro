@@ -115,7 +115,84 @@ app.get('/api/channels', authAdmin, async (req, res) => {
   res.json(rows);
 });
 
-// SEGURIDAD: Endpoint público de canales NO expone URLs reales
+// Ping de canales (requiere admin)
+app.post('/api/channels/ping', authAdmin, async (req, res) => {
+  try {
+    const { rows: channels } = await pool.query(
+      'SELECT id, name, url, category, logo_url FROM channels WHERE is_active = true'
+    );
+
+    const results = await Promise.all(channels.map(async (ch) => {
+      const start = Date.now();
+      try {
+        const isYouTube = /youtube\.com|youtu\.be/.test(ch.url);
+        if (isYouTube) {
+          return { id: ch.id, name: ch.name, category: ch.category, logo_url: ch.logo_url, status: 'online', response_time: 0, status_code: 200, error: null };
+        }
+
+        const parsedUrl = new URL(ch.url);
+        const httpClient = parsedUrl.protocol === 'https:' ? https : http;
+
+        const result = await new Promise((resolve) => {
+          const req = httpClient.request(ch.url, { method: 'GET', headers: { 'User-Agent': 'StreamBox-HealthCheck/1.0', 'Range': 'bytes=0-1024' } }, (response) => {
+            response.destroy(); // No necesitamos el body completo
+            const responseTime = Date.now() - start;
+            const isOk = response.statusCode >= 200 && response.statusCode < 400;
+            resolve({ id: ch.id, name: ch.name, category: ch.category, logo_url: ch.logo_url, status: isOk ? 'online' : 'offline', response_time: responseTime, status_code: response.statusCode, error: isOk ? null : `HTTP ${response.statusCode}` });
+          });
+          req.on('error', (err) => {
+            resolve({ id: ch.id, name: ch.name, category: ch.category, logo_url: ch.logo_url, status: 'offline', response_time: Date.now() - start, status_code: 0, error: err.message });
+          });
+          req.setTimeout(10000, () => { req.destroy(); resolve({ id: ch.id, name: ch.name, category: ch.category, logo_url: ch.logo_url, status: 'offline', response_time: 10000, status_code: 0, error: 'Timeout' }); });
+          req.end();
+        });
+
+        return result;
+      } catch (err) {
+        return { id: ch.id, name: ch.name, category: ch.category, logo_url: ch.logo_url, status: 'offline', response_time: Date.now() - start, status_code: 0, error: err.message };
+      }
+    }));
+
+    // Log offline channels
+    const offlineChannels = results.filter(r => r.status === 'offline');
+    if (offlineChannels.length > 0) {
+      for (const ch of offlineChannels) {
+        await pool.query(
+          'INSERT INTO channel_health_logs (channel_id, status, response_code, error_message, checked_by) VALUES ($1, $2, $3, $4, $5)',
+          [ch.id, 'error', ch.status_code, ch.error || 'Canal no responde', 'system:ping']
+        );
+      }
+    }
+
+    const online = results.filter(r => r.status === 'online').length;
+    const offline = offlineChannels.length;
+    res.json({ results, summary: { total: results.length, online, offline } });
+  } catch (err) {
+    console.error('Ping error:', err);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// Logs de salud de canales (requiere admin)
+app.get('/api/channel-health-logs', authAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT chl.*, json_build_object('name', c.name) as channels 
+       FROM channel_health_logs chl 
+       LEFT JOIN channels c ON c.id = chl.channel_id 
+       ORDER BY chl.checked_at DESC LIMIT 50`
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+app.delete('/api/channel-health-logs', authAdmin, async (req, res) => {
+  await pool.query('DELETE FROM channel_health_logs');
+  res.json({ ok: true });
+});
+
 app.get('/api/channels/public', async (req, res) => {
   const { rows } = await pool.query(
     'SELECT id, name, category, logo_url, sort_order FROM channels WHERE is_active = true ORDER BY sort_order'
