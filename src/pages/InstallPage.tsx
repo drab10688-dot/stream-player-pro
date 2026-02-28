@@ -173,7 +173,7 @@ const InstallPage = () => {
         </div>
 
         <p className="text-center text-slate-500 text-sm mt-10">
-          URL de la app: <span className="text-cyan-400 font-mono">{window.location.origin}</span>
+          Omnisync TV · Tu televisión en todas partes
         </p>
       </div>
     </div>
