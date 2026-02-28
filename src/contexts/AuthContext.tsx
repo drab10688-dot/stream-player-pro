@@ -136,9 +136,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       .order('sort_order');
     if (data) {
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const isYouTube = (url: string) => /youtube\.com|youtu\.be/.test(url);
       const proxied = data.map(ch => ({
         ...ch,
-        url: `${supabaseUrl}/functions/v1/video-proxy?url=${encodeURIComponent(ch.url)}`,
+        url: isYouTube(ch.url) ? ch.url : `${supabaseUrl}/functions/v1/video-proxy?url=${encodeURIComponent(ch.url)}`,
       }));
       setChannels(proxied);
     }

@@ -38,7 +38,16 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
       hlsRef.current = null;
     }
 
-    const isHLS = src.includes('.m3u8');
+    // Detect stream type from the original URL (may be wrapped in proxy)
+    const originalUrl = (() => {
+      try {
+        const u = new URL(src);
+        const proxied = u.searchParams.get('url');
+        return proxied || src;
+      } catch { return src; }
+    })();
+    const isHLS = originalUrl.includes('.m3u8');
+    const isTsStream = originalUrl.endsWith('.ts') || originalUrl.match(/\/\d+\.ts/);
 
     const reportError = (msg: string) => {
       setError(msg);
@@ -46,7 +55,11 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
       onError?.(msg);
     };
 
-    if (isHLS) {
+    if (isTsStream && !isHLS) {
+      // Direct TS stream - play natively, HLS.js can't handle raw .ts
+      video.src = src;
+      attemptPlay(video);
+    } else if (isHLS) {
       if (video.canPlayType('application/vnd.apple.mpegurl')) {
         video.src = src;
         attemptPlay(video);
