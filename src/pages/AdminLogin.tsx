@@ -4,8 +4,8 @@ import { Shield, Lock, Mail, Loader2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
-import { supabase } from '@/integrations/supabase/client';
 import { useNavigate } from 'react-router-dom';
+import { useAdminAuth } from '@/contexts/AdminAuthContext';
 
 const AdminLogin = () => {
   const [email, setEmail] = useState('');
@@ -14,6 +14,7 @@ const AdminLogin = () => {
   const [isSignup, setIsSignup] = useState(false);
   const { toast } = useToast();
   const navigate = useNavigate();
+  const { login, setup } = useAdminAuth();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -21,39 +22,20 @@ const AdminLogin = () => {
     setLoading(true);
 
     try {
-      if (isSignup) {
-        const { data, error } = await supabase.auth.signUp({ email, password });
-        if (error) throw error;
-        
-        // Try to make first admin
-        if (data.user) {
-          await supabase.functions.invoke('client-auth', {
-            body: { action: 'make_first_admin', user_id: data.user.id }
-          });
-        }
-        
-        toast({ title: 'Cuenta creada', description: 'Ahora inicia sesión' });
-        setIsSignup(false);
+      const result = isSignup
+        ? await setup(email.trim(), password.trim())
+        : await login(email.trim(), password.trim());
+
+      if (!result.success) {
+        toast({ title: 'Error', description: result.error, variant: 'destructive' });
       } else {
-        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
-
-        const { data: roles } = await supabase
-          .from('user_roles')
-          .select('role')
-          .eq('user_id', data.user.id);
-
-        if (!roles || roles.length === 0) {
-          await supabase.auth.signOut();
-          toast({ title: 'Sin permisos', description: 'No tienes rol de administrador', variant: 'destructive' });
-          setLoading(false);
-          return;
+        if (isSignup) {
+          toast({ title: 'Admin creado', description: 'Sesión iniciada' });
         }
-
         navigate('/admin/panel');
       }
     } catch (err: any) {
-      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+      toast({ title: 'Error', description: err.message || 'Error de conexión', variant: 'destructive' });
     } finally {
       setLoading(false);
     }
@@ -87,7 +69,7 @@ const AdminLogin = () => {
                 className="pl-10 bg-secondary border-border focus:border-accent h-12 text-foreground placeholder:text-muted-foreground" />
             </div>
             <Button type="submit" disabled={loading} className="w-full h-12 gradient-accent text-accent-foreground font-semibold">
-              {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : isSignup ? 'Crear Cuenta Admin' : 'Ingresar'}
+              {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : isSignup ? 'Crear Primer Admin' : 'Ingresar'}
             </Button>
           </form>
 

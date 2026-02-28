@@ -57,6 +57,25 @@ CREATE TABLE ads (
   created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
 );
 
+-- Resellers
+CREATE TABLE resellers (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  email TEXT,
+  phone TEXT,
+  username TEXT NOT NULL UNIQUE,
+  password TEXT NOT NULL,
+  max_clients INTEGER NOT NULL DEFAULT 10,
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  commission_percent NUMERIC(5,2) DEFAULT 0,
+  notes TEXT,
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+  updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
+);
+
+-- Agregar reseller_id a clients
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS reseller_id UUID REFERENCES resellers(id) ON DELETE SET NULL;
+
 -- Conexiones activas (control de pantallas)
 CREATE TABLE active_connections (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -82,10 +101,12 @@ CREATE TRIGGER update_clients_updated_at
   BEFORE UPDATE ON clients
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+CREATE TRIGGER update_resellers_updated_at
+  BEFORE UPDATE ON resellers
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
 -- =============================================
 -- DATOS INICIALES
--- Crear admin por defecto (password: admin123)
--- El hash se genera con bcrypt en la API
 -- =============================================
 -- INSERT INTO admins (email, password_hash) VALUES ('admin@streambox.local', '$2b$10$...');
 -- Nota: El primer admin se crea desde la API con /api/admin/setup
@@ -98,3 +119,6 @@ CREATE INDEX idx_clients_active ON clients(is_active);
 CREATE INDEX idx_channels_active ON channels(is_active);
 CREATE INDEX idx_connections_client ON active_connections(client_id);
 CREATE INDEX idx_connections_heartbeat ON active_connections(last_heartbeat);
+CREATE INDEX idx_resellers_username ON resellers(username);
+CREATE INDEX idx_resellers_active ON resellers(is_active);
+CREATE INDEX idx_clients_reseller ON clients(reseller_id);

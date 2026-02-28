@@ -1,11 +1,10 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '@/integrations/supabase/client';
+import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Plus, Trash2, Edit2, Save, X, Users, UserCheck, UserX, Store, Phone, Mail, Hash, Percent } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, Users, Store, Phone, Mail, Percent } from 'lucide-react';
 import { motion } from 'framer-motion';
-import { format } from 'date-fns';
 
 interface Reseller {
   id: string;
@@ -34,15 +33,12 @@ const ResellersManager = () => {
   });
 
   const fetchResellers = async () => {
-    const { data } = await supabase.from('resellers').select('*').order('created_at', { ascending: false });
-    if (data) {
-      // Get client counts per reseller
-      const { data: clients } = await supabase.from('clients').select('reseller_id');
-      const counts: Record<string, number> = {};
-      clients?.forEach(c => {
-        if (c.reseller_id) counts[c.reseller_id] = (counts[c.reseller_id] || 0) + 1;
-      });
-      setResellers(data.map(r => ({ ...r, client_count: counts[r.id] || 0 })));
+    try {
+      const data = await apiGet('/api/resellers');
+      setResellers(data || []);
+    } catch (err: any) {
+      // Resellers endpoint might not exist yet on older installs
+      setResellers([]);
     }
     setLoading(false);
   };
@@ -54,28 +50,30 @@ const ResellersManager = () => {
       toast({ title: 'Error', description: 'Nombre, usuario y contraseña son requeridos', variant: 'destructive' });
       return;
     }
-    const payload = {
-      name: form.name.trim(),
-      email: form.email.trim() || null,
-      phone: form.phone.trim() || null,
-      username: form.username.trim(),
-      password: form.password.trim(),
-      max_clients: form.max_clients,
-      commission_percent: form.commission_percent,
-      notes: form.notes.trim() || null,
-    };
+    try {
+      const payload = {
+        name: form.name.trim(),
+        email: form.email.trim() || null,
+        phone: form.phone.trim() || null,
+        username: form.username.trim(),
+        password: form.password.trim(),
+        max_clients: form.max_clients,
+        commission_percent: form.commission_percent,
+        notes: form.notes.trim() || null,
+      };
 
-    if (editingId) {
-      const { error } = await supabase.from('resellers').update(payload).eq('id', editingId);
-      if (error) { toast({ title: 'Error', description: error.message, variant: 'destructive' }); return; }
-      toast({ title: 'Reseller actualizado' });
-    } else {
-      const { error } = await supabase.from('resellers').insert({ ...payload, is_active: true });
-      if (error) { toast({ title: 'Error', description: error.message, variant: 'destructive' }); return; }
-      toast({ title: 'Reseller creado' });
+      if (editingId) {
+        await apiPut(`/api/resellers/${editingId}`, payload);
+        toast({ title: 'Reseller actualizado' });
+      } else {
+        await apiPost('/api/resellers', payload);
+        toast({ title: 'Reseller creado' });
+      }
+      resetForm();
+      fetchResellers();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
     }
-    resetForm();
-    fetchResellers();
   };
 
   const resetForm = () => {
@@ -96,24 +94,30 @@ const ResellersManager = () => {
   };
 
   const toggleActive = async (r: Reseller) => {
-    await supabase.from('resellers').update({ is_active: !r.is_active }).eq('id', r.id);
-    fetchResellers();
-    toast({ title: r.is_active ? 'Reseller suspendido' : 'Reseller activado' });
+    try {
+      await apiPut(`/api/resellers/${r.id}`, { ...r, is_active: !r.is_active });
+      fetchResellers();
+      toast({ title: r.is_active ? 'Reseller suspendido' : 'Reseller activado' });
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
   };
 
   const handleDelete = async (id: string) => {
-    // Unlink clients first
-    await supabase.from('clients').update({ reseller_id: null }).eq('reseller_id', id);
-    await supabase.from('resellers').delete().eq('id', id);
-    toast({ title: 'Reseller eliminado' });
-    fetchResellers();
+    try {
+      await apiDelete(`/api/resellers/${id}`);
+      toast({ title: 'Reseller eliminado' });
+      fetchResellers();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
   };
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="font-semibold text-xl text-foreground">Resellers ({resellers.length})</h2>
-        <Button onClick={() => { setShowForm(true); setEditingId(null); resetForm(); setShowForm(true); }} className="gradient-primary text-primary-foreground gap-2">
+        <Button onClick={() => { resetForm(); setShowForm(true); }} className="gradient-primary text-primary-foreground gap-2">
           <Plus className="w-4 h-4" /> Nuevo Reseller
         </Button>
       </div>
