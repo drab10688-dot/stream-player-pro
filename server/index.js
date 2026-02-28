@@ -114,12 +114,25 @@ app.post('/api/channels', authAdmin, async (req, res) => {
 });
 
 app.put('/api/channels/:id', authAdmin, async (req, res) => {
-  const { name, url, category, sort_order, is_active } = req.body;
-  const { rows } = await pool.query(
-    'UPDATE channels SET name=$1, url=$2, category=$3, sort_order=$4, is_active=$5 WHERE id=$6 RETURNING *',
-    [name, url, category, sort_order, is_active, req.params.id]
-  );
-  res.json(rows[0]);
+  try {
+    const { rows: current } = await pool.query('SELECT * FROM channels WHERE id = $1', [req.params.id]);
+    if (current.length === 0) return res.status(404).json({ error: 'Canal no encontrado' });
+
+    const c = current[0];
+    const name = req.body.name !== undefined ? req.body.name : c.name;
+    const url = req.body.url !== undefined ? req.body.url : c.url;
+    const category = req.body.category !== undefined ? req.body.category : c.category;
+    const sort_order = req.body.sort_order !== undefined ? req.body.sort_order : c.sort_order;
+    const is_active = req.body.is_active !== undefined ? req.body.is_active : c.is_active;
+
+    const { rows } = await pool.query(
+      'UPDATE channels SET name=$1, url=$2, category=$3, sort_order=$4, is_active=$5 WHERE id=$6 RETURNING *',
+      [name, url, category, sort_order, is_active, req.params.id]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 app.delete('/api/channels/:id', authAdmin, async (req, res) => {
@@ -149,12 +162,27 @@ app.post('/api/clients', authAdmin, async (req, res) => {
 });
 
 app.put('/api/clients/:id', authAdmin, async (req, res) => {
-  const { username, password, max_screens, expiry_date, is_active, notes } = req.body;
-  const { rows } = await pool.query(
-    'UPDATE clients SET username=$1, password=$2, max_screens=$3, expiry_date=$4, is_active=$5, notes=$6 WHERE id=$7 RETURNING *',
-    [username, password, max_screens, expiry_date, is_active, notes, req.params.id]
-  );
-  res.json(rows[0]);
+  try {
+    // Obtener datos actuales del cliente
+    const { rows: current } = await pool.query('SELECT * FROM clients WHERE id = $1', [req.params.id]);
+    if (current.length === 0) return res.status(404).json({ error: 'Cliente no encontrado' });
+
+    const c = current[0];
+    const username = req.body.username !== undefined ? req.body.username : c.username;
+    const password = req.body.password !== undefined ? req.body.password : c.password;
+    const max_screens = req.body.max_screens !== undefined ? req.body.max_screens : c.max_screens;
+    const expiry_date = req.body.expiry_date !== undefined ? req.body.expiry_date : c.expiry_date;
+    const is_active = req.body.is_active !== undefined ? req.body.is_active : c.is_active;
+    const notes = req.body.notes !== undefined ? req.body.notes : c.notes;
+
+    const { rows } = await pool.query(
+      'UPDATE clients SET username=$1, password=$2, max_screens=$3, expiry_date=$4, is_active=$5, notes=$6 WHERE id=$7 RETURNING *',
+      [username, password, max_screens, expiry_date, is_active, notes, req.params.id]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 app.delete('/api/clients/:id', authAdmin, async (req, res) => {
@@ -180,12 +208,24 @@ app.post('/api/ads', authAdmin, async (req, res) => {
 });
 
 app.put('/api/ads/:id', authAdmin, async (req, res) => {
-  const { title, message, image_url, is_active } = req.body;
-  const { rows } = await pool.query(
-    'UPDATE ads SET title=$1, message=$2, image_url=$3, is_active=$4 WHERE id=$5 RETURNING *',
-    [title, message, image_url, is_active, req.params.id]
-  );
-  res.json(rows[0]);
+  try {
+    const { rows: current } = await pool.query('SELECT * FROM ads WHERE id = $1', [req.params.id]);
+    if (current.length === 0) return res.status(404).json({ error: 'Ad no encontrado' });
+
+    const c = current[0];
+    const title = req.body.title !== undefined ? req.body.title : c.title;
+    const message = req.body.message !== undefined ? req.body.message : c.message;
+    const image_url = req.body.image_url !== undefined ? req.body.image_url : c.image_url;
+    const is_active = req.body.is_active !== undefined ? req.body.is_active : c.is_active;
+
+    const { rows } = await pool.query(
+      'UPDATE ads SET title=$1, message=$2, image_url=$3, is_active=$4 WHERE id=$5 RETURNING *',
+      [title, message, image_url, is_active, req.params.id]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 app.delete('/api/ads/:id', authAdmin, async (req, res) => {
@@ -224,8 +264,21 @@ app.post('/api/resellers', authAdmin, async (req, res) => {
 });
 
 app.put('/api/resellers/:id', authAdmin, async (req, res) => {
-  const { name, email, phone, username, password, max_clients, is_active, commission_percent, notes } = req.body;
   try {
+    const { rows: current } = await pool.query('SELECT * FROM resellers WHERE id = $1', [req.params.id]);
+    if (current.length === 0) return res.status(404).json({ error: 'Reseller no encontrado' });
+
+    const c = current[0];
+    const name = req.body.name !== undefined ? req.body.name : c.name;
+    const email = req.body.email !== undefined ? req.body.email : c.email;
+    const phone = req.body.phone !== undefined ? req.body.phone : c.phone;
+    const username = req.body.username !== undefined ? req.body.username : c.username;
+    const password = req.body.password !== undefined ? req.body.password : c.password;
+    const max_clients = req.body.max_clients !== undefined ? req.body.max_clients : c.max_clients;
+    const is_active = req.body.is_active !== undefined ? req.body.is_active : c.is_active;
+    const commission_percent = req.body.commission_percent !== undefined ? req.body.commission_percent : c.commission_percent;
+    const notes = req.body.notes !== undefined ? req.body.notes : c.notes;
+
     const { rows } = await pool.query(
       'UPDATE resellers SET name=$1, email=$2, phone=$3, username=$4, password=$5, max_clients=$6, is_active=$7, commission_percent=$8, notes=$9 WHERE id=$10 RETURNING *',
       [name, email, phone, username, password, max_clients, is_active, commission_percent, notes, req.params.id]
