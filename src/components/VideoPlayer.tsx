@@ -1,23 +1,10 @@
 import { useRef, useEffect, useState } from 'react';
 import Hls from 'hls.js';
-import { supabase } from '@/integrations/supabase/client';
 
 interface VideoPlayerProps {
   src: string;
   muted?: boolean;
 }
-
-const isLovablePreview = () => {
-  const host = window.location.hostname;
-  return host.includes('lovable.app') || host.includes('lovable.dev') || host === 'localhost';
-};
-
-const getProxiedUrl = (originalUrl: string) => {
-  if (!isLovablePreview()) return originalUrl;
-  // In Lovable preview, proxy through edge function to avoid CORS
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-  return `${supabaseUrl}/functions/v1/video-proxy?url=${encodeURIComponent(originalUrl)}`;
-};
 
 const VideoPlayer = ({ src, muted = false }: VideoPlayerProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -28,8 +15,6 @@ const VideoPlayer = ({ src, muted = false }: VideoPlayerProps) => {
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !src) return;
-    
-    const proxiedSrc = getProxiedUrl(src);
 
     setError(null);
     setLoading(true);
@@ -45,7 +30,7 @@ const VideoPlayer = ({ src, muted = false }: VideoPlayerProps) => {
     if (isHLS) {
       if (video.canPlayType('application/vnd.apple.mpegurl')) {
         // Safari native HLS
-        video.src = proxiedSrc;
+        video.src = src;
         attemptPlay(video);
       } else if (Hls.isSupported()) {
         const hls = new Hls({
@@ -71,7 +56,7 @@ const VideoPlayer = ({ src, muted = false }: VideoPlayerProps) => {
           startLevel: -1, // Auto-select starting quality
         });
         hlsRef.current = hls;
-        hls.loadSource(proxiedSrc);
+        hls.loadSource(src);
         hls.attachMedia(video);
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           setLoading(false);
@@ -100,7 +85,7 @@ const VideoPlayer = ({ src, muted = false }: VideoPlayerProps) => {
       }
     } else {
       // Direct stream (TS, MP4, etc.)
-      video.src = proxiedSrc;
+      video.src = src;
       attemptPlay(video);
     }
 

@@ -87,9 +87,16 @@ serve(async (req) => {
         supabase.from('ads').select('id, title, message, image_url').eq('is_active', true)
       ]);
 
+      // Proxy URLs through video-proxy edge function to avoid CORS
+      const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+      const safeChannels = (channelsRes.data || []).map(ch => ({
+        ...ch,
+        url: `${supabaseUrl}/functions/v1/video-proxy?url=${encodeURIComponent(ch.url)}`,
+      }));
+
       return new Response(JSON.stringify({
         client: { id: client.id, username: client.username, max_screens: client.max_screens, expiry_date: client.expiry_date },
-        channels: channelsRes.data || [],
+        channels: safeChannels,
         ads: adsRes.data || []
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
