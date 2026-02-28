@@ -11,6 +11,7 @@ import PlayerPage from "./pages/PlayerPage";
 import AdminLogin from "./pages/AdminLogin";
 import AdminDashboard from "./pages/AdminDashboard";
 import NotFound from "./pages/NotFound";
+import InstallPage from "./pages/InstallPage";
 
 const queryClient = new QueryClient();
 
@@ -29,6 +30,7 @@ const AppRoutes = () => {
       <Route path="/player/:category" element={<ProtectedRoute><PlayerPage /></ProtectedRoute>} />
       <Route path="/admin" element={<AdminLogin />} />
       <Route path="/admin/panel" element={<AdminDashboard />} />
+      <Route path="/install" element={<InstallPage />} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   );
