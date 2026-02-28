@@ -50,8 +50,11 @@ const getDeviceId = () => {
   return id;
 };
 
-// Si hay una API local configurada, usarla. Si no, usar Lovable Cloud.
+// Detectar automáticamente si estamos en Lovable Cloud o en un servidor local/VPS.
+// Si el hostname contiene "lovable.app", usamos edge functions. Si no, usamos la API local.
+const isLovableCloud = typeof window !== 'undefined' && window.location.hostname.includes('lovable.app');
 const LOCAL_API_URL = import.meta.env.VITE_LOCAL_API_URL || '';
+const useLocalApi = !isLovableCloud || !!LOCAL_API_URL;
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -63,9 +66,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     try {
       let data: any;
 
-      if (LOCAL_API_URL) {
-        // Modo local: llamar directamente a la API Node.js
-        const response = await fetch(`${LOCAL_API_URL}/api/client/login`, {
+      if (useLocalApi) {
+        // Modo local/VPS: llamar a la API Node.js (relativa o absoluta)
+        const baseUrl = LOCAL_API_URL || '';
+        const response = await fetch(`${baseUrl}/api/client/login`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ username, password, device_id: getDeviceId() }),
