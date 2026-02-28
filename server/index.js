@@ -25,6 +25,26 @@ const pool = new Pool({
   password: 'tu_password_seguro',
 });
 
+// Verificar conexión a la base de datos al iniciar
+pool.query('SELECT 1')
+  .then(() => console.log('✅ Conectado a PostgreSQL'))
+  .catch(err => {
+    console.error('❌ ERROR: No se pudo conectar a PostgreSQL:', err.message);
+    console.error('   Verifica que PostgreSQL esté corriendo y las credenciales sean correctas');
+  });
+
+// =============================================
+// HEALTH CHECK - para diagnóstico
+// =============================================
+app.get('/api/health', async (req, res) => {
+  try {
+    await pool.query('SELECT 1');
+    res.json({ status: 'ok', db: 'connected', uptime: process.uptime() });
+  } catch (err) {
+    res.status(500).json({ status: 'error', db: 'disconnected', error: err.message });
+  }
+});
+
 // =============================================
 // MIDDLEWARE: Verificar token de admin
 // =============================================
