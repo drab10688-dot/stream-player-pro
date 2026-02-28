@@ -141,4 +141,24 @@
       linear-gradient(90deg, hsl(175 85% 50% / 0.03) 1px, transparent 1px);
     background-size: 60px 60px;
   }
+
+  /* TV Focus States - D-pad navigation */
+  .tv-focusable:focus {
+    outline: 3px solid hsl(175 85% 50%);
+    outline-offset: 2px;
+    box-shadow: 0 0 20px hsl(175 85% 50% / 0.4);
+    transform: scale(1.05);
+    transition: all 0.2s ease;
+  }
+
+  .tv-focusable:focus-visible {
+    outline: 3px solid hsl(175 85% 50%);
+    outline-offset: 2px;
+    box-shadow: 0 0 20px hsl(175 85% 50% / 0.4);
+    transform: scale(1.05);
+  }
+
+  .tv-focusable {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
 }

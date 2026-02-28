@@ -73,8 +73,10 @@ const LoginPage = () => {
                 placeholder="Usuario"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                className="pl-11 bg-secondary/50 border-border/60 focus:border-primary/60 h-13 text-foreground placeholder:text-muted-foreground rounded-xl transition-all focus:bg-secondary/80"
+                className="pl-11 bg-secondary/50 border-border/60 focus:border-primary/60 h-13 text-foreground placeholder:text-muted-foreground rounded-xl transition-all focus:bg-secondary/80 tv-focusable text-lg"
                 maxLength={50}
+                tabIndex={0}
+                autoFocus
               />
             </motion.div>
 
@@ -90,8 +92,9 @@ const LoginPage = () => {
                 placeholder="Contraseña"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="pl-11 bg-secondary/50 border-border/60 focus:border-primary/60 h-13 text-foreground placeholder:text-muted-foreground rounded-xl transition-all focus:bg-secondary/80"
+                className="pl-11 bg-secondary/50 border-border/60 focus:border-primary/60 h-13 text-foreground placeholder:text-muted-foreground rounded-xl transition-all focus:bg-secondary/80 tv-focusable text-lg"
                 maxLength={50}
+                tabIndex={0}
               />
             </motion.div>
 
@@ -103,7 +106,8 @@ const LoginPage = () => {
               <Button
                 type="submit"
                 disabled={loading}
-                className="w-full h-13 gradient-primary text-primary-foreground font-semibold text-base rounded-xl hover:opacity-90 transition-all glow-primary"
+                tabIndex={0}
+                className="w-full h-13 gradient-primary text-primary-foreground font-semibold text-base rounded-xl hover:opacity-90 transition-all glow-primary tv-focusable text-lg"
               >
                 {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Conectar'}
               </Button>

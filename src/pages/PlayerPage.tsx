@@ -173,11 +173,18 @@ const PlayerPage = () => {
             {filteredChannels.map(ch => (
               <button
                 key={ch.id}
+                tabIndex={0}
                 onClick={() => {
                   setSelectedChannel(ch);
                   setShowList(false);
                 }}
-                className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-all duration-200 text-left ${
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    setSelectedChannel(ch);
+                    setShowList(false);
+                  }
+                }}
+                className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-all duration-200 text-left tv-focusable ${
                   selectedChannel.id === ch.id
                     ? 'bg-primary/10 border border-primary/20'
                     : 'hover:bg-secondary/40 border border-transparent'

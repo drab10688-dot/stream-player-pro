@@ -1,0 +1,12 @@
+{
+  "appId": "app.lovable.70102913b7b440f7af451e92f52dfb8a",
+  "appName": "Omnisync TV",
+  "webDir": "dist",
+  "server": {
+    "url": "https://70102913-b7b4-40f7-af45-1e92f52dfb8a.lovableproject.com?forceHideBadge=true",
+    "cleartext": true
+  },
+  "android": {
+    "allowMixedContent": true
+  }
+}
