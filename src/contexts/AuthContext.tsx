@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, ReactNode } from 'react';
+import { supabase } from '@/integrations/supabase/client';
 
 interface ClientInfo {
   id: string;
@@ -49,8 +50,9 @@ const getDeviceId = () => {
   return id;
 };
 
-// API base URL: vacío = relativo al mismo servidor (VPS/local)
+// Detectar entorno: si hay VITE_LOCAL_API_URL usa API local (VPS), sino usa edge function
 const API_BASE = import.meta.env.VITE_LOCAL_API_URL || '';
+const USE_LOCAL_API = !!import.meta.env.VITE_LOCAL_API_URL;
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -60,15 +62,28 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const login = async (username: string, password: string) => {
     try {
-      const response = await fetch(`${API_BASE}/api/client/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password, device_id: getDeviceId() }),
-      });
-      const data = await response.json();
+      let data: any;
 
-      if (!response.ok) {
-        return { success: false, error: data.error || 'Credenciales inválidas' };
+      if (USE_LOCAL_API) {
+        // VPS: usar API local de Node.js
+        const response = await fetch(`${API_BASE}/api/client/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password, device_id: getDeviceId() }),
+        });
+        data = await response.json();
+        if (!response.ok) {
+          return { success: false, error: data.error || 'Credenciales inválidas' };
+        }
+      } else {
+        // Lovable Cloud: usar edge function
+        const { data: fnData, error: fnError } = await supabase.functions.invoke('client-auth', {
+          body: { action: 'login', username, password, device_id: getDeviceId() },
+        });
+        if (fnError) {
+          return { success: false, error: 'Error de conexión al servidor' };
+        }
+        data = fnData;
       }
 
       if (data.error) {
