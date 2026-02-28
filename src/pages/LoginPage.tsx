@@ -57,7 +57,6 @@ const LoginPage = () => {
               </div>
               <div className="absolute inset-0 rounded-full animate-pulse-glow" />
             </div>
-            <h1 className="text-3xl font-bold text-gradient tracking-tight">Omnisync</h1>
             <p className="text-muted-foreground text-sm mt-2 tracking-wide">Tu televisión, en todas partes</p>
           </motion.div>
 
