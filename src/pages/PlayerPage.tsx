@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { ArrowLeft, Volume2, VolumeX, List, Search, Play } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { ArrowLeft, Volume2, VolumeX, List, Search, Play, Bell } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -12,13 +12,26 @@ import omnisyncLogo from '@/assets/omnisync-logo.png';
 const PlayerPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { channels } = useAuth();
+  const { channels, ads } = useAuth();
 
   const initialChannel = location.state?.channel || channels[0];
   const [selectedChannel, setSelectedChannel] = useState(initialChannel);
   const [muted, setMuted] = useState(false);
   const [showList, setShowList] = useState(true);
   const [search, setSearch] = useState('');
+  const [currentAdIndex, setCurrentAdIndex] = useState(0);
+
+  const activeAds = ads.filter(ad => ad.title || ad.message);
+  const currentAd = activeAds.length > 0 ? activeAds[currentAdIndex % activeAds.length] : null;
+
+  // Rotate ads every 15 seconds
+  useEffect(() => {
+    if (activeAds.length <= 1) return;
+    const interval = setInterval(() => {
+      setCurrentAdIndex(prev => (prev + 1) % activeAds.length);
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [activeAds.length]);
 
   const filteredChannels = channels.filter(ch =>
     ch.name.toLowerCase().includes(search.toLowerCase())
@@ -63,6 +76,20 @@ const PlayerPage = () => {
         {/* Video Player */}
         <div className="flex-1 relative bg-black min-h-[300px] lg:min-h-[500px]">
           <VideoPlayer src={selectedChannel.url} muted={muted} />
+          
+          {/* Ad Banner - Fixed bottom */}
+          {currentAd && (
+            <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-r from-black/90 via-black/80 to-black/90 backdrop-blur-sm border-t border-primary/20 px-4 py-2.5 flex items-center gap-3 z-10">
+              <Bell className="w-4 h-4 text-primary shrink-0 animate-pulse" />
+              <div className="flex items-center gap-2 overflow-hidden flex-1">
+                <span className="font-semibold text-primary text-sm shrink-0">{currentAd.title}</span>
+                <span className="text-white/70 text-sm truncate">{currentAd.message}</span>
+              </div>
+              {activeAds.length > 1 && (
+                <span className="text-white/30 text-xs shrink-0">{(currentAdIndex % activeAds.length) + 1}/{activeAds.length}</span>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
