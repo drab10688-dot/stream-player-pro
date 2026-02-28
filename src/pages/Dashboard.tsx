@@ -126,7 +126,7 @@ const Dashboard = () => {
                 <span className="text-xs text-muted-foreground bg-secondary/60 px-2 py-0.5 rounded-full">{group.channels.length}</span>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3 sm:gap-4">
                 {group.channels.map((ch, i) => (
                   <motion.button
                     key={ch.id}
@@ -136,21 +136,19 @@ const Dashboard = () => {
                     tabIndex={0}
                     onClick={() => navigate(`/player/${ch.category}`, { state: { channel: ch } })}
                     onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') navigate(`/player/${ch.category}`, { state: { channel: ch } }); }}
-                    className="group glass-strong rounded-2xl p-4 text-left hover:border-primary/30 transition-all duration-300 cursor-pointer relative overflow-hidden tv-focusable"
+                    className="group glass-strong rounded-2xl p-4 sm:p-5 2xl:p-6 text-left hover:border-primary/30 transition-all duration-300 cursor-pointer relative overflow-hidden tv-focusable"
                   >
-                    {/* Hover glow */}
                     <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 bg-gradient-to-br from-primary/5 to-transparent" />
-
                     <div className="relative">
-                      <div className="w-12 h-12 rounded-xl bg-secondary/60 flex items-center justify-center mb-3 overflow-hidden group-hover:scale-105 transition-transform duration-300">
+                      <div className="w-14 h-14 sm:w-16 sm:h-16 2xl:w-20 2xl:h-20 rounded-xl bg-secondary/60 flex items-center justify-center mb-3 overflow-hidden group-hover:scale-105 transition-transform duration-300">
                         {ch.logo_url ? (
                           <img src={ch.logo_url} alt={ch.name} className="w-full h-full object-cover rounded-xl" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
                         ) : (
-                          <Play className="w-5 h-5 text-primary" />
+                          <Play className="w-6 h-6 sm:w-7 sm:h-7 2xl:w-8 2xl:h-8 text-primary" />
                         )}
                       </div>
-                      <p className="font-medium text-foreground text-sm truncate">{ch.name}</p>
-                      <p className="text-muted-foreground text-xs mt-1 truncate">{ch.category}</p>
+                      <p className="font-medium text-foreground text-sm sm:text-base 2xl:text-lg truncate">{ch.name}</p>
+                      <p className="text-muted-foreground text-xs sm:text-sm mt-1 truncate">{ch.category}</p>
                     </div>
                   </motion.button>
                 ))}

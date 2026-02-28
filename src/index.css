@@ -191,23 +191,58 @@
     background-size: 60px 60px;
   }
 
-  /* TV Focus States - D-pad navigation */
-  .tv-focusable:focus {
-    outline: 3px solid hsl(175 85% 40%);
-    outline-offset: 2px;
-    box-shadow: 0 0 20px hsl(175 85% 40% / 0.3);
-    transform: scale(1.05);
-    transition: all 0.2s ease;
-  }
-
-  .tv-focusable:focus-visible {
-    outline: 3px solid hsl(175 85% 40%);
-    outline-offset: 2px;
-    box-shadow: 0 0 20px hsl(175 85% 40% / 0.3);
-    transform: scale(1.05);
-  }
-
+  /* TV Focus States - D-pad navigation (10ft UI) */
   .tv-focusable {
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    transition: transform 0.2s ease, box-shadow 0.2s ease, outline 0.2s ease;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .tv-focusable:focus,
+  .tv-focusable:focus-visible {
+    outline: 3px solid hsl(var(--primary));
+    outline-offset: 3px;
+    box-shadow: 0 0 24px hsl(var(--primary) / 0.35);
+    transform: scale(1.04);
+    z-index: 10;
+  }
+
+  /* Larger touch targets for TV & mobile */
+  @media (max-width: 640px), (min-width: 1920px) {
+    .tv-focusable {
+      min-height: 48px;
+      min-width: 48px;
+    }
+  }
+
+  /* TV 10ft UI overrides (large screens, likely TV) */
+  @media (min-width: 1920px) {
+    body {
+      font-size: 18px;
+    }
+
+    .tv-focusable:focus,
+    .tv-focusable:focus-visible {
+      outline-width: 4px;
+      outline-offset: 4px;
+      box-shadow: 0 0 36px hsl(var(--primary) / 0.4);
+      transform: scale(1.06);
+    }
+  }
+
+  /* Channel change indicator animation */
+  @keyframes slideInChannel {
+    0% { opacity: 0; transform: translateY(-20px) scale(0.9); }
+    20% { opacity: 1; transform: translateY(0) scale(1); }
+    80% { opacity: 1; transform: translateY(0) scale(1); }
+    100% { opacity: 0; transform: translateY(-10px) scale(0.95); }
+  }
+
+  .animate-channel-change {
+    animation: slideInChannel 2.5s ease-in-out forwards;
+  }
+
+  /* Swipe gesture helper */
+  .touch-pan-y {
+    touch-action: pan-y;
   }
 }
