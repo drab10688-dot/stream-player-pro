@@ -1,39 +1,38 @@
 import { useState } from 'react';
-import { motion } from 'framer-motion';
-import { ArrowLeft, Play, Volume2, VolumeX, Maximize, List, Search } from 'lucide-react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { ArrowLeft, Volume2, VolumeX, List, Search } from 'lucide-react';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-
-const mockChannels = [
-  { id: 1, name: 'ESPN HD', group: 'Deportes', url: '' },
-  { id: 2, name: 'Fox Sports', group: 'Deportes', url: '' },
-  { id: 3, name: 'ESPN 2', group: 'Deportes', url: '' },
-  { id: 4, name: 'HBO Max', group: 'Entretenimiento', url: '' },
-  { id: 5, name: 'TNT', group: 'Entretenimiento', url: '' },
-  { id: 6, name: 'CNN en Español', group: 'Noticias', url: '' },
-  { id: 7, name: 'Discovery Channel', group: 'Documentales', url: '' },
-  { id: 8, name: 'National Geographic', group: 'Documentales', url: '' },
-  { id: 9, name: 'Cartoon Network', group: 'Infantil', url: '' },
-  { id: 10, name: 'Disney Channel', group: 'Infantil', url: '' },
-  { id: 11, name: 'AMC', group: 'Películas', url: '' },
-  { id: 12, name: 'Star Channel', group: 'Películas', url: '' },
-];
+import { useAuth } from '@/contexts/AuthContext';
+import VideoPlayer from '@/components/VideoPlayer';
 
 const PlayerPage = () => {
   const navigate = useNavigate();
   const { category } = useParams();
-  const [selectedChannel, setSelectedChannel] = useState(mockChannels[0]);
+  const location = useLocation();
+  const { channels } = useAuth();
+
+  // Get initial channel from navigation state or first channel
+  const initialChannel = location.state?.channel || channels[0];
+  const [selectedChannel, setSelectedChannel] = useState(initialChannel);
   const [muted, setMuted] = useState(false);
   const [showList, setShowList] = useState(true);
   const [search, setSearch] = useState('');
 
-  const filteredChannels = mockChannels.filter(ch =>
+  const filteredChannels = channels.filter(ch =>
     ch.name.toLowerCase().includes(search.toLowerCase())
   );
 
-  const groups = [...new Set(filteredChannels.map(ch => ch.group))];
+  const groups = [...new Set(filteredChannels.map(ch => ch.category))];
+
+  if (!selectedChannel) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <p className="text-muted-foreground">No hay canales disponibles</p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background flex flex-col lg:flex-row">
@@ -47,15 +46,12 @@ const PlayerPage = () => {
             </Button>
             <div>
               <h1 className="font-display font-semibold text-foreground">{selectedChannel.name}</h1>
-              <p className="text-xs text-muted-foreground">{selectedChannel.group}</p>
+              <p className="text-xs text-muted-foreground">{selectedChannel.category}</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
             <Button variant="ghost" size="icon" onClick={() => setMuted(!muted)}>
               {muted ? <VolumeX className="w-5 h-5 text-muted-foreground" /> : <Volume2 className="w-5 h-5 text-foreground" />}
-            </Button>
-            <Button variant="ghost" size="icon">
-              <Maximize className="w-5 h-5 text-foreground" />
             </Button>
             <Button variant="ghost" size="icon" onClick={() => setShowList(!showList)} className="lg:hidden">
               <List className="w-5 h-5 text-foreground" />
@@ -64,30 +60,13 @@ const PlayerPage = () => {
         </div>
 
         {/* Video Player */}
-        <div className="flex-1 relative bg-black flex items-center justify-center min-h-[300px] lg:min-h-[500px]">
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="text-center"
-          >
-            <div className="w-20 h-20 rounded-full gradient-primary flex items-center justify-center mx-auto mb-4 animate-pulse-glow cursor-pointer">
-              <Play className="w-10 h-10 text-primary-foreground ml-1" />
-            </div>
-            <p className="text-foreground font-display font-semibold text-lg">{selectedChannel.name}</p>
-            <p className="text-muted-foreground text-sm mt-1">Selecciona un canal para reproducir</p>
-            <p className="text-muted-foreground text-xs mt-3 opacity-60">
-              Conecta tu servidor Xtream UI para ver contenido en vivo
-            </p>
-          </motion.div>
+        <div className="flex-1 relative bg-black min-h-[300px] lg:min-h-[500px]">
+          <VideoPlayer src={selectedChannel.url} muted={muted} />
         </div>
       </div>
 
       {/* Channel List Sidebar */}
-      <motion.div
-        initial={{ x: 300, opacity: 0 }}
-        animate={{ x: showList ? 0 : 300, opacity: showList ? 1 : 0 }}
-        className={`${showList ? 'block' : 'hidden'} lg:block w-full lg:w-80 border-l border-border/50 bg-card/80 backdrop-blur-xl`}
-      >
+      <div className={`${showList ? 'block' : 'hidden'} lg:block w-full lg:w-80 border-l border-border/50 bg-card/80 backdrop-blur-xl`}>
         <div className="p-4 border-b border-border/50">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -106,7 +85,7 @@ const PlayerPage = () => {
               <div key={group}>
                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-2 mb-2">{group}</p>
                 <div className="space-y-1">
-                  {filteredChannels.filter(ch => ch.group === group).map(ch => (
+                  {filteredChannels.filter(ch => ch.category === group).map(ch => (
                     <button
                       key={ch.id}
                       onClick={() => setSelectedChannel(ch)}
@@ -127,7 +106,7 @@ const PlayerPage = () => {
             ))}
           </div>
         </ScrollArea>
-      </motion.div>
+      </div>
     </div>
   );
 };
