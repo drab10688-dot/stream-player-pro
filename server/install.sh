@@ -435,6 +435,17 @@ log_step "👤 [8/8] Creando administrador y verificando..."
 
 sleep 2
 
+# Verificar health endpoint primero
+HEALTH_RESPONSE=$(curl -s http://localhost:${API_PORT}/api/health 2>/dev/null)
+if echo "$HEALTH_RESPONSE" | grep -q '"ok"'; then
+  log_ok "API health check: OK"
+else
+  log_err "API health check falló: $HEALTH_RESPONSE"
+  log_info "Revisando logs de PM2..."
+  pm2 logs streambox-api --lines 10 --nostream
+  echo ""
+fi
+
 SETUP_RESPONSE=$(curl -s -X POST http://localhost:${API_PORT}/api/admin/setup \
   -H "Content-Type: application/json" \
   -d "{\"email\":\"${ADMIN_EMAIL}\",\"password\":\"${ADMIN_PASS}\"}")
@@ -477,11 +488,14 @@ else
   HEALTH_OK=false
 fi
 
-# 4. Test end-to-end: login endpoint
-if check_health "http://localhost:${API_PORT}/api/channels/public" "200"; then
-  log_ok "Endpoint API: respondiendo correctamente"
+# 4. Test end-to-end: health endpoint
+if check_health "http://localhost:${API_PORT}/api/health" "200"; then
+  log_ok "Health endpoint: API + DB funcionando"
 else
-  log_warn "Endpoint API: no devuelve 200 (puede ser normal si no hay canales)"
+  log_err "Health endpoint: NO responde (posible error de DB)"
+  log_info "Mostrando últimos logs de la API:"
+  pm2 logs streambox-api --lines 15 --nostream
+  HEALTH_OK=false
 fi
 
 # 5. Frontend
