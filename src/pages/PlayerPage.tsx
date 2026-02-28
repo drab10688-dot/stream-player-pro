@@ -45,8 +45,14 @@ const PlayerPage = () => {
   // Change channel helper
   const changeChannel = useCallback((channel: typeof channels[0]) => {
     setSelectedChannel(channel);
+    setShowList(false);
+    setShowSearch(false);
+    setSearch('');
     const idx = channels.findIndex(ch => ch.id === channel.id);
     showChannelChange(channel, idx);
+    // Auto-hide controls after channel selection
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    hideTimerRef.current = setTimeout(() => setShowControls(false), 2500);
   }, [channels, showChannelChange]);
 
   // Rotate ads
