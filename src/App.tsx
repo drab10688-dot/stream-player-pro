@@ -7,7 +7,8 @@ import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import LoginPage from "./pages/LoginPage";
 import Dashboard from "./pages/Dashboard";
 import PlayerPage from "./pages/PlayerPage";
-import AdminPage from "./pages/AdminPage";
+import AdminLogin from "./pages/AdminLogin";
+import AdminDashboard from "./pages/AdminDashboard";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -25,7 +26,8 @@ const AppRoutes = () => {
       <Route path="/login" element={isLoggedIn ? <Navigate to="/" replace /> : <LoginPage />} />
       <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
       <Route path="/player/:category" element={<ProtectedRoute><PlayerPage /></ProtectedRoute>} />
-      <Route path="/admin" element={<ProtectedRoute><AdminPage /></ProtectedRoute>} />
+      <Route path="/admin" element={<AdminLogin />} />
+      <Route path="/admin/panel" element={<AdminDashboard />} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   );

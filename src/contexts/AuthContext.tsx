@@ -1,9 +1,35 @@
 import React, { createContext, useContext, useState, ReactNode } from 'react';
+import { supabase } from '@/integrations/supabase/client';
+
+interface ClientInfo {
+  id: string;
+  username: string;
+  max_screens: number;
+  expiry_date: string;
+}
+
+interface ChannelInfo {
+  id: string;
+  name: string;
+  url: string;
+  category: string;
+  logo_url: string | null;
+  sort_order: number;
+}
+
+interface AdInfo {
+  id: string;
+  title: string;
+  message: string;
+  image_url: string | null;
+}
 
 interface AuthContextType {
   isLoggedIn: boolean;
-  username: string;
-  login: (username: string, password: string) => Promise<boolean>;
+  client: ClientInfo | null;
+  channels: ChannelInfo[];
+  ads: AdInfo[];
+  login: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
 }
 
@@ -15,59 +41,54 @@ export const useAuth = () => {
   return ctx;
 };
 
-// The Xtream UI server URL is hidden here
-const XTREAM_SERVER_URL = "http://your-server-url.com";
+const getDeviceId = () => {
+  let id = localStorage.getItem('device_id');
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem('device_id', id);
+  }
+  return id;
+};
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [username, setUsername] = useState('');
+  const [client, setClient] = useState<ClientInfo | null>(null);
+  const [channels, setChannels] = useState<ChannelInfo[]>([]);
+  const [ads, setAds] = useState<AdInfo[]>([]);
 
-  const login = async (user: string, pass: string): Promise<boolean> => {
+  const login = async (username: string, password: string) => {
     try {
-      // Xtream UI API authentication
-      const response = await fetch(
-        `${XTREAM_SERVER_URL}/player_api.php?username=${encodeURIComponent(user)}&password=${encodeURIComponent(pass)}`
-      );
-      
-      if (response.ok) {
-        const data = await response.json();
-        if (data.user_info && data.user_info.auth === 1) {
-          setIsLoggedIn(true);
-          setUsername(user);
-          localStorage.setItem('xtream_user', user);
-          localStorage.setItem('xtream_pass', pass);
-          return true;
-        }
+      const { data, error } = await supabase.functions.invoke('client-auth', {
+        body: { action: 'login', username, password, device_id: getDeviceId() }
+      });
+
+      if (error) {
+        return { success: false, error: 'Error de conexión' };
       }
-      
-      // For demo purposes, allow demo login
-      if (user === 'demo' && pass === 'demo') {
-        setIsLoggedIn(true);
-        setUsername(user);
-        return true;
+
+      if (data.error) {
+        return { success: false, error: data.error };
       }
-      
-      return false;
+
+      setClient(data.client);
+      setChannels(data.channels || []);
+      setAds(data.ads || []);
+      setIsLoggedIn(true);
+      return { success: true };
     } catch {
-      // For demo, allow offline login
-      if (user === 'demo' && pass === 'demo') {
-        setIsLoggedIn(true);
-        setUsername(user);
-        return true;
-      }
-      return false;
+      return { success: false, error: 'Error de conexión al servidor' };
     }
   };
 
   const logout = () => {
     setIsLoggedIn(false);
-    setUsername('');
-    localStorage.removeItem('xtream_user');
-    localStorage.removeItem('xtream_pass');
+    setClient(null);
+    setChannels([]);
+    setAds([]);
   };
 
   return (
-    <AuthContext.Provider value={{ isLoggedIn, username, login, logout }}>
+    <AuthContext.Provider value={{ isLoggedIn, client, channels, ads, login, logout }}>
       {children}
     </AuthContext.Provider>
   );
