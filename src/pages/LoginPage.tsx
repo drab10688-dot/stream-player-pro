@@ -94,20 +94,20 @@ const LoginPage = () => {
             <p className="text-muted-foreground text-sm mt-2 tracking-wide">Tu televisión, en todas partes</p>
           </motion.div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-5">
             <motion.div
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: 0.3 }}
               className="relative"
             >
-              <User className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <User className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
               <Input
                 type="text"
                 placeholder="Usuario"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                className="pl-11 bg-secondary/50 border-border/60 focus:border-primary/60 h-13 text-foreground placeholder:text-muted-foreground rounded-xl transition-all focus:bg-secondary/80 tv-focusable text-lg"
+                className="pl-12 bg-secondary/50 border-border/60 focus:border-primary/60 h-14 2xl:h-16 text-foreground placeholder:text-muted-foreground rounded-xl transition-all focus:bg-secondary/80 tv-focusable text-lg 2xl:text-xl"
                 maxLength={50}
                 tabIndex={0}
                 autoFocus
@@ -120,13 +120,13 @@ const LoginPage = () => {
               transition={{ delay: 0.4 }}
               className="relative"
             >
-              <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
               <Input
                 type="password"
                 placeholder="Contraseña"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="pl-11 bg-secondary/50 border-border/60 focus:border-primary/60 h-13 text-foreground placeholder:text-muted-foreground rounded-xl transition-all focus:bg-secondary/80 tv-focusable text-lg"
+                className="pl-12 bg-secondary/50 border-border/60 focus:border-primary/60 h-14 2xl:h-16 text-foreground placeholder:text-muted-foreground rounded-xl transition-all focus:bg-secondary/80 tv-focusable text-lg 2xl:text-xl"
                 maxLength={50}
                 tabIndex={0}
               />
@@ -136,16 +136,16 @@ const LoginPage = () => {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ delay: 0.45 }}
-              className="flex items-center gap-2"
+              className="flex items-center gap-3"
             >
               <Checkbox
                 id="remember"
                 checked={rememberMe}
                 onCheckedChange={(checked) => setRememberMe(checked === true)}
-                className="tv-focusable"
+                className="tv-focusable w-5 h-5 2xl:w-6 2xl:h-6"
                 tabIndex={0}
               />
-              <Label htmlFor="remember" className="text-sm text-muted-foreground cursor-pointer">
+              <Label htmlFor="remember" className="text-sm 2xl:text-base text-muted-foreground cursor-pointer">
                 Recordar credenciales
               </Label>
             </motion.div>
@@ -159,7 +159,7 @@ const LoginPage = () => {
                 type="submit"
                 disabled={loading}
                 tabIndex={0}
-                className="w-full h-13 gradient-primary text-primary-foreground font-semibold text-base rounded-xl hover:opacity-90 transition-all glow-primary tv-focusable text-lg"
+                className="w-full h-14 2xl:h-16 gradient-primary text-primary-foreground font-semibold text-lg 2xl:text-xl rounded-xl hover:opacity-90 transition-all glow-primary tv-focusable"
               >
                 {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Conectar'}
               </Button>
