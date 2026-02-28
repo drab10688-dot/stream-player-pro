@@ -527,12 +527,148 @@ const getCachedM3U8 = async (channelId, targetUrl) => {
 };
 
 // =============================================
-// RUTA: RESTREAMING DINÁMICO CON CACHÉ COMPARTIDO
-// Una conexión al origen → múltiples clientes
+// RUTA: RESTREAMING COMPARTIDO
+// UNA sola conexión al origen → múltiples clientes
+// Buffer circular en memoria por canal
 // =============================================
+const activeStreams = new Map(); // channelId -> { clients: Set<res>, sourceReq, buffer: Buffer[], url }
+
+// Iniciar stream compartido para un canal
+function startSharedStream(channelId, targetUrl) {
+  if (activeStreams.has(channelId)) return activeStreams.get(channelId);
+
+  const stream = {
+    clients: new Set(),
+    sourceReq: null,
+    buffer: [],        // Últimos N chunks para enviar a nuevos clientes
+    maxBuffer: 20,     // Mantener últimos 20 chunks (~2-4 segundos)
+    url: targetUrl,
+    contentType: null,
+    reconnecting: false,
+    retryCount: 0,
+    maxRetries: 10,
+  };
+  activeStreams.set(channelId, stream);
+
+  function connect() {
+    if (stream.reconnecting) return;
+    stream.reconnecting = true;
+
+    const parsedUrl = new URL(targetUrl);
+    const httpClient = parsedUrl.protocol === 'https:' ? https : http;
+
+    console.log(`🔌 [${channelId}] Conectando al origen: ${targetUrl} (clientes: ${stream.clients.size})`);
+
+    const proxyReq = httpClient.request(targetUrl, {
+      method: 'GET',
+      headers: { 'User-Agent': 'StreamBox/1.0' },
+    }, (proxyRes) => {
+      stream.reconnecting = false;
+      stream.retryCount = 0;
+      stream.contentType = proxyRes.headers['content-type'] || 'video/mp2t';
+      stream.sourceReq = proxyReq;
+
+      console.log(`✅ [${channelId}] Conectado al origen (${stream.contentType})`);
+
+      proxyRes.on('data', (chunk) => {
+        // Agregar al buffer circular
+        stream.buffer.push(chunk);
+        if (stream.buffer.length > stream.maxBuffer) {
+          stream.buffer.shift();
+        }
+
+        // Enviar chunk a TODOS los clientes conectados
+        const deadClients = [];
+        stream.clients.forEach((clientRes) => {
+          try {
+            if (!clientRes.writableEnded) {
+              clientRes.write(chunk);
+            } else {
+              deadClients.push(clientRes);
+            }
+          } catch {
+            deadClients.push(clientRes);
+          }
+        });
+
+        // Limpiar clientes muertos
+        deadClients.forEach(c => stream.clients.delete(c));
+
+        // Si no quedan clientes, cerrar conexión al origen
+        if (stream.clients.size === 0) {
+          console.log(`🔴 [${channelId}] Sin clientes, cerrando conexión al origen`);
+          proxyReq.destroy();
+          activeStreams.delete(channelId);
+        }
+      });
+
+      proxyRes.on('end', () => {
+        console.log(`⚠️ [${channelId}] Stream del origen terminó`);
+        stream.sourceReq = null;
+        // Reconectar si hay clientes
+        if (stream.clients.size > 0) {
+          reconnect();
+        } else {
+          activeStreams.delete(channelId);
+        }
+      });
+
+      proxyRes.on('error', (err) => {
+        console.error(`❌ [${channelId}] Error en stream origen:`, err.message);
+        stream.sourceReq = null;
+        if (stream.clients.size > 0) {
+          reconnect();
+        } else {
+          activeStreams.delete(channelId);
+        }
+      });
+    });
+
+    proxyReq.on('error', (err) => {
+      console.error(`❌ [${channelId}] Error conectando al origen:`, err.message);
+      stream.reconnecting = false;
+      stream.sourceReq = null;
+      if (stream.clients.size > 0) {
+        reconnect();
+      } else {
+        activeStreams.delete(channelId);
+      }
+    });
+
+    proxyReq.setTimeout(30000, () => {
+      proxyReq.destroy();
+      stream.reconnecting = false;
+      if (stream.clients.size > 0) {
+        reconnect();
+      }
+    });
+
+    proxyReq.end();
+  }
+
+  function reconnect() {
+    stream.retryCount++;
+    if (stream.retryCount > stream.maxRetries) {
+      console.error(`💀 [${channelId}] Máximo de reintentos alcanzado, cerrando`);
+      stream.clients.forEach(c => { try { c.end(); } catch {} });
+      activeStreams.delete(channelId);
+      return;
+    }
+    const delay = Math.min(1000 * stream.retryCount, 10000);
+    console.log(`🔄 [${channelId}] Reconectando en ${delay}ms (intento ${stream.retryCount}/${stream.maxRetries})`);
+    setTimeout(() => {
+      stream.reconnecting = false;
+      connect();
+    }, delay);
+  }
+
+  connect();
+  return stream;
+}
+
 app.get('/api/restream/:channelId', async (req, res) => {
   try {
-    // Validar cliente autenticado (por query params o header)
+    // Validar cliente autenticado (opcional por query params)
     const { user, pass } = req.query;
     if (user && pass) {
       const { rows } = await pool.query(
@@ -557,9 +693,10 @@ app.get('/api/restream/:channelId', async (req, res) => {
     const targetUrl = channels[0].url;
     const channelId = req.params.channelId;
 
-    // Headers de seguridad
+    // Headers
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('X-Powered-By', 'StreamBox');
+    res.setHeader('Cache-Control', 'no-cache, no-store');
 
     // Para HLS: cachear y servir manifiestos
     const isHLS = targetUrl.includes('.m3u8');
@@ -567,7 +704,6 @@ app.get('/api/restream/:channelId', async (req, res) => {
       try {
         const manifest = await getCachedM3U8(channelId, targetUrl);
         res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-        res.setHeader('Cache-Control', 'no-cache');
         res.send(manifest);
       } catch (err) {
         console.error('HLS cache error:', err.message);
@@ -576,37 +712,30 @@ app.get('/api/restream/:channelId', async (req, res) => {
       return;
     }
 
-    // Para TS/MP4: proxy directo con pipe compartido
-    const parsedUrl = new URL(targetUrl);
-    const httpClient = parsedUrl.protocol === 'https:' ? https : http;
+    // Para TS/MP4: usar stream compartido
+    const stream = startSharedStream(channelId, targetUrl);
 
-    const proxyReq = httpClient.request(targetUrl, {
-      method: 'GET',
-      headers: { 'User-Agent': 'StreamBox/1.0' },
-    }, (proxyRes) => {
-      const contentType = proxyRes.headers['content-type'];
-      if (contentType) res.setHeader('Content-Type', contentType);
-      if (proxyRes.headers['content-length']) res.setHeader('Content-Length', proxyRes.headers['content-length']);
-      
-      // Pipe directo para streams continuos
-      proxyRes.pipe(res);
+    // Configurar headers para este cliente
+    if (stream.contentType) {
+      res.setHeader('Content-Type', stream.contentType);
+    } else {
+      res.setHeader('Content-Type', 'video/mp2t');
+    }
+
+    // Enviar buffer existente para que el nuevo cliente vea video inmediatamente
+    stream.buffer.forEach(chunk => {
+      try { res.write(chunk); } catch {}
     });
 
-    proxyReq.on('error', (err) => {
-      console.error('Restream error:', err.message);
-      if (!res.headersSent) res.status(502).json({ error: 'No se pudo conectar al stream origen' });
-    });
+    // Registrar este cliente en el stream compartido
+    stream.clients.add(res);
+    console.log(`👤 [${channelId}] Cliente conectado (total: ${stream.clients.size})`);
 
-    proxyReq.setTimeout(30000, () => {
-      proxyReq.destroy();
-      if (!res.headersSent) res.status(504).json({ error: 'Timeout al conectar con el stream' });
-    });
-
-    proxyReq.end();
-
-    // Limpiar si el cliente se desconecta
+    // Cuando el cliente se desconecta
     req.on('close', () => {
-      proxyReq.destroy();
+      stream.clients.delete(res);
+      console.log(`👤 [${channelId}] Cliente desconectado (quedan: ${stream.clients.size})`);
+      // Si no quedan clientes, el stream se cerrará automáticamente en el próximo chunk
     });
   } catch (err) {
     console.error('Restream error:', err);
