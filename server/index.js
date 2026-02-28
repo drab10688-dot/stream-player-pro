@@ -1112,7 +1112,7 @@ const isCloudflaredInstalled = () => {
 };
 
 // Get tunnel status
-app.get('/api/tunnel/status', verifyAdmin, (req, res) => {
+app.get('/api/tunnel/status', authAdmin, (req, res) => {
   res.json({
     installed: isCloudflaredInstalled(),
     status: tunnelStatus,
@@ -1123,7 +1123,7 @@ app.get('/api/tunnel/status', verifyAdmin, (req, res) => {
 });
 
 // Install cloudflared
-app.post('/api/tunnel/install', verifyAdmin, (req, res) => {
+app.post('/api/tunnel/install', authAdmin, (req, res) => {
   if (isCloudflaredInstalled()) {
     return res.json({ success: true, message: 'cloudflared ya está instalado' });
   }
@@ -1143,7 +1143,7 @@ app.post('/api/tunnel/install', verifyAdmin, (req, res) => {
 });
 
 // Start tunnel
-app.post('/api/tunnel/start', verifyAdmin, (req, res) => {
+app.post('/api/tunnel/start', authAdmin, (req, res) => {
   if (!isCloudflaredInstalled()) {
     return res.status(400).json({ error: 'cloudflared no está instalado. Instálalo primero.' });
   }
@@ -1199,7 +1199,7 @@ app.post('/api/tunnel/start', verifyAdmin, (req, res) => {
 });
 
 // Stop tunnel
-app.post('/api/tunnel/stop', verifyAdmin, (req, res) => {
+app.post('/api/tunnel/stop', authAdmin, (req, res) => {
   if (tunnelProcess) {
     tunnelStatus = 'stopped';
     tunnelProcess.kill('SIGTERM');
