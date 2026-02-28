@@ -25,6 +25,8 @@ const detectStreamType = (url: string): 'hls' | 'ts' | 'youtube' | 'native' => {
   if (getYouTubeId(url)) return 'youtube';
   if (/\.m3u8?(\?|$)/i.test(url)) return 'hls';
   if (/\.ts(\?|$)/i.test(url) || /\/\d+\.ts/.test(url)) return 'ts';
+  // Restream proxy URLs serve raw MPEG-TS data
+  if (/\/api\/restream\//.test(url)) return 'ts';
   return 'native';
 };
 
