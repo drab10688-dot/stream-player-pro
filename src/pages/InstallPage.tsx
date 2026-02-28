@@ -70,6 +70,26 @@ const InstallPage = () => {
       ],
     },
     {
+      icon: Tv,
+      name: "Hisense (VIDAA)",
+      steps: [
+        "Abre el navegador VEWD/Opera de Hisense",
+        "Escribe esta URL manualmente",
+        "Guarda como marcador o favorito",
+        "Accede desde marcadores cada vez",
+      ],
+    },
+    {
+      icon: Tv,
+      name: "Philips / Otros Smart TV",
+      steps: [
+        "Busca el navegador web en tu TV",
+        "Navega a esta URL",
+        "Guarda como favorito/marcador",
+        "Accede desde favoritos para usar la app",
+      ],
+    },
+    {
       icon: Smartphone,
       name: "Android / iPhone",
       steps: [
