@@ -195,10 +195,14 @@ app.delete('/api/channel-health-logs', authAdmin, async (req, res) => {
 
 app.get('/api/channels/public', async (req, res) => {
   const { rows } = await pool.query(
-    'SELECT id, name, category, logo_url, sort_order FROM channels WHERE is_active = true ORDER BY sort_order'
+    'SELECT id, name, url, category, logo_url, sort_order FROM channels WHERE is_active = true ORDER BY sort_order'
   );
-  // Solo devolver nombres, sin URLs
-  res.json(rows);
+  // Devolver URLs de YouTube tal cual, ocultar las demás (se accede vía /api/restream)
+  const safe = rows.map(ch => {
+    const isYouTube = /youtube\.com|youtu\.be/.test(ch.url);
+    return { ...ch, url: isYouTube ? ch.url : null };
+  });
+  res.json(safe);
 });
 
 // Endpoint público de ads (sin auth)
@@ -456,11 +460,14 @@ app.post('/api/client/login', async (req, res) => {
     ]);
 
     // RESTREAMING: Convertir URLs a rutas de proxy dinámico
-    // El cliente accede a /api/restream/{channelId} y el servidor hace proxy al origen
-    const safeChannels = channelsRes.rows.map(ch => ({
-      ...ch,
-      url: `/api/restream/${ch.id}`,
-    }));
+    // YouTube mantiene su URL original (el reproductor lo maneja con iframe)
+    const safeChannels = channelsRes.rows.map(ch => {
+      const isYouTube = /youtube\.com|youtu\.be/.test(ch.url);
+      return {
+        ...ch,
+        url: isYouTube ? ch.url : `/api/restream/${ch.id}`,
+      };
+    });
 
     res.json({
       client: { id: client.id, username: client.username, max_screens: client.max_screens, expiry_date: client.expiry_date },

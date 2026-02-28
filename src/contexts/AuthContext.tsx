@@ -149,8 +149,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         const res = await fetch('/api/channels/public');
         if (res.ok) {
           const data = await res.json();
-          // In production, use server restream proxy
-          const mapped = data.map((ch: any) => ({ ...ch, url: `/api/restream/${ch.id}` }));
+          // YouTube keeps original URL, others use restream proxy
+          const mapped = data.map((ch: any) => ({
+            ...ch,
+            url: ch.url || `/api/restream/${ch.id}`,
+          }));
           setChannels(mapped);
         }
       } catch (err) {
