@@ -124,6 +124,14 @@ app.get('/api/channels/public', async (req, res) => {
   res.json(rows);
 });
 
+// Endpoint público de ads (sin auth)
+app.get('/api/ads/public', async (req, res) => {
+  const { rows } = await pool.query(
+    'SELECT id, title, message, image_url FROM ads WHERE is_active = true'
+  );
+  res.json(rows);
+});
+
 app.post('/api/channels', authAdmin, async (req, res) => {
   const { name, url, category, sort_order } = req.body;
   const { rows } = await pool.query(
