@@ -51,8 +51,10 @@ const getDeviceId = () => {
 };
 
 // Detectar automáticamente si estamos en Lovable Cloud o en un servidor local/VPS.
-// Si el hostname contiene "lovable.app", usamos edge functions. Si no, usamos la API local.
-const isLovableCloud = typeof window !== 'undefined' && window.location.hostname.includes('lovable.app');
+const isLovableCloud = typeof window !== 'undefined' && (
+  window.location.hostname.includes('lovable.app') || 
+  window.location.hostname.includes('lovableproject.com')
+);
 const LOCAL_API_URL = import.meta.env.VITE_LOCAL_API_URL || '';
 const useLocalApi = !isLovableCloud || !!LOCAL_API_URL;
 

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ArrowLeft, Volume2, VolumeX, List, Search } from 'lucide-react';
+import { ArrowLeft, Volume2, VolumeX, List, Search, Play } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -7,6 +7,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { useAuth } from '@/contexts/AuthContext';
 import VideoPlayer from '@/components/VideoPlayer';
 import { useLocation } from 'react-router-dom';
+import omnisyncLogo from '@/assets/omnisync-logo.png';
 
 const PlayerPage = () => {
   const navigate = useNavigate();
@@ -36,21 +37,25 @@ const PlayerPage = () => {
       {/* Player Area */}
       <div className="flex-1 flex flex-col">
         {/* Top bar */}
-        <div className="flex items-center justify-between px-4 py-3 glass border-b border-border/50">
+        <div className="flex items-center justify-between px-4 py-3 glass-strong border-b border-primary/5">
           <div className="flex items-center gap-3">
-            <Button variant="ghost" size="icon" onClick={() => navigate('/')} className="h-12 w-12">
-              <ArrowLeft className="w-6 h-6 text-foreground" />
+            <Button variant="ghost" size="icon" onClick={() => navigate('/')} className="h-10 w-10 rounded-xl hover:bg-secondary/60">
+              <ArrowLeft className="w-5 h-5 text-foreground" />
             </Button>
+            <div className="w-7 h-7 rounded-full overflow-hidden">
+              <img src={omnisyncLogo} alt="" className="w-full h-full object-cover" />
+            </div>
             <div>
-              <h1 className="font-display font-semibold text-lg text-foreground">{selectedChannel.name}</h1>
+              <h1 className="font-semibold text-base text-foreground">{selectedChannel.name}</h1>
+              <p className="text-xs text-muted-foreground">{selectedChannel.category}</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="icon" onClick={() => setMuted(!muted)} className="h-12 w-12">
-              {muted ? <VolumeX className="w-6 h-6 text-muted-foreground" /> : <Volume2 className="w-6 h-6 text-foreground" />}
+          <div className="flex items-center gap-1">
+            <Button variant="ghost" size="icon" onClick={() => setMuted(!muted)} className="h-10 w-10 rounded-xl">
+              {muted ? <VolumeX className="w-5 h-5 text-muted-foreground" /> : <Volume2 className="w-5 h-5 text-foreground" />}
             </Button>
-            <Button variant="ghost" size="icon" onClick={() => setShowList(!showList)} className="lg:hidden h-12 w-12">
-              <List className="w-6 h-6 text-foreground" />
+            <Button variant="ghost" size="icon" onClick={() => setShowList(!showList)} className="lg:hidden h-10 w-10 rounded-xl">
+              <List className="w-5 h-5 text-foreground" />
             </Button>
           </div>
         </div>
@@ -61,16 +66,16 @@ const PlayerPage = () => {
         </div>
       </div>
 
-      {/* Channel List Sidebar - Simple flat list, no categories */}
-      <div className={`${showList ? 'block' : 'hidden'} lg:block w-full lg:w-80 border-l border-border/50 bg-card/80 backdrop-blur-xl`}>
-        <div className="p-4 border-b border-border/50">
+      {/* Channel List Sidebar */}
+      <div className={`${showList ? 'block' : 'hidden'} lg:block w-full lg:w-80 border-l border-border/30 glass-strong`}>
+        <div className="p-4 border-b border-border/30">
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
               placeholder="Buscar canal..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="pl-11 bg-secondary border-border h-12 text-foreground text-base placeholder:text-muted-foreground"
+              className="pl-10 bg-secondary/40 border-border/40 h-10 text-foreground text-sm placeholder:text-muted-foreground rounded-xl"
               maxLength={50}
             />
           </div>
@@ -81,16 +86,30 @@ const PlayerPage = () => {
               <button
                 key={ch.id}
                 onClick={() => setSelectedChannel(ch)}
-                className={`w-full flex items-center gap-4 px-4 py-4 rounded-xl transition-all text-left ${
+                className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-all duration-200 text-left ${
                   selectedChannel.id === ch.id
-                    ? 'bg-primary/15 border-2 border-primary/40'
-                    : 'hover:bg-secondary border-2 border-transparent'
+                    ? 'bg-primary/10 border border-primary/20'
+                    : 'hover:bg-secondary/40 border border-transparent'
                 }`}
               >
-                <div className={`w-3 h-3 rounded-full flex-shrink-0 ${selectedChannel.id === ch.id ? 'bg-primary animate-pulse' : 'bg-muted-foreground/30'}`} />
-                <span className={`text-base font-medium ${selectedChannel.id === ch.id ? 'text-primary font-bold' : 'text-foreground'}`}>
-                  {ch.name}
-                </span>
+                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                  selectedChannel.id === ch.id ? 'bg-primary/20' : 'bg-secondary/60'
+                }`}>
+                  {ch.logo_url ? (
+                    <img src={ch.logo_url} alt="" className="w-full h-full object-cover rounded-lg" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                  ) : (
+                    <Play className={`w-3.5 h-3.5 ${selectedChannel.id === ch.id ? 'text-primary' : 'text-muted-foreground'}`} />
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <span className={`text-sm font-medium block truncate ${selectedChannel.id === ch.id ? 'text-primary' : 'text-foreground'}`}>
+                    {ch.name}
+                  </span>
+                  <span className="text-xs text-muted-foreground truncate block">{ch.category}</span>
+                </div>
+                {selectedChannel.id === ch.id && (
+                  <div className="w-2 h-2 rounded-full bg-primary animate-pulse shrink-0" />
+                )}
               </button>
             ))}
           </div>
