@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '@/integrations/supabase/client';
+import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -24,8 +24,12 @@ const AdsManager = () => {
   const [form, setForm] = useState({ title: '', message: '', image_url: '' });
 
   const fetchAds = async () => {
-    const { data } = await supabase.from('ads').select('*').order('created_at', { ascending: false });
-    setAds(data || []);
+    try {
+      const data = await apiGet('/api/ads');
+      setAds(data || []);
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
     setLoading(false);
   };
 
@@ -36,26 +40,38 @@ const AdsManager = () => {
       toast({ title: 'Error', description: 'Completa título y mensaje', variant: 'destructive' });
       return;
     }
-    await supabase.from('ads').insert({
-      title: form.title.trim(),
-      message: form.message.trim(),
-      image_url: form.image_url.trim() || null,
-    });
-    setForm({ title: '', message: '', image_url: '' });
-    setShowForm(false);
-    toast({ title: 'Publicidad creada', description: 'Se mostrará a los clientes' });
-    fetchAds();
+    try {
+      await apiPost('/api/ads', {
+        title: form.title.trim(),
+        message: form.message.trim(),
+        image_url: form.image_url.trim() || null,
+      });
+      setForm({ title: '', message: '', image_url: '' });
+      setShowForm(false);
+      toast({ title: 'Publicidad creada' });
+      fetchAds();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
   };
 
   const toggleAd = async (ad: Ad) => {
-    await supabase.from('ads').update({ is_active: !ad.is_active }).eq('id', ad.id);
-    fetchAds();
+    try {
+      await apiPut(`/api/ads/${ad.id}`, { ...ad, is_active: !ad.is_active });
+      fetchAds();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
   };
 
   const deleteAd = async (id: string) => {
-    await supabase.from('ads').delete().eq('id', id);
-    toast({ title: 'Publicidad eliminada' });
-    fetchAds();
+    try {
+      await apiDelete(`/api/ads/${id}`);
+      toast({ title: 'Publicidad eliminada' });
+      fetchAds();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
   };
 
   return (

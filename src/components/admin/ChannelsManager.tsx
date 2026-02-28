@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '@/integrations/supabase/client';
+import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -30,8 +30,12 @@ const ChannelsManager = () => {
   const [importing, setImporting] = useState(false);
 
   const fetchChannels = async () => {
-    const { data } = await supabase.from('channels').select('*').order('sort_order');
-    setChannels(data || []);
+    try {
+      const data = await apiGet('/api/channels');
+      setChannels(data || []);
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
     setLoading(false);
   };
 
@@ -42,18 +46,22 @@ const ChannelsManager = () => {
       toast({ title: 'Error', description: 'Nombre y URL son requeridos', variant: 'destructive' });
       return;
     }
-    const payload = { ...form, logo_url: form.logo_url.trim() || null };
-    if (editingId) {
-      await supabase.from('channels').update(payload).eq('id', editingId);
-      toast({ title: 'Canal actualizado' });
-    } else {
-      await supabase.from('channels').insert(payload);
-      toast({ title: 'Canal creado' });
+    try {
+      const payload = { ...form, logo_url: form.logo_url.trim() || null };
+      if (editingId) {
+        await apiPut(`/api/channels/${editingId}`, payload);
+        toast({ title: 'Canal actualizado' });
+      } else {
+        await apiPost('/api/channels', payload);
+        toast({ title: 'Canal creado' });
+      }
+      setForm({ name: '', url: '', category: 'General', sort_order: 0, logo_url: '' });
+      setShowForm(false);
+      setEditingId(null);
+      fetchChannels();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
     }
-    setForm({ name: '', url: '', category: 'General', sort_order: 0, logo_url: '' });
-    setShowForm(false);
-    setEditingId(null);
-    fetchChannels();
   };
 
   const handleEdit = (ch: Channel) => {
@@ -63,14 +71,22 @@ const ChannelsManager = () => {
   };
 
   const handleDelete = async (id: string) => {
-    await supabase.from('channels').delete().eq('id', id);
-    toast({ title: 'Canal eliminado' });
-    fetchChannels();
+    try {
+      await apiDelete(`/api/channels/${id}`);
+      toast({ title: 'Canal eliminado' });
+      fetchChannels();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
   };
 
   const toggleActive = async (ch: Channel) => {
-    await supabase.from('channels').update({ is_active: !ch.is_active }).eq('id', ch.id);
-    fetchChannels();
+    try {
+      await apiPut(`/api/channels/${ch.id}`, { ...ch, is_active: !ch.is_active });
+      fetchChannels();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
   };
 
   const handleM3UImport = async () => {
@@ -78,31 +94,22 @@ const ChannelsManager = () => {
       toast({ title: 'Error', description: 'Pega el contenido M3U o ingresa una URL', variant: 'destructive' });
       return;
     }
-
     setImporting(true);
     try {
-      const result = await supabase.functions.invoke('import-m3u', {
-        body: {
-          m3u_content: m3uContent.trim() || undefined,
-          m3u_url: m3uUrl.trim() || undefined,
-        }
+      const data = await apiPost('/api/channels/import-m3u', {
+        m3u_content: m3uContent.trim() || undefined,
+        m3u_url: m3uUrl.trim() || undefined,
       });
-
-      if (result.error) {
-        toast({ title: 'Error', description: 'Error al importar la lista', variant: 'destructive' });
-      } else {
-        const data = result.data;
-        toast({
-          title: '¡Importación completada!',
-          description: `${data.imported} de ${data.total} canales importados`,
-        });
-        setM3uContent('');
-        setM3uUrl('');
-        setShowM3UImport(false);
-        fetchChannels();
-      }
-    } catch {
-      toast({ title: 'Error', description: 'Error de conexión al importar', variant: 'destructive' });
+      toast({
+        title: '¡Importación completada!',
+        description: `${data.imported} de ${data.total} canales importados`,
+      });
+      setM3uContent('');
+      setM3uUrl('');
+      setShowM3UImport(false);
+      fetchChannels();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message || 'Error al importar', variant: 'destructive' });
     }
     setImporting(false);
   };
@@ -131,38 +138,24 @@ const ChannelsManager = () => {
         </div>
       </div>
 
-      {/* M3U Import Form */}
       {showM3UImport && (
         <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="glass rounded-xl p-5 space-y-4">
           <div className="flex items-center gap-2 mb-2">
             <FileText className="w-5 h-5 text-primary" />
             <h3 className="font-semibold text-foreground">Importar Lista M3U / M3U8</h3>
           </div>
-          <p className="text-sm text-muted-foreground">
-            Importa canales desde una lista M3U. Soporta listas de IPTV, películas, series y cualquier fuente de video.
-          </p>
-
-          {/* URL input */}
+          <p className="text-sm text-muted-foreground">Importa canales desde una lista M3U.</p>
           <div className="space-y-2">
             <label className="text-sm font-medium text-foreground flex items-center gap-1">
               <Link className="w-3.5 h-3.5" /> URL de la lista M3U
             </label>
-            <Input
-              placeholder="https://ejemplo.com/lista.m3u"
-              value={m3uUrl}
-              onChange={e => setM3uUrl(e.target.value)}
-              className="bg-secondary border-border text-foreground"
-              maxLength={1000}
-            />
+            <Input placeholder="https://ejemplo.com/lista.m3u" value={m3uUrl} onChange={e => setM3uUrl(e.target.value)} className="bg-secondary border-border text-foreground" maxLength={1000} />
           </div>
-
           <div className="flex items-center gap-3">
             <div className="h-px flex-1 bg-border" />
             <span className="text-xs text-muted-foreground">o pega el contenido</span>
             <div className="h-px flex-1 bg-border" />
           </div>
-
-          {/* Content textarea */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <label className="text-sm font-medium text-foreground">Contenido M3U</label>
@@ -171,19 +164,10 @@ const ChannelsManager = () => {
                 📁 Cargar archivo
               </label>
             </div>
-            <Textarea
-              placeholder={`#EXTM3U\n#EXTINF:-1 group-title="Deportes" tvg-logo="https://logo.png",ESPN\nhttp://ip:port/espn.ts\n#EXTINF:-1 group-title="Películas",HBO\nhttp://ip:port/hbo.m3u8`}
-              value={m3uContent}
-              onChange={e => setM3uContent(e.target.value)}
-              className="bg-secondary border-border text-foreground font-mono text-xs min-h-[150px]"
-              rows={8}
-            />
+            <Textarea placeholder={`#EXTM3U\n#EXTINF:-1 group-title="Deportes",ESPN\nhttp://ip:port/espn.ts`} value={m3uContent} onChange={e => setM3uContent(e.target.value)} className="bg-secondary border-border text-foreground font-mono text-xs min-h-[150px]" rows={8} />
           </div>
-
           <div className="flex gap-2 justify-end">
-            <Button variant="ghost" onClick={() => setShowM3UImport(false)} className="text-muted-foreground">
-              <X className="w-4 h-4 mr-1" /> Cancelar
-            </Button>
+            <Button variant="ghost" onClick={() => setShowM3UImport(false)} className="text-muted-foreground"><X className="w-4 h-4 mr-1" /> Cancelar</Button>
             <Button onClick={handleM3UImport} disabled={importing} className="gradient-primary text-primary-foreground">
               {importing ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Upload className="w-4 h-4 mr-1" />}
               {importing ? 'Importando...' : 'Importar Canales'}
@@ -192,14 +176,13 @@ const ChannelsManager = () => {
         </motion.div>
       )}
 
-      {/* Add/Edit Form */}
       {showForm && (
         <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="glass rounded-xl p-5 space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Input placeholder="Nombre del canal" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} className="bg-secondary border-border text-foreground" maxLength={100} />
             <Input placeholder="Categoría" value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} className="bg-secondary border-border text-foreground" maxLength={50} />
           </div>
-          <Input placeholder="URL del stream (HLS, TS, MP4, M3U8, cualquier URL)" value={form.url} onChange={e => setForm({ ...form, url: e.target.value })} className="bg-secondary border-border text-foreground" maxLength={500} />
+          <Input placeholder="URL del stream" value={form.url} onChange={e => setForm({ ...form, url: e.target.value })} className="bg-secondary border-border text-foreground" maxLength={500} />
           <div className="flex gap-3 items-end">
             <div className="flex-1">
               <label className="text-xs text-muted-foreground mb-1 block">URL del ícono/logo (opcional)</label>

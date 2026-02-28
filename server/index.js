@@ -194,6 +194,59 @@ app.delete('/api/ads/:id', authAdmin, async (req, res) => {
 });
 
 // =============================================
+// RUTAS: RESELLERS (requiere admin)
+// =============================================
+app.get('/api/resellers', authAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM resellers ORDER BY created_at DESC');
+    // Get client counts
+    const { rows: clients } = await pool.query('SELECT reseller_id FROM clients WHERE reseller_id IS NOT NULL');
+    const counts = {};
+    clients.forEach(c => { counts[c.reseller_id] = (counts[c.reseller_id] || 0) + 1; });
+    const result = rows.map(r => ({ ...r, client_count: counts[r.id] || 0 }));
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/resellers', authAdmin, async (req, res) => {
+  const { name, email, phone, username, password, max_clients, commission_percent, notes } = req.body;
+  try {
+    const { rows } = await pool.query(
+      'INSERT INTO resellers (name, email, phone, username, password, max_clients, commission_percent, notes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',
+      [name, email, phone, username, password, max_clients || 10, commission_percent || 0, notes]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.put('/api/resellers/:id', authAdmin, async (req, res) => {
+  const { name, email, phone, username, password, max_clients, is_active, commission_percent, notes } = req.body;
+  try {
+    const { rows } = await pool.query(
+      'UPDATE resellers SET name=$1, email=$2, phone=$3, username=$4, password=$5, max_clients=$6, is_active=$7, commission_percent=$8, notes=$9 WHERE id=$10 RETURNING *',
+      [name, email, phone, username, password, max_clients, is_active, commission_percent, notes, req.params.id]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/resellers/:id', authAdmin, async (req, res) => {
+  try {
+    await pool.query('UPDATE clients SET reseller_id = NULL WHERE reseller_id = $1', [req.params.id]);
+    await pool.query('DELETE FROM resellers WHERE id = $1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// =============================================
 // RUTAS: LOGIN DE CLIENTES (público, para la app)
 // =============================================
 app.post('/api/client/login', async (req, res) => {

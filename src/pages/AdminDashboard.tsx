@@ -1,9 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { supabase } from '@/integrations/supabase/client';
-import { useToast } from '@/hooks/use-toast';
+import { useAdminAuth } from '@/contexts/AdminAuthContext';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Shield, LogOut, Tv, Users, Megaphone, Store } from 'lucide-react';
+import { Tv, Users, Megaphone, Store, LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import ChannelsManager from '@/components/admin/ChannelsManager';
 import ClientsManager from '@/components/admin/ClientsManager';
@@ -13,34 +12,16 @@ import omnisyncLogo from '@/assets/omnisync-logo.png';
 
 const AdminDashboard = () => {
   const navigate = useNavigate();
-  const { toast } = useToast();
-  const [loading, setLoading] = useState(true);
+  const { isAdmin, loading, logout } = useAdminAuth();
 
   useEffect(() => {
-    const checkAdmin = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        navigate('/admin');
-        return;
-      }
-      const { data: roles } = await supabase
-        .from('user_roles')
-        .select('role')
-        .eq('user_id', user.id);
+    if (!loading && !isAdmin) {
+      navigate('/admin');
+    }
+  }, [loading, isAdmin, navigate]);
 
-      if (!roles || roles.length === 0) {
-        toast({ title: 'Sin permisos', variant: 'destructive' });
-        await supabase.auth.signOut();
-        navigate('/admin');
-        return;
-      }
-      setLoading(false);
-    };
-    checkAdmin();
-  }, [navigate, toast]);
-
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
+  const handleLogout = () => {
+    logout();
     navigate('/admin');
   };
 
@@ -51,6 +32,8 @@ const AdminDashboard = () => {
       </div>
     );
   }
+
+  if (!isAdmin) return null;
 
   return (
     <div className="min-h-screen bg-background bg-grid">
