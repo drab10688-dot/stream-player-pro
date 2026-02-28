@@ -142,7 +142,23 @@ const Dashboard = () => {
                     <div className="relative">
                       <div className="w-14 h-14 sm:w-16 sm:h-16 2xl:w-20 2xl:h-20 rounded-xl bg-secondary/60 flex items-center justify-center mb-3 overflow-hidden group-hover:scale-105 transition-transform duration-300">
                         {ch.logo_url ? (
-                          <img src={ch.logo_url} alt={ch.name} className="w-full h-full object-cover rounded-xl" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                          <img
+                            src={ch.logo_url}
+                            alt={ch.name}
+                            className="w-full h-full object-cover rounded-xl"
+                            onError={(e) => {
+                              const img = e.target as HTMLImageElement;
+                              img.style.display = 'none';
+                              // Show Play icon fallback
+                              const parent = img.parentElement;
+                              if (parent && !parent.querySelector('.logo-fallback')) {
+                                const fallback = document.createElement('div');
+                                fallback.className = 'logo-fallback flex items-center justify-center w-full h-full';
+                                fallback.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-primary"><polygon points="6 3 20 12 6 21 6 3"></polygon></svg>`;
+                                parent.appendChild(fallback);
+                              }
+                            }}
+                          />
                         ) : (
                           <Play className="w-6 h-6 sm:w-7 sm:h-7 2xl:w-8 2xl:h-8 text-primary" />
                         )}
