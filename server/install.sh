@@ -113,11 +113,12 @@ if [ $? -ne 0 ]; then
   exit 1
 fi
 
-# Importar schema
+# Importar schema (copiar a /tmp para evitar problemas de permisos)
 echo -e "${CYAN}   Importando schema...${NC}"
-chmod 644 "${SCRIPT_DIR}/database/schema.sql"
-chmod o+rx "${SCRIPT_DIR}" "${SCRIPT_DIR}/database"
-sudo -u postgres psql -d streambox -f "${SCRIPT_DIR}/database/schema.sql" 2>&1
+cp "${SCRIPT_DIR}/database/schema.sql" /tmp/streambox_schema.sql
+chmod 644 /tmp/streambox_schema.sql
+sudo -u postgres psql -d streambox -f /tmp/streambox_schema.sql 2>&1
+rm -f /tmp/streambox_schema.sql
 if [ $? -ne 0 ]; then
   echo -e "${RED}❌ Error importando schema. Verifica que existe: ${SCRIPT_DIR}/database/schema.sql${NC}"
   exit 1
