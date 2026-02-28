@@ -50,9 +50,11 @@ const getDeviceId = () => {
   return id;
 };
 
-// Detectar entorno: si hay VITE_LOCAL_API_URL usa API local (VPS), sino usa edge function
-const API_BASE = import.meta.env.VITE_LOCAL_API_URL || '';
-const USE_LOCAL_API = !!import.meta.env.VITE_LOCAL_API_URL;
+// Detectar entorno automáticamente por hostname
+const isLovablePreview = () => {
+  const host = window.location.hostname;
+  return host.includes('lovable.app') || host.includes('lovable.dev') || host === 'localhost';
+};
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -64,26 +66,35 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     try {
       let data: any;
 
-      if (USE_LOCAL_API) {
-        // VPS: usar API local de Node.js
-        const response = await fetch(`${API_BASE}/api/client/login`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username, password, device_id: getDeviceId() }),
-        });
-        data = await response.json();
-        if (!response.ok) {
-          return { success: false, error: data.error || 'Credenciales inválidas' };
-        }
-      } else {
+      if (isLovablePreview()) {
         // Lovable Cloud: usar edge function
         const { data: fnData, error: fnError } = await supabase.functions.invoke('client-auth', {
           body: { action: 'login', username, password, device_id: getDeviceId() },
         });
         if (fnError) {
+          console.error('Edge function error:', fnError);
           return { success: false, error: 'Error de conexión al servidor' };
         }
         data = fnData;
+      } else {
+        // VPS: usar API local relativa (Nginx proxy)
+        const response = await fetch('/api/client/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password, device_id: getDeviceId() }),
+        });
+        
+        const contentType = response.headers.get('content-type');
+        if (!contentType?.includes('application/json')) {
+          const text = await response.text();
+          console.error('API response not JSON:', response.status, text.substring(0, 200));
+          return { success: false, error: `Error del servidor (${response.status})` };
+        }
+        
+        data = await response.json();
+        if (!response.ok) {
+          return { success: false, error: data.error || 'Credenciales inválidas' };
+        }
       }
 
       if (data.error) {
@@ -95,7 +106,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setAds(data.ads || []);
       setIsLoggedIn(true);
       return { success: true };
-    } catch {
+    } catch (err) {
+      console.error('Login error:', err);
       return { success: false, error: 'Error de conexión al servidor' };
     }
   };
