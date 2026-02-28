@@ -24,7 +24,7 @@ const ChannelsManager = () => {
   const [showForm, setShowForm] = useState(false);
   const [showM3UImport, setShowM3UImport] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState({ name: '', url: '', category: 'General', sort_order: 0 });
+  const [form, setForm] = useState({ name: '', url: '', category: 'General', sort_order: 0, logo_url: '' });
   const [m3uContent, setM3uContent] = useState('');
   const [m3uUrl, setM3uUrl] = useState('');
   const [importing, setImporting] = useState(false);
@@ -42,21 +42,22 @@ const ChannelsManager = () => {
       toast({ title: 'Error', description: 'Nombre y URL son requeridos', variant: 'destructive' });
       return;
     }
+    const payload = { ...form, logo_url: form.logo_url.trim() || null };
     if (editingId) {
-      await supabase.from('channels').update(form).eq('id', editingId);
+      await supabase.from('channels').update(payload).eq('id', editingId);
       toast({ title: 'Canal actualizado' });
     } else {
-      await supabase.from('channels').insert(form);
+      await supabase.from('channels').insert(payload);
       toast({ title: 'Canal creado' });
     }
-    setForm({ name: '', url: '', category: 'General', sort_order: 0 });
+    setForm({ name: '', url: '', category: 'General', sort_order: 0, logo_url: '' });
     setShowForm(false);
     setEditingId(null);
     fetchChannels();
   };
 
   const handleEdit = (ch: Channel) => {
-    setForm({ name: ch.name, url: ch.url, category: ch.category, sort_order: ch.sort_order });
+    setForm({ name: ch.name, url: ch.url, category: ch.category, sort_order: ch.sort_order, logo_url: ch.logo_url || '' });
     setEditingId(ch.id);
     setShowForm(true);
   };
@@ -124,7 +125,7 @@ const ChannelsManager = () => {
           <Button onClick={() => { setShowM3UImport(!showM3UImport); setShowForm(false); }} variant="outline" className="gap-2 border-border text-foreground">
             <Upload className="w-4 h-4" /> Importar M3U
           </Button>
-          <Button onClick={() => { setShowForm(true); setShowM3UImport(false); setEditingId(null); setForm({ name: '', url: '', category: 'General', sort_order: 0 }); }} className="gradient-primary text-primary-foreground gap-2">
+          <Button onClick={() => { setShowForm(true); setShowM3UImport(false); setEditingId(null); setForm({ name: '', url: '', category: 'General', sort_order: 0, logo_url: '' }); }} className="gradient-primary text-primary-foreground gap-2">
             <Plus className="w-4 h-4" /> Agregar Canal
           </Button>
         </div>
@@ -199,6 +200,17 @@ const ChannelsManager = () => {
             <Input placeholder="Categoría" value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} className="bg-secondary border-border text-foreground" maxLength={50} />
           </div>
           <Input placeholder="URL del stream (HLS, TS, MP4, M3U8, cualquier URL)" value={form.url} onChange={e => setForm({ ...form, url: e.target.value })} className="bg-secondary border-border text-foreground" maxLength={500} />
+          <div className="flex gap-3 items-end">
+            <div className="flex-1">
+              <label className="text-xs text-muted-foreground mb-1 block">URL del ícono/logo (opcional)</label>
+              <Input placeholder="https://ejemplo.com/logo.png" value={form.logo_url} onChange={e => setForm({ ...form, logo_url: e.target.value })} className="bg-secondary border-border text-foreground" maxLength={500} />
+            </div>
+            {form.logo_url && (
+              <div className="w-10 h-10 rounded-lg bg-secondary border border-border overflow-hidden shrink-0">
+                <img src={form.logo_url} alt="Preview" className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).src = ''; }} />
+              </div>
+            )}
+          </div>
           <Input type="number" placeholder="Orden" value={form.sort_order} onChange={e => setForm({ ...form, sort_order: parseInt(e.target.value) || 0 })} className="bg-secondary border-border text-foreground w-32" />
           <div className="flex gap-2 justify-end">
             <Button variant="ghost" onClick={() => { setShowForm(false); setEditingId(null); }} className="text-muted-foreground"><X className="w-4 h-4 mr-1" /> Cancelar</Button>

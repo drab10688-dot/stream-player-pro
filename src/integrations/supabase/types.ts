@@ -115,6 +115,7 @@ export type Database = {
           max_screens: number
           notes: string | null
           password: string
+          reseller_id: string | null
           updated_at: string
           username: string
         }
@@ -126,6 +127,7 @@ export type Database = {
           max_screens?: number
           notes?: string | null
           password: string
+          reseller_id?: string | null
           updated_at?: string
           username: string
         }
@@ -137,6 +139,60 @@ export type Database = {
           max_screens?: number
           notes?: string | null
           password?: string
+          reseller_id?: string | null
+          updated_at?: string
+          username?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "clients_reseller_id_fkey"
+            columns: ["reseller_id"]
+            isOneToOne: false
+            referencedRelation: "resellers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      resellers: {
+        Row: {
+          commission_percent: number | null
+          created_at: string
+          email: string | null
+          id: string
+          is_active: boolean
+          max_clients: number
+          name: string
+          notes: string | null
+          password: string
+          phone: string | null
+          updated_at: string
+          username: string
+        }
+        Insert: {
+          commission_percent?: number | null
+          created_at?: string
+          email?: string | null
+          id?: string
+          is_active?: boolean
+          max_clients?: number
+          name: string
+          notes?: string | null
+          password: string
+          phone?: string | null
+          updated_at?: string
+          username: string
+        }
+        Update: {
+          commission_percent?: number | null
+          created_at?: string
+          email?: string | null
+          id?: string
+          is_active?: boolean
+          max_clients?: number
+          name?: string
+          notes?: string | null
+          password?: string
+          phone?: string | null
           updated_at?: string
           username?: string
         }
