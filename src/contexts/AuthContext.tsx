@@ -50,6 +50,9 @@ const getDeviceId = () => {
   return id;
 };
 
+// Si hay una API local configurada, usarla. Si no, usar Lovable Cloud.
+const LOCAL_API_URL = import.meta.env.VITE_LOCAL_API_URL || '';
+
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [client, setClient] = useState<ClientInfo | null>(null);
@@ -58,16 +61,32 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const login = async (username: string, password: string) => {
     try {
-      const { data, error } = await supabase.functions.invoke('client-auth', {
-        body: { action: 'login', username, password, device_id: getDeviceId() }
-      });
+      let data: any;
 
-      if (error) {
-        return { success: false, error: 'Error de conexión' };
-      }
+      if (LOCAL_API_URL) {
+        // Modo local: llamar directamente a la API Node.js
+        const response = await fetch(`${LOCAL_API_URL}/api/client/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password, device_id: getDeviceId() }),
+        });
+        data = await response.json();
+        if (!response.ok) {
+          return { success: false, error: data.error || 'Error de conexión' };
+        }
+      } else {
+        // Modo Cloud: usar edge function
+        const result = await supabase.functions.invoke('client-auth', {
+          body: { action: 'login', username, password, device_id: getDeviceId() }
+        });
 
-      if (data.error) {
-        return { success: false, error: data.error };
+        if (result.error) {
+          return { success: false, error: 'Error de conexión' };
+        }
+        data = result.data;
+        if (data.error) {
+          return { success: false, error: data.error };
+        }
       }
 
       setClient(data.client);
