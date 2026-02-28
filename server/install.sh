@@ -115,6 +115,8 @@ fi
 
 # Importar schema
 echo -e "${CYAN}   Importando schema...${NC}"
+chmod 644 "${SCRIPT_DIR}/database/schema.sql"
+chmod o+rx "${SCRIPT_DIR}" "${SCRIPT_DIR}/database"
 sudo -u postgres psql -d streambox -f "${SCRIPT_DIR}/database/schema.sql" 2>&1
 if [ $? -ne 0 ]; then
   echo -e "${RED}❌ Error importando schema. Verifica que existe: ${SCRIPT_DIR}/database/schema.sql${NC}"
