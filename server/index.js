@@ -530,6 +530,73 @@ app.post('/api/channels/import-m3u', authAdmin, async (req, res) => {
 });
 
 // =============================================
+// RUTA: DASHBOARD ESTADÍSTICAS
+// =============================================
+app.get('/api/stats', authAdmin, async (req, res) => {
+  try {
+    const now = new Date().toISOString();
+
+    // Consultas en paralelo para rendimiento
+    const [
+      totalClients,
+      activeClients,
+      expiredClients,
+      suspendedClients,
+      expiringClients,
+      totalResellers,
+      activeResellers,
+      totalChannels,
+      activeChannels,
+      totalAds,
+      activeConnections,
+      recentClients,
+      clientsByMonth,
+      categoryStats
+    ] = await Promise.all([
+      pool.query('SELECT COUNT(*)::int AS count FROM clients'),
+      pool.query('SELECT COUNT(*)::int AS count FROM clients WHERE is_active = true AND expiry_date > $1', [now]),
+      pool.query('SELECT COUNT(*)::int AS count FROM clients WHERE expiry_date <= $1', [now]),
+      pool.query('SELECT COUNT(*)::int AS count FROM clients WHERE is_active = false'),
+      pool.query('SELECT COUNT(*)::int AS count FROM clients WHERE is_active = true AND expiry_date > $1 AND expiry_date <= $2', [now, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()]),
+      pool.query('SELECT COUNT(*)::int AS count FROM resellers'),
+      pool.query('SELECT COUNT(*)::int AS count FROM resellers WHERE is_active = true'),
+      pool.query('SELECT COUNT(*)::int AS count FROM channels'),
+      pool.query('SELECT COUNT(*)::int AS count FROM channels WHERE is_active = true'),
+      pool.query('SELECT COUNT(*)::int AS count FROM ads WHERE is_active = true'),
+      pool.query('SELECT COUNT(*)::int AS count FROM active_connections WHERE last_heartbeat >= $1', [new Date(Date.now() - 5 * 60 * 1000).toISOString()]),
+      pool.query('SELECT id, username, is_active, expiry_date, created_at FROM clients ORDER BY created_at DESC LIMIT 5'),
+      pool.query(`SELECT TO_CHAR(created_at, 'YYYY-MM') AS month, COUNT(*)::int AS count FROM clients WHERE created_at >= NOW() - INTERVAL '6 months' GROUP BY month ORDER BY month`),
+      pool.query('SELECT category, COUNT(*)::int AS count FROM channels WHERE is_active = true GROUP BY category ORDER BY count DESC')
+    ]);
+
+    res.json({
+      clients: {
+        total: totalClients.rows[0].count,
+        active: activeClients.rows[0].count,
+        expired: expiredClients.rows[0].count,
+        suspended: suspendedClients.rows[0].count,
+        expiring_soon: expiringClients.rows[0].count,
+      },
+      resellers: {
+        total: totalResellers.rows[0].count,
+        active: activeResellers.rows[0].count,
+      },
+      channels: {
+        total: totalChannels.rows[0].count,
+        active: activeChannels.rows[0].count,
+      },
+      ads_active: totalAds.rows[0].count,
+      connections_now: activeConnections.rows[0].count,
+      recent_clients: recentClients.rows,
+      clients_by_month: clientsByMonth.rows,
+      categories: categoryStats.rows,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// =============================================
 // INICIAR SERVIDOR
 // =============================================
 app.listen(PORT, '0.0.0.0', () => {

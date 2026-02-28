@@ -2,8 +2,9 @@ import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAdminAuth } from '@/contexts/AdminAuthContext';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Tv, Users, Megaphone, Store, LogOut } from 'lucide-react';
+import { Tv, Users, Megaphone, Store, LogOut, LayoutDashboard } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import AdminStats from '@/components/admin/AdminStats';
 import ChannelsManager from '@/components/admin/ChannelsManager';
 import ClientsManager from '@/components/admin/ClientsManager';
 import AdsManager from '@/components/admin/AdsManager';
@@ -55,8 +56,11 @@ const AdminDashboard = () => {
       </header>
 
       <main className="container px-4 py-6">
-        <Tabs defaultValue="channels" className="space-y-6">
+        <Tabs defaultValue="dashboard" className="space-y-6">
           <TabsList className="glass-strong border border-border/30 p-1">
+            <TabsTrigger value="dashboard" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
+              <LayoutDashboard className="w-4 h-4" /> Dashboard
+            </TabsTrigger>
             <TabsTrigger value="channels" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
               <Tv className="w-4 h-4" /> Canales
             </TabsTrigger>
@@ -71,6 +75,7 @@ const AdminDashboard = () => {
             </TabsTrigger>
           </TabsList>
 
+          <TabsContent value="dashboard"><AdminStats /></TabsContent>
           <TabsContent value="channels"><ChannelsManager /></TabsContent>
           <TabsContent value="clients"><ClientsManager /></TabsContent>
           <TabsContent value="resellers"><ResellersManager /></TabsContent>
