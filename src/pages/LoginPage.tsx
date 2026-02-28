@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { motion } from 'framer-motion';
-import { Lock, User, Loader2, Wifi } from 'lucide-react';
+import { Lock, User, Loader2, Play } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
@@ -58,7 +58,7 @@ const LoginPage = () => {
               <div className="absolute inset-0 rounded-full animate-pulse-glow" />
             </div>
             <h1 className="text-3xl font-bold text-gradient tracking-tight">Omnisync</h1>
-            <p className="text-muted-foreground text-sm mt-2 tracking-wide">Streaming sin límites</p>
+            <p className="text-muted-foreground text-sm mt-2 tracking-wide">Tu televisión, en todas partes</p>
           </motion.div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -117,9 +117,9 @@ const LoginPage = () => {
             transition={{ delay: 0.7 }}
             className="flex items-center justify-center gap-2 mt-6"
           >
-            <Wifi className="w-3 h-3 text-primary/50" />
+            <Play className="w-3 h-3 text-primary/50" />
             <p className="text-muted-foreground text-xs tracking-wider uppercase">
-              Conexión segura
+              TV en vivo · Series · Películas
             </p>
           </motion.div>
         </div>
