@@ -6,6 +6,55 @@
 
 @layer base {
   :root {
+    --background: 210 40% 98%;
+    --foreground: 220 20% 15%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 220 20% 15%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 20% 15%;
+
+    --primary: 175 85% 40%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 210 20% 93%;
+    --secondary-foreground: 220 15% 35%;
+
+    --muted: 210 15% 95%;
+    --muted-foreground: 215 12% 50%;
+
+    --accent: 265 60% 55%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 214 20% 88%;
+    --input: 214 20% 88%;
+    --ring: 175 85% 40%;
+
+    --radius: 0.75rem;
+
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 220 15% 35%;
+    --sidebar-primary: 175 85% 40%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 210 20% 95%;
+    --sidebar-accent-foreground: 220 15% 35%;
+    --sidebar-border: 214 20% 90%;
+    --sidebar-ring: 175 85% 40%;
+
+    --gradient-primary: linear-gradient(135deg, hsl(175 85% 40%), hsl(200 80% 50%));
+    --gradient-accent: linear-gradient(135deg, hsl(265 60% 55%), hsl(290 60% 50%));
+    --gradient-glow: linear-gradient(135deg, hsl(175 85% 40% / 0.08), hsl(265 60% 55% / 0.05));
+    --gradient-dark: linear-gradient(180deg, hsl(210 40% 98%), hsl(210 30% 95%));
+    --shadow-glow: 0 0 30px -5px hsl(175 85% 40% / 0.25);
+    --shadow-glow-accent: 0 0 30px -5px hsl(265 60% 55% / 0.2);
+    --shadow-card: 0 4px 24px -4px hsl(220 20% 15% / 0.08);
+  }
+
+  .dark {
     --background: 220 25% 5%;
     --foreground: 180 10% 94%;
 
@@ -34,8 +83,6 @@
     --input: 220 18% 14%;
     --ring: 175 85% 50%;
 
-    --radius: 0.75rem;
-
     --sidebar-background: 220 22% 6%;
     --sidebar-foreground: 180 10% 85%;
     --sidebar-primary: 175 85% 50%;
@@ -52,11 +99,6 @@
     --shadow-glow: 0 0 40px -5px hsl(175 85% 50% / 0.35);
     --shadow-glow-accent: 0 0 40px -5px hsl(265 70% 60% / 0.3);
     --shadow-card: 0 8px 32px -8px hsl(0 0% 0% / 0.6);
-  }
-
-  .dark {
-    --background: 220 25% 5%;
-    --foreground: 180 10% 94%;
   }
 }
 
@@ -78,12 +120,19 @@
 
 @layer utilities {
   .glass {
-    @apply bg-card/50 backdrop-blur-2xl border border-border/40;
+    @apply bg-card/60 backdrop-blur-2xl border border-border/50;
+    box-shadow: var(--shadow-card);
   }
 
   .glass-strong {
-    background: linear-gradient(135deg, hsl(220 22% 10% / 0.8), hsl(220 22% 6% / 0.9));
+    background: hsl(0 0% 100% / 0.85);
     backdrop-filter: blur(40px) saturate(1.5);
+    border: 1px solid hsl(214 20% 88% / 0.6);
+    box-shadow: var(--shadow-card);
+  }
+
+  .dark .glass-strong {
+    background: linear-gradient(135deg, hsl(220 22% 10% / 0.8), hsl(220 22% 6% / 0.9));
     border: 1px solid hsl(175 85% 50% / 0.08);
   }
 
@@ -122,8 +171,8 @@
   }
 
   @keyframes pulseGlow {
-    0%, 100% { box-shadow: 0 0 20px -5px hsl(175 85% 50% / 0.3); }
-    50% { box-shadow: 0 0 40px -5px hsl(175 85% 50% / 0.5); }
+    0%, 100% { box-shadow: 0 0 20px -5px hsl(175 85% 40% / 0.2); }
+    50% { box-shadow: 0 0 35px -5px hsl(175 85% 40% / 0.35); }
   }
 
   .animate-float {
@@ -137,24 +186,24 @@
 
   .bg-grid {
     background-image: 
-      linear-gradient(hsl(175 85% 50% / 0.03) 1px, transparent 1px),
-      linear-gradient(90deg, hsl(175 85% 50% / 0.03) 1px, transparent 1px);
+      linear-gradient(hsl(175 85% 40% / 0.04) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(175 85% 40% / 0.04) 1px, transparent 1px);
     background-size: 60px 60px;
   }
 
   /* TV Focus States - D-pad navigation */
   .tv-focusable:focus {
-    outline: 3px solid hsl(175 85% 50%);
+    outline: 3px solid hsl(175 85% 40%);
     outline-offset: 2px;
-    box-shadow: 0 0 20px hsl(175 85% 50% / 0.4);
+    box-shadow: 0 0 20px hsl(175 85% 40% / 0.3);
     transform: scale(1.05);
     transition: all 0.2s ease;
   }
 
   .tv-focusable:focus-visible {
-    outline: 3px solid hsl(175 85% 50%);
+    outline: 3px solid hsl(175 85% 40%);
     outline-offset: 2px;
-    box-shadow: 0 0 20px hsl(175 85% 50% / 0.4);
+    box-shadow: 0 0 20px hsl(175 85% 40% / 0.3);
     transform: scale(1.05);
   }
 

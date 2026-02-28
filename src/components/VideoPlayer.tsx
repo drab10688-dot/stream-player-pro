@@ -117,13 +117,19 @@ const VideoPlayer = ({ src, muted = false }: VideoPlayerProps) => {
 
   const attemptPlay = async (video: HTMLVideoElement) => {
     try {
+      video.muted = false;
       await video.play();
       setLoading(false);
     } catch {
+      // Browser blocked unmuted autoplay, try muted
       video.muted = true;
       try {
         await video.play();
         setLoading(false);
+        // Unmute after a short delay once playing
+        setTimeout(() => {
+          video.muted = false;
+        }, 500);
       } catch {
         setLoading(false);
       }
