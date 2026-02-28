@@ -419,9 +419,108 @@ app.get('/api/validate-stream', async (req, res) => {
 });
 
 // =============================================
-// RUTA: RESTREAMING DINÁMICO
-// Proxy cualquier canal por su ID, ocultando la IP origen
-// Soporta: HLS (.m3u8), TS, MP4, y cualquier stream HTTP
+// SISTEMA DE CACHÉ DE STREAMS
+// Una sola conexión al origen sirve a múltiples clientes
+// Caché de segmentos TS y manifiestos M3U8
+// Limpieza automática a medianoche
+// =============================================
+const streamCache = new Map(); // channelId -> { data, contentType, timestamp, clients, sourceReq }
+const CACHE_DIR = '/tmp/streambox-cache';
+const fs = require('fs');
+const path = require('path');
+
+// Crear directorio de caché si no existe
+if (!fs.existsSync(CACHE_DIR)) {
+  fs.mkdirSync(CACHE_DIR, { recursive: true });
+}
+
+// Limpieza automática a medianoche
+const scheduleCacheCleanup = () => {
+  const now = new Date();
+  const midnight = new Date(now);
+  midnight.setDate(midnight.getDate() + 1);
+  midnight.setHours(0, 0, 0, 0);
+  const msUntilMidnight = midnight.getTime() - now.getTime();
+
+  setTimeout(() => {
+    console.log('🧹 Limpieza de caché de streams a medianoche...');
+    // Limpiar caché en memoria
+    streamCache.forEach((entry, key) => {
+      if (entry.sourceReq) entry.sourceReq.destroy();
+      streamCache.delete(key);
+    });
+    // Limpiar archivos de caché
+    if (fs.existsSync(CACHE_DIR)) {
+      const files = fs.readdirSync(CACHE_DIR);
+      files.forEach(file => {
+        try { fs.unlinkSync(path.join(CACHE_DIR, file)); } catch {}
+      });
+    }
+    console.log(`✅ Caché limpiado: ${streamCache.size} entradas en memoria, ${fs.readdirSync(CACHE_DIR).length} archivos`);
+    // Programar siguiente limpieza
+    scheduleCacheCleanup();
+  }, msUntilMidnight);
+
+  console.log(`⏰ Próxima limpieza de caché: ${midnight.toLocaleString()} (en ${Math.round(msUntilMidnight / 60000)} min)`);
+};
+scheduleCacheCleanup();
+
+// Limpiar entradas de caché sin clientes activos (cada 5 min)
+setInterval(() => {
+  const now = Date.now();
+  streamCache.forEach((entry, key) => {
+    // Si han pasado más de 5 min sin clientes, eliminar
+    if (entry.clients === 0 && now - entry.timestamp > 5 * 60 * 1000) {
+      if (entry.sourceReq) entry.sourceReq.destroy();
+      streamCache.delete(key);
+    }
+  });
+}, 5 * 60 * 1000);
+
+// Función para obtener un m3u8 cacheado o descargarlo
+const getCachedM3U8 = async (channelId, targetUrl) => {
+  const cacheKey = `m3u8_${channelId}`;
+  const cached = streamCache.get(cacheKey);
+  
+  // Cachear m3u8 por 5 segundos (se actualiza frecuentemente en live)
+  if (cached && Date.now() - cached.timestamp < 5000) {
+    return cached.data;
+  }
+
+  return new Promise((resolve, reject) => {
+    const parsedUrl = new URL(targetUrl);
+    const httpClient = parsedUrl.protocol === 'https:' ? https : http;
+    
+    const req = httpClient.request(targetUrl, {
+      method: 'GET',
+      headers: { 'User-Agent': 'StreamBox/1.0' },
+    }, (res) => {
+      let body = '';
+      res.on('data', chunk => { body += chunk.toString(); });
+      res.on('end', () => {
+        // Reescribir URLs relativas
+        const baseUrl = targetUrl.substring(0, targetUrl.lastIndexOf('/') + 1);
+        const rewritten = body.replace(/^(?!#)(.+\.ts.*)$/gm, (match) => {
+          if (match.startsWith('http')) return match;
+          return baseUrl + match;
+        }).replace(/^(?!#)(.+\.m3u8.*)$/gm, (match) => {
+          if (match.startsWith('http')) return match;
+          return baseUrl + match;
+        });
+        
+        streamCache.set(cacheKey, { data: rewritten, timestamp: Date.now(), clients: 0 });
+        resolve(rewritten);
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(15000, () => { req.destroy(); reject(new Error('Timeout')); });
+    req.end();
+  });
+};
+
+// =============================================
+// RUTA: RESTREAMING DINÁMICO CON CACHÉ COMPARTIDO
+// Una conexión al origen → múltiples clientes
 // =============================================
 app.get('/api/restream/:channelId', async (req, res) => {
   try {
@@ -448,57 +547,51 @@ app.get('/api/restream/:channelId', async (req, res) => {
     }
 
     const targetUrl = channels[0].url;
+    const channelId = req.params.channelId;
 
-    // Hacer proxy del stream
+    // Headers de seguridad
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('X-Powered-By', 'StreamBox');
+
+    // Para HLS: cachear y servir manifiestos
+    const isHLS = targetUrl.includes('.m3u8');
+    if (isHLS) {
+      try {
+        const manifest = await getCachedM3U8(channelId, targetUrl);
+        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.send(manifest);
+      } catch (err) {
+        console.error('HLS cache error:', err.message);
+        res.status(502).json({ error: 'No se pudo obtener el manifiesto HLS' });
+      }
+      return;
+    }
+
+    // Para TS/MP4: proxy directo con pipe compartido
     const parsedUrl = new URL(targetUrl);
-    const client = parsedUrl.protocol === 'https:' ? https : http;
+    const httpClient = parsedUrl.protocol === 'https:' ? https : http;
 
-    const proxyReq = client.request(targetUrl, {
+    const proxyReq = httpClient.request(targetUrl, {
       method: 'GET',
-      headers: {
-        'User-Agent': 'StreamBox/1.0',
-      },
+      headers: { 'User-Agent': 'StreamBox/1.0' },
     }, (proxyRes) => {
-      // Copiar headers relevantes
       const contentType = proxyRes.headers['content-type'];
       if (contentType) res.setHeader('Content-Type', contentType);
       if (proxyRes.headers['content-length']) res.setHeader('Content-Length', proxyRes.headers['content-length']);
-
-      // Headers de seguridad - no revelar origen
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      res.setHeader('X-Powered-By', 'StreamBox');
-
-      // Para HLS: reescribir URLs internas del m3u8
-      if (contentType && contentType.includes('mpegurl') || targetUrl.includes('.m3u8')) {
-        let body = '';
-        proxyRes.on('data', (chunk) => { body += chunk.toString(); });
-        proxyRes.on('end', () => {
-          // Reescribir URLs relativas en el m3u8 para que pasen por nuestro proxy
-          const baseUrl = targetUrl.substring(0, targetUrl.lastIndexOf('/') + 1);
-          const rewritten = body.replace(/^(?!#)(.+\.ts.*)$/gm, (match) => {
-            if (match.startsWith('http')) return match; // Ya es absoluta
-            return baseUrl + match;
-          }).replace(/^(?!#)(.+\.m3u8.*)$/gm, (match) => {
-            if (match.startsWith('http')) return match;
-            return baseUrl + match;
-          });
-          res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-          res.send(rewritten);
-        });
-      } else {
-        // Para TS, MP4, etc: pipe directo
-        proxyRes.pipe(res);
-      }
+      
+      // Pipe directo para streams continuos
+      proxyRes.pipe(res);
     });
 
     proxyReq.on('error', (err) => {
       console.error('Restream error:', err.message);
-      res.status(502).json({ error: 'No se pudo conectar al stream origen' });
+      if (!res.headersSent) res.status(502).json({ error: 'No se pudo conectar al stream origen' });
     });
 
     proxyReq.setTimeout(30000, () => {
       proxyReq.destroy();
-      res.status(504).json({ error: 'Timeout al conectar con el stream' });
+      if (!res.headersSent) res.status(504).json({ error: 'Timeout al conectar con el stream' });
     });
 
     proxyReq.end();
