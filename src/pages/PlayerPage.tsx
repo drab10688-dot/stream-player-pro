@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { ArrowLeft, Volume2, VolumeX, List, Search, Play, Bell } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Input } from '@/components/ui/input';
@@ -17,9 +17,11 @@ const PlayerPage = () => {
   const initialChannel = location.state?.channel || channels[0];
   const [selectedChannel, setSelectedChannel] = useState(initialChannel);
   const [muted, setMuted] = useState(false);
-  const [showList, setShowList] = useState(true);
+  const [showList, setShowList] = useState(false); // Hidden by default now
   const [search, setSearch] = useState('');
   const [currentAdIndex, setCurrentAdIndex] = useState(0);
+  const [showControls, setShowControls] = useState(true);
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout>>();
 
   const activeAds = ads.filter(ad => ad.title || ad.message);
   const currentAd = activeAds.length > 0 ? activeAds[currentAdIndex % activeAds.length] : null;
@@ -32,6 +34,32 @@ const PlayerPage = () => {
     }, 15000);
     return () => clearInterval(interval);
   }, [activeAds.length]);
+
+  // Auto-hide controls after 4 seconds of inactivity
+  const resetHideTimer = useCallback(() => {
+    setShowControls(true);
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    hideTimerRef.current = setTimeout(() => {
+      if (!showList) setShowControls(false);
+    }, 4000);
+  }, [showList]);
+
+  useEffect(() => {
+    resetHideTimer();
+    return () => {
+      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    };
+  }, [resetHideTimer]);
+
+  // Show controls when sidebar is open
+  useEffect(() => {
+    if (showList) {
+      setShowControls(true);
+      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    } else {
+      resetHideTimer();
+    }
+  }, [showList, resetHideTimer]);
 
   const filteredChannels = channels.filter(ch =>
     ch.name.toLowerCase().includes(search.toLowerCase())
@@ -46,40 +74,66 @@ const PlayerPage = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background flex flex-col lg:flex-row">
-      {/* Player Area */}
-      <div className="flex-1 flex flex-col">
-        {/* Top bar */}
-        <div className="flex items-center justify-between px-4 py-3 glass-strong border-b border-primary/5">
+    <div
+      className="min-h-screen bg-black flex flex-col lg:flex-row relative"
+      onMouseMove={resetHideTimer}
+      onTouchStart={resetHideTimer}
+    >
+      {/* Player Area - Full screen */}
+      <div className="flex-1 flex flex-col relative">
+        {/* Top bar - Transparent, auto-hide */}
+        <div
+          className={`absolute top-0 left-0 right-0 z-20 flex items-center justify-between px-4 py-3 bg-gradient-to-b from-black/70 to-transparent transition-all duration-500 ${
+            showControls ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-full pointer-events-none'
+          }`}
+        >
           <div className="flex items-center gap-3">
-            <Button variant="ghost" size="icon" onClick={() => navigate('/')} className="h-10 w-10 rounded-xl hover:bg-secondary/60">
-              <ArrowLeft className="w-5 h-5 text-foreground" />
+            <Button variant="ghost" size="icon" onClick={() => navigate('/')} className="h-10 w-10 rounded-xl hover:bg-white/10 text-white">
+              <ArrowLeft className="w-5 h-5" />
             </Button>
             <div className="w-7 h-7 rounded-full overflow-hidden">
-              <img src={omnisyncLogo} alt="" className="w-full h-full object-cover" />
+              {selectedChannel.logo_url ? (
+                <img
+                  src={selectedChannel.logo_url}
+                  alt=""
+                  className="w-full h-full object-cover"
+                  onError={(e) => { (e.target as HTMLImageElement).src = omnisyncLogo; }}
+                />
+              ) : (
+                <img src={omnisyncLogo} alt="" className="w-full h-full object-cover" />
+              )}
             </div>
             <div>
-              <h1 className="font-semibold text-base text-foreground">{selectedChannel.name}</h1>
-              <p className="text-xs text-muted-foreground">{selectedChannel.category}</p>
+              <h1 className="font-semibold text-base text-white">{selectedChannel.name}</h1>
+              <p className="text-xs text-white/60">{selectedChannel.category}</p>
             </div>
           </div>
           <div className="flex items-center gap-1">
-            <Button variant="ghost" size="icon" onClick={() => setMuted(!muted)} className="h-10 w-10 rounded-xl">
-              {muted ? <VolumeX className="w-5 h-5 text-muted-foreground" /> : <Volume2 className="w-5 h-5 text-foreground" />}
+            <Button variant="ghost" size="icon" onClick={() => setMuted(!muted)} className="h-10 w-10 rounded-xl hover:bg-white/10 text-white">
+              {muted ? <VolumeX className="w-5 h-5 text-white/60" /> : <Volume2 className="w-5 h-5" />}
             </Button>
-            <Button variant="ghost" size="icon" onClick={() => setShowList(!showList)} className="lg:hidden h-10 w-10 rounded-xl">
-              <List className="w-5 h-5 text-foreground" />
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setShowList(!showList)}
+              className="h-10 w-10 rounded-xl hover:bg-white/10 text-white"
+            >
+              <List className="w-5 h-5" />
             </Button>
           </div>
         </div>
 
-        {/* Video Player */}
-        <div className="flex-1 relative bg-black min-h-[300px] lg:min-h-[500px]">
+        {/* Video Player - Full area */}
+        <div className="flex-1 relative bg-black min-h-[100vh] lg:min-h-0">
           <VideoPlayer src={selectedChannel.url} muted={muted} />
-          
-          {/* Ad Banner - Fixed bottom */}
+
+          {/* Ad Banner - Fixed bottom, auto-hide with controls */}
           {currentAd && (
-            <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-r from-black/90 via-black/80 to-black/90 backdrop-blur-sm border-t border-primary/20 px-4 py-2.5 flex items-center gap-3 z-10">
+            <div
+              className={`absolute bottom-0 left-0 right-0 bg-gradient-to-r from-black/90 via-black/80 to-black/90 backdrop-blur-sm border-t border-primary/20 px-4 py-2.5 flex items-center gap-3 z-10 transition-all duration-500 ${
+                showControls ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-full pointer-events-none'
+              }`}
+            >
               <Bell className="w-4 h-4 text-primary shrink-0 animate-pulse" />
               <div className="flex items-center gap-2 overflow-hidden flex-1">
                 <span className="font-semibold text-primary text-sm shrink-0">{currentAd.title}</span>
@@ -93,10 +147,14 @@ const PlayerPage = () => {
         </div>
       </div>
 
-      {/* Channel List Sidebar */}
-      <div className={`${showList ? 'block' : 'hidden'} lg:block w-full lg:w-80 border-l border-border/30 glass-strong`}>
-        <div className="p-4 border-b border-border/30">
-          <div className="relative">
+      {/* Channel List Sidebar - Overlay style */}
+      <div
+        className={`fixed lg:absolute right-0 top-0 bottom-0 w-80 z-30 bg-background/95 backdrop-blur-xl border-l border-border/30 transition-transform duration-300 ${
+          showList ? 'translate-x-0' : 'translate-x-full'
+        }`}
+      >
+        <div className="p-4 border-b border-border/30 flex items-center gap-2">
+          <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
               placeholder="Buscar canal..."
@@ -106,27 +164,43 @@ const PlayerPage = () => {
               maxLength={50}
             />
           </div>
+          <Button variant="ghost" size="icon" onClick={() => setShowList(false)} className="h-10 w-10 rounded-xl shrink-0">
+            <ArrowLeft className="w-4 h-4 text-foreground rotate-180" />
+          </Button>
         </div>
-        <ScrollArea className="h-[calc(100vh-130px)]">
+        <ScrollArea className="h-[calc(100vh-80px)]">
           <div className="p-3 space-y-1">
             {filteredChannels.map(ch => (
               <button
                 key={ch.id}
-                onClick={() => setSelectedChannel(ch)}
+                onClick={() => {
+                  setSelectedChannel(ch);
+                  setShowList(false);
+                }}
                 className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-all duration-200 text-left ${
                   selectedChannel.id === ch.id
                     ? 'bg-primary/10 border border-primary/20'
                     : 'hover:bg-secondary/40 border border-transparent'
                 }`}
               >
-                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 overflow-hidden ${
                   selectedChannel.id === ch.id ? 'bg-primary/20' : 'bg-secondary/60'
                 }`}>
                   {ch.logo_url ? (
-                    <img src={ch.logo_url} alt="" className="w-full h-full object-cover rounded-lg" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
-                  ) : (
-                    <Play className={`w-3.5 h-3.5 ${selectedChannel.id === ch.id ? 'text-primary' : 'text-muted-foreground'}`} />
-                  )}
+                    <img
+                      src={ch.logo_url}
+                      alt=""
+                      className="w-full h-full object-cover rounded-lg"
+                      onError={(e) => {
+                        const img = e.target as HTMLImageElement;
+                        img.style.display = 'none';
+                        if (img.nextElementSibling) (img.nextElementSibling as HTMLElement).style.display = 'block';
+                      }}
+                    />
+                  ) : null}
+                  <Play
+                    className={`w-3.5 h-3.5 ${selectedChannel.id === ch.id ? 'text-primary' : 'text-muted-foreground'} ${ch.logo_url ? 'hidden' : ''}`}
+                  />
                 </div>
                 <div className="min-w-0 flex-1">
                   <span className={`text-sm font-medium block truncate ${selectedChannel.id === ch.id ? 'text-primary' : 'text-foreground'}`}>
@@ -142,6 +216,14 @@ const PlayerPage = () => {
           </div>
         </ScrollArea>
       </div>
+
+      {/* Overlay backdrop when sidebar open on mobile */}
+      {showList && (
+        <div
+          className="fixed inset-0 bg-black/50 z-20 lg:hidden"
+          onClick={() => setShowList(false)}
+        />
+      )}
     </div>
   );
 };
