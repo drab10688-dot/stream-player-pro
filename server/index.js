@@ -9,6 +9,7 @@ const { URL } = require('url');
 const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
+const crypto = require('crypto');
 
 const app = express();
 app.use(cors());
@@ -302,11 +303,13 @@ app.get('/api/clients', authAdmin, async (req, res) => {
 });
 
 app.post('/api/clients', authAdmin, async (req, res) => {
-  const { username, password, max_screens, expiry_date, notes } = req.body;
+  const { username, password, max_screens, expiry_date, notes, plan_id } = req.body;
   try {
+    // Auto-generate playlist token
+    const playlist_token = crypto.randomBytes(16).toString('hex');
     const { rows } = await pool.query(
-      'INSERT INTO clients (username, password, max_screens, expiry_date, notes) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-      [username, password, max_screens || 1, expiry_date, notes]
+      'INSERT INTO clients (username, password, max_screens, expiry_date, notes, plan_id, playlist_token) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
+      [username, password, max_screens || 1, expiry_date, notes, plan_id || null, playlist_token]
     );
     res.json(rows[0]);
   } catch (err) {
@@ -327,10 +330,11 @@ app.put('/api/clients/:id', authAdmin, async (req, res) => {
     const expiry_date = req.body.expiry_date !== undefined ? req.body.expiry_date : c.expiry_date;
     const is_active = req.body.is_active !== undefined ? req.body.is_active : c.is_active;
     const notes = req.body.notes !== undefined ? req.body.notes : c.notes;
+    const plan_id = req.body.plan_id !== undefined ? req.body.plan_id : c.plan_id;
 
     const { rows } = await pool.query(
-      'UPDATE clients SET username=$1, password=$2, max_screens=$3, expiry_date=$4, is_active=$5, notes=$6 WHERE id=$7 RETURNING *',
-      [username, password, max_screens, expiry_date, is_active, notes, req.params.id]
+      'UPDATE clients SET username=$1, password=$2, max_screens=$3, expiry_date=$4, is_active=$5, notes=$6, plan_id=$7 WHERE id=$8 RETURNING *',
+      [username, password, max_screens, expiry_date, is_active, notes, plan_id, req.params.id]
     );
     res.json(rows[0]);
   } catch (err) {
@@ -1783,6 +1787,176 @@ app.post('/api/tunnel/stop', authAdmin, (req, res) => {
     tunnelUrl = null;
     res.json({ success: true, message: 'El túnel no estaba corriendo' });
   }
+});
+
+// =============================================
+// PLAYLIST M3U - Token-based, compatible con OTT Player, Smart IPTV, etc.
+// =============================================
+
+// Regenerar token de playlist
+app.post('/api/clients/:id/regenerate-token', authAdmin, async (req, res) => {
+  try {
+    const newToken = crypto.randomBytes(16).toString('hex');
+    const { rows } = await pool.query(
+      'UPDATE clients SET playlist_token = $1 WHERE id = $2 RETURNING *',
+      [newToken, req.params.id]
+    );
+    if (rows.length === 0) return res.status(404).json({ error: 'Cliente no encontrado' });
+    res.json({ token: newToken, client: rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Generar tokens para clientes existentes que no tienen uno
+app.post('/api/clients/generate-tokens', authAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT id FROM clients WHERE playlist_token IS NULL');
+    let updated = 0;
+    for (const client of rows) {
+      const token = crypto.randomBytes(16).toString('hex');
+      await pool.query('UPDATE clients SET playlist_token = $1 WHERE id = $2', [token, client.id]);
+      updated++;
+    }
+    res.json({ updated, message: `${updated} tokens generados` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Endpoint público: M3U playlist por token
+// GET /api/playlist/:token
+// Compatible con OTT Player, Smart IPTV, SS IPTV, etc.
+app.get('/api/playlist/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+    
+    // Buscar cliente por token
+    const { rows: clients } = await pool.query(
+      'SELECT c.*, p.categories as plan_categories FROM clients c LEFT JOIN plans p ON c.plan_id = p.id WHERE c.playlist_token = $1',
+      [token]
+    );
+    
+    if (clients.length === 0) {
+      return res.status(404).send('#EXTM3U\n#EXTINF:-1,Token inválido\nhttp://invalid');
+    }
+    
+    const client = clients[0];
+    
+    // Verificar que el cliente esté activo
+    if (!client.is_active) {
+      return res.status(403).send('#EXTM3U\n#EXTINF:-1,Cuenta suspendida\nhttp://suspended');
+    }
+    
+    // Verificar expiración
+    if (new Date(client.expiry_date) < new Date()) {
+      await pool.query('UPDATE clients SET is_active = false WHERE id = $1', [client.id]);
+      return res.status(403).send('#EXTM3U\n#EXTINF:-1,Suscripción expirada\nhttp://expired');
+    }
+    
+    // Obtener canales activos
+    let channelsQuery = 'SELECT id, name, url, category, logo_url, sort_order FROM channels WHERE is_active = true ORDER BY sort_order';
+    const { rows: channels } = await pool.query(channelsQuery);
+    
+    // Filtrar por plan si tiene uno asignado
+    let filteredChannels = channels;
+    if (client.plan_categories && client.plan_categories.length > 0) {
+      filteredChannels = channels.filter(ch => client.plan_categories.includes(ch.category));
+    }
+    
+    // Determinar base URL para los streams
+    // Si hay header X-Forwarded-Host (Cloudflare/proxy), usar ese dominio
+    // Si no, usar la IP/host del request (red LAN)
+    const forwardedHost = req.headers['x-forwarded-host'] || req.headers['x-forwarded-for'];
+    const proto = req.headers['x-forwarded-proto'] || 'http';
+    const host = forwardedHost || req.headers.host || `localhost:${PORT}`;
+    const baseUrl = forwardedHost ? `${proto}://${host}` : `http://${host}`;
+    
+    // Generar M3U
+    let m3u = '#EXTM3U\n';
+    m3u += `#PLAYLIST:${client.username}\n`;
+    m3u += `# StreamBox - Generado para ${client.username}\n`;
+    m3u += `# Canales: ${filteredChannels.length}\n\n`;
+    
+    for (const ch of filteredChannels) {
+      const isYouTube = /youtube\.com|youtu\.be/.test(ch.url);
+      
+      // Logo attribute
+      const logoAttr = ch.logo_url ? ` tvg-logo="${ch.logo_url.startsWith('http') ? ch.logo_url : baseUrl + ch.logo_url}"` : '';
+      
+      m3u += `#EXTINF:-1 group-title="${ch.category}"${logoAttr},${ch.name}\n`;
+      
+      if (isYouTube) {
+        // YouTube: URL directa (no se puede restream)
+        m3u += `${ch.url}\n`;
+      } else {
+        // Todo lo demás: via restream para ocultar origen
+        m3u += `${baseUrl}/api/restream/${ch.id}\n`;
+      }
+    }
+    
+    res.set({
+      'Content-Type': 'audio/mpegurl',
+      'Content-Disposition': `inline; filename="${client.username}.m3u"`,
+      'Cache-Control': 'no-cache',
+    });
+    res.send(m3u);
+    
+  } catch (err) {
+    console.error('Playlist error:', err);
+    res.status(500).send('#EXTM3U\n#EXTINF:-1,Error del servidor\nhttp://error');
+  }
+});
+
+// =============================================
+// RUTAS: PLANES (requiere admin)
+// =============================================
+app.get('/api/plans', authAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM plans ORDER BY sort_order');
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/plans', authAdmin, async (req, res) => {
+  const { name, description, categories, price, sort_order } = req.body;
+  try {
+    const { rows } = await pool.query(
+      'INSERT INTO plans (name, description, categories, price, sort_order) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+      [name, description || null, categories || '{}', price || 0, sort_order || 0]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.put('/api/plans/:id', authAdmin, async (req, res) => {
+  try {
+    const { rows: current } = await pool.query('SELECT * FROM plans WHERE id = $1', [req.params.id]);
+    if (current.length === 0) return res.status(404).json({ error: 'Plan no encontrado' });
+    const p = current[0];
+    const name = req.body.name !== undefined ? req.body.name : p.name;
+    const description = req.body.description !== undefined ? req.body.description : p.description;
+    const categories = req.body.categories !== undefined ? req.body.categories : p.categories;
+    const price = req.body.price !== undefined ? req.body.price : p.price;
+    const is_active = req.body.is_active !== undefined ? req.body.is_active : p.is_active;
+    const sort_order = req.body.sort_order !== undefined ? req.body.sort_order : p.sort_order;
+    const { rows } = await pool.query(
+      'UPDATE plans SET name=$1, description=$2, categories=$3, price=$4, is_active=$5, sort_order=$6 WHERE id=$7 RETURNING *',
+      [name, description, categories, price, is_active, sort_order, req.params.id]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/plans/:id', authAdmin, async (req, res) => {
+  await pool.query('DELETE FROM plans WHERE id = $1', [req.params.id]);
+  res.json({ ok: true });
 });
 
 // =============================================

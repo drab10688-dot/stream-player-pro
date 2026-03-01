@@ -154,6 +154,7 @@ export type Database = {
           notes: string | null
           password: string
           plan_id: string | null
+          playlist_token: string | null
           reseller_id: string | null
           updated_at: string
           username: string
@@ -167,6 +168,7 @@ export type Database = {
           notes?: string | null
           password: string
           plan_id?: string | null
+          playlist_token?: string | null
           reseller_id?: string | null
           updated_at?: string
           username: string
@@ -180,6 +182,7 @@ export type Database = {
           notes?: string | null
           password?: string
           plan_id?: string | null
+          playlist_token?: string | null
           reseller_id?: string | null
           updated_at?: string
           username?: string
