@@ -70,7 +70,7 @@ const AdminDashboard = () => {
 
       <main className="container px-4 py-6">
         <Tabs defaultValue="dashboard" className="space-y-6">
-          <TabsList className="glass-strong border border-border/30 p-1">
+          <TabsList className="glass-strong border border-border/30 p-1 flex flex-wrap h-auto gap-1">
             <TabsTrigger value="dashboard" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
               <LayoutDashboard className="w-4 h-4" /> Dashboard
             </TabsTrigger>
