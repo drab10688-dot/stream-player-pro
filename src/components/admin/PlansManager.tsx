@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
+import { isLovablePreview } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -28,25 +30,41 @@ const PlansManager = () => {
   const [availableCategories, setAvailableCategories] = useState<string[]>([]);
 
   const fetchPlans = async () => {
-    const { data, error } = await (supabase
-      .from('plans' as any)
-      .select('*')
-      .order('sort_order', { ascending: true }) as any);
-    if (error) {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' });
-    } else {
-      setPlans((data as any[]) || []);
+    try {
+      if (isLovablePreview()) {
+        const { data, error } = await (supabase
+          .from('plans' as any)
+          .select('*')
+          .order('sort_order', { ascending: true }) as any);
+        if (error) throw error;
+        setPlans((data as any[]) || []);
+      } else {
+        const data = await apiGet('/api/plans');
+        setPlans(data || []);
+      }
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
     }
     setLoading(false);
   };
 
   const fetchCategories = async () => {
-    const { data } = await supabase
-      .from('channels')
-      .select('category');
-    if (data) {
-      const unique = [...new Set(data.map((c: any) => c.category))].sort();
-      setAvailableCategories(unique);
+    try {
+      if (isLovablePreview()) {
+        const { data } = await supabase.from('channels').select('category');
+        if (data) {
+          const unique = [...new Set(data.map((c: any) => c.category))].sort();
+          setAvailableCategories(unique);
+        }
+      } else {
+        const data = await apiGet('/api/channels');
+        if (data) {
+          const unique = [...new Set(data.map((c: any) => c.category))] as string[];
+          setAvailableCategories(unique.sort());
+        }
+      }
+    } catch {
+      // ignore
     }
   };
 
@@ -69,17 +87,28 @@ const PlansManager = () => {
       sort_order: form.sort_order,
     };
 
-    if (editingId) {
-      const { error } = await (supabase.from('plans' as any).update(payload as any) as any).eq('id', editingId);
-      if (error) { toast({ title: 'Error', description: error.message, variant: 'destructive' }); return; }
-      toast({ title: 'Plan actualizado' });
-    } else {
-      const { error } = await (supabase.from('plans' as any).insert(payload as any) as any);
-      if (error) { toast({ title: 'Error', description: error.message, variant: 'destructive' }); return; }
-      toast({ title: 'Plan creado' });
+    try {
+      if (isLovablePreview()) {
+        if (editingId) {
+          const { error } = await (supabase.from('plans' as any).update(payload as any) as any).eq('id', editingId);
+          if (error) throw error;
+        } else {
+          const { error } = await (supabase.from('plans' as any).insert(payload as any) as any);
+          if (error) throw error;
+        }
+      } else {
+        if (editingId) {
+          await apiPut(`/api/plans/${editingId}`, payload);
+        } else {
+          await apiPost('/api/plans', payload);
+        }
+      }
+      toast({ title: editingId ? 'Plan actualizado' : 'Plan creado' });
+      resetForm();
+      fetchPlans();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
     }
-    resetForm();
-    fetchPlans();
   };
 
   const resetForm = () => {
@@ -101,17 +130,33 @@ const PlansManager = () => {
   };
 
   const toggleActive = async (p: Plan) => {
-    const { error } = await (supabase.from('plans' as any).update({ is_active: !p.is_active } as any) as any).eq('id', p.id);
-    if (error) { toast({ title: 'Error', description: error.message, variant: 'destructive' }); return; }
-    toast({ title: p.is_active ? 'Plan desactivado' : 'Plan activado' });
-    fetchPlans();
+    try {
+      if (isLovablePreview()) {
+        const { error } = await (supabase.from('plans' as any).update({ is_active: !p.is_active } as any) as any).eq('id', p.id);
+        if (error) throw error;
+      } else {
+        await apiPut(`/api/plans/${p.id}`, { is_active: !p.is_active });
+      }
+      toast({ title: p.is_active ? 'Plan desactivado' : 'Plan activado' });
+      fetchPlans();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
   };
 
   const handleDelete = async (id: string) => {
-    const { error } = await (supabase.from('plans' as any).delete() as any).eq('id', id);
-    if (error) { toast({ title: 'Error', description: error.message, variant: 'destructive' }); return; }
-    toast({ title: 'Plan eliminado' });
-    fetchPlans();
+    try {
+      if (isLovablePreview()) {
+        const { error } = await (supabase.from('plans' as any).delete() as any).eq('id', id);
+        if (error) throw error;
+      } else {
+        await apiDelete(`/api/plans/${id}`);
+      }
+      toast({ title: 'Plan eliminado' });
+      fetchPlans();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
   };
 
   const addCategory = (cat: string) => {

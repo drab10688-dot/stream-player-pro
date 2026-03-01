@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { apiGet, apiPost, apiDelete } from '@/lib/api';
+import { isLovablePreview } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Download, Upload, Database, Server, Clock, Trash2, Loader2, HardDrive, RefreshCw } from 'lucide-react';
 import { motion } from 'framer-motion';
@@ -28,14 +29,20 @@ const BackupManager = () => {
   const [restoring, setRestoring] = useState(false);
 
   const fetchBackups = async () => {
-    const { data, error } = await (supabase
-      .from('system_backups' as any)
-      .select('*')
-      .order('created_at', { ascending: false }) as any);
-    if (error) {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' });
-    } else {
-      setBackups((data as any[]) || []);
+    try {
+      if (isLovablePreview()) {
+        const { data, error } = await (supabase
+          .from('system_backups' as any)
+          .select('*')
+          .order('created_at', { ascending: false }) as any);
+        if (error) throw error;
+        setBackups((data as any[]) || []);
+      } else {
+        const data = await apiGet('/api/backups');
+        setBackups(data || []);
+      }
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
     }
     setLoading(false);
   };
@@ -45,45 +52,29 @@ const BackupManager = () => {
   const createBackup = async (type: 'full' | 'database' | 'config') => {
     setCreating(true);
     try {
-      // Export all tables data
-      const tables = ['channels', 'clients', 'plans', 'ads', 'resellers', 'active_connections'];
-      const backupData: Record<string, any[]> = {};
-
-      for (const table of tables) {
-        const { data } = await supabase.from(table as any).select('*');
-        backupData[table] = (data as any[]) || [];
+      if (isLovablePreview()) {
+        // Export all tables data via Supabase
+        const tables = ['channels', 'clients', 'plans', 'ads', 'resellers', 'active_connections'];
+        const backupData: Record<string, any[]> = {};
+        for (const table of tables) {
+          const { data } = await supabase.from(table as any).select('*');
+          backupData[table] = (data as any[]) || [];
+        }
+        const backupContent = JSON.stringify({ version: '1.0', created_at: new Date().toISOString(), type, tables: backupData }, null, 2);
+        const blob = new Blob([backupContent], { type: 'application/json' });
+        const fileName = `backup-${type}-${format(new Date(), 'yyyy-MM-dd-HHmmss')}.json`;
+        const { error: uploadError } = await supabase.storage.from('backups').upload(fileName, blob);
+        if (uploadError) throw uploadError;
+        const { error: insertError } = await (supabase.from('system_backups' as any).insert({
+          name: fileName, type, file_size: blob.size, status: 'completed',
+          includes_db: type === 'full' || type === 'database', includes_config: type === 'full' || type === 'config',
+        } as any) as any);
+        if (insertError) throw insertError;
+        toast({ title: '✅ Backup creado', description: fileName });
+      } else {
+        const data = await apiPost('/api/backups', { type });
+        toast({ title: '✅ Backup creado', description: data.name || 'Backup generado' });
       }
-
-      const backupContent = JSON.stringify({
-        version: '1.0',
-        created_at: new Date().toISOString(),
-        type,
-        tables: backupData,
-      }, null, 2);
-
-      const blob = new Blob([backupContent], { type: 'application/json' });
-      const fileName = `backup-${type}-${format(new Date(), 'yyyy-MM-dd-HHmmss')}.json`;
-
-      // Upload to storage
-      const { error: uploadError } = await supabase.storage
-        .from('backups')
-        .upload(fileName, blob);
-
-      if (uploadError) throw uploadError;
-
-      // Register backup
-      const { error: insertError } = await (supabase.from('system_backups' as any).insert({
-        name: fileName,
-        type,
-        file_size: blob.size,
-        status: 'completed',
-        includes_db: type === 'full' || type === 'database',
-        includes_config: type === 'full' || type === 'config',
-      } as any) as any);
-
-      if (insertError) throw insertError;
-
-      toast({ title: '✅ Backup creado', description: fileName });
       fetchBackups();
     } catch (err: any) {
       toast({ title: 'Error', description: err.message, variant: 'destructive' });
@@ -93,17 +84,26 @@ const BackupManager = () => {
 
   const downloadBackup = async (backup: BackupRecord) => {
     try {
-      const { data, error } = await supabase.storage
-        .from('backups')
-        .download(backup.name);
-      if (error) throw error;
-
-      const url = URL.createObjectURL(data);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = backup.name;
-      a.click();
-      URL.revokeObjectURL(url);
+      if (isLovablePreview()) {
+        const { data, error } = await supabase.storage.from('backups').download(backup.name);
+        if (error) throw error;
+        const url = URL.createObjectURL(data);
+        const a = document.createElement('a');
+        a.href = url; a.download = backup.name; a.click();
+        URL.revokeObjectURL(url);
+      } else {
+        // Download from VPS
+        const token = localStorage.getItem('admin_token');
+        const response = await fetch(`${import.meta.env.VITE_LOCAL_API_URL || ''}/api/backups/${backup.id}/download`, {
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        if (!response.ok) throw new Error('Error descargando backup');
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = backup.name; a.click();
+        URL.revokeObjectURL(url);
+      }
     } catch (err: any) {
       toast({ title: 'Error', description: err.message, variant: 'destructive' });
     }
@@ -111,33 +111,29 @@ const BackupManager = () => {
 
   const restoreBackup = async (backup: BackupRecord) => {
     if (!confirm(`⚠️ ¿Restaurar "${backup.name}"?\n\nEsto reemplazará TODOS los datos actuales. Esta acción no se puede deshacer.`)) return;
-
     setRestoring(true);
     try {
-      const { data: fileData, error } = await supabase.storage
-        .from('backups')
-        .download(backup.name);
-      if (error) throw error;
-
-      const text = await fileData.text();
-      const backupContent = JSON.parse(text);
-
-      if (!backupContent.tables) throw new Error('Formato de backup inválido');
-
-      // Restore tables in order (respect foreign keys)
-      const restoreOrder = ['plans', 'resellers', 'channels', 'ads', 'clients'];
-
-      for (const table of restoreOrder) {
-        if (backupContent.tables[table]) {
-          await (supabase.from(table as any).delete() as any).neq('id', '00000000-0000-0000-0000-000000000000');
-          if (backupContent.tables[table].length > 0) {
-            const { error: insertErr } = await (supabase.from(table as any).insert(backupContent.tables[table] as any) as any);
-            if (insertErr) console.warn(`Error restaurando ${table}:`, insertErr.message);
+      if (isLovablePreview()) {
+        const { data: fileData, error } = await supabase.storage.from('backups').download(backup.name);
+        if (error) throw error;
+        const text = await fileData.text();
+        const backupContent = JSON.parse(text);
+        if (!backupContent.tables) throw new Error('Formato de backup inválido');
+        const restoreOrder = ['plans', 'resellers', 'channels', 'ads', 'clients'];
+        for (const table of restoreOrder) {
+          if (backupContent.tables[table]) {
+            await (supabase.from(table as any).delete() as any).neq('id', '00000000-0000-0000-0000-000000000000');
+            if (backupContent.tables[table].length > 0) {
+              const { error: insertErr } = await (supabase.from(table as any).insert(backupContent.tables[table] as any) as any);
+              if (insertErr) console.warn(`Error restaurando ${table}:`, insertErr.message);
+            }
           }
         }
+        toast({ title: '✅ Backup restaurado', description: 'Datos restaurados correctamente' });
+      } else {
+        await apiPost(`/api/backups/${backup.id}/restore`, {});
+        toast({ title: '✅ Backup restaurado', description: 'Datos restaurados correctamente' });
       }
-
-      toast({ title: '✅ Backup restaurado', description: 'Datos restaurados correctamente' });
     } catch (err: any) {
       toast({ title: 'Error', description: err.message, variant: 'destructive' });
     }
@@ -147,29 +143,41 @@ const BackupManager = () => {
   const handleFileRestore = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     if (!confirm(`⚠️ ¿Restaurar desde "${file.name}"?\n\nEsto reemplazará TODOS los datos actuales.`)) return;
-
     setRestoring(true);
     try {
-      const text = await file.text();
-      const backupContent = JSON.parse(text);
-
-      if (!backupContent.tables) throw new Error('Formato de backup inválido');
-
-      const restoreOrder = ['plans', 'resellers', 'channels', 'ads', 'clients'];
-
-      for (const table of restoreOrder) {
-        if (backupContent.tables[table]) {
-          await (supabase.from(table as any).delete() as any).neq('id', '00000000-0000-0000-0000-000000000000');
-          if (backupContent.tables[table].length > 0) {
-            const { error: insertErr } = await (supabase.from(table as any).insert(backupContent.tables[table] as any) as any);
-            if (insertErr) console.warn(`Error restaurando ${table}:`, insertErr.message);
+      if (isLovablePreview()) {
+        const text = await file.text();
+        const backupContent = JSON.parse(text);
+        if (!backupContent.tables) throw new Error('Formato de backup inválido');
+        const restoreOrder = ['plans', 'resellers', 'channels', 'ads', 'clients'];
+        for (const table of restoreOrder) {
+          if (backupContent.tables[table]) {
+            await (supabase.from(table as any).delete() as any).neq('id', '00000000-0000-0000-0000-000000000000');
+            if (backupContent.tables[table].length > 0) {
+              const { error: insertErr } = await (supabase.from(table as any).insert(backupContent.tables[table] as any) as any);
+              if (insertErr) console.warn(`Error restaurando ${table}:`, insertErr.message);
+            }
           }
         }
+        toast({ title: '✅ Backup restaurado', description: 'Datos restaurados desde archivo' });
+      } else {
+        // Upload file to VPS
+        const formData = new FormData();
+        formData.append('backup', file);
+        const token = localStorage.getItem('admin_token');
+        const response = await fetch(`${import.meta.env.VITE_LOCAL_API_URL || ''}/api/backups/restore-file`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` },
+          body: formData,
+        });
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.error || 'Error restaurando');
+        }
+        toast({ title: '✅ Backup restaurado', description: 'Datos restaurados desde archivo' });
       }
-
-      toast({ title: '✅ Backup restaurado', description: 'Datos restaurados desde archivo' });
+      fetchBackups();
     } catch (err: any) {
       toast({ title: 'Error', description: err.message, variant: 'destructive' });
     }
@@ -180,8 +188,12 @@ const BackupManager = () => {
   const deleteBackup = async (backup: BackupRecord) => {
     if (!confirm(`¿Eliminar backup "${backup.name}"?`)) return;
     try {
-      await supabase.storage.from('backups').remove([backup.name]);
-      await supabase.from('system_backups').delete().eq('id', backup.id);
+      if (isLovablePreview()) {
+        await supabase.storage.from('backups').remove([backup.name]);
+        await supabase.from('system_backups').delete().eq('id', backup.id);
+      } else {
+        await apiDelete(`/api/backups/${backup.id}`);
+      }
       toast({ title: 'Backup eliminado' });
       fetchBackups();
     } catch (err: any) {
@@ -210,7 +222,6 @@ const BackupManager = () => {
         </div>
       </div>
 
-      {/* Create backup actions */}
       <div className="glass rounded-xl p-5">
         <h3 className="font-semibold text-foreground mb-3">Crear Backup</h3>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -229,7 +240,6 @@ const BackupManager = () => {
         </div>
       </div>
 
-      {/* Backup list */}
       {loading ? (
         <div className="text-center py-12 text-muted-foreground">Cargando...</div>
       ) : backups.length === 0 ? (
