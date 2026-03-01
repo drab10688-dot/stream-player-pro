@@ -522,12 +522,56 @@ const fs = require('fs');
 const path = require('path');
 
 const HLS_DIR = '/tmp/streambox-hls';
+const HLS_CACHE_DIR = '/tmp/streambox-cache';
 const activeTranscoders = new Map(); // channelId -> { ffmpeg, clients, lastAccess, type }
 
-// Crear directorio base
-if (!fs.existsSync(HLS_DIR)) {
-  fs.mkdirSync(HLS_DIR, { recursive: true });
-}
+// Crear directorios base
+[HLS_DIR, HLS_CACHE_DIR].forEach(dir => {
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+});
+
+// Verificar si estamos corriendo en tmpfs (RAM)
+const isTmpfs = (() => {
+  try {
+    const { execSync } = require('child_process');
+    const output = execSync(`df -T ${HLS_DIR} 2>/dev/null`).toString();
+    const onTmpfs = output.includes('tmpfs');
+    if (onTmpfs) {
+      const parts = output.split('\n')[1]?.split(/\s+/) || [];
+      const sizeKB = parseInt(parts[2]) || 0;
+      const usedKB = parseInt(parts[3]) || 0;
+      const sizeMB = Math.round(sizeKB / 1024);
+      const usedMB = Math.round(usedKB / 1024);
+      console.log(`⚡ HLS en tmpfs (RAM): ${usedMB}MB / ${sizeMB}MB usado`);
+    } else {
+      console.log(`💾 HLS en disco normal: ${HLS_DIR} (recomendado: montar tmpfs para mejor rendimiento)`);
+    }
+    return onTmpfs;
+  } catch { return false; }
+})();
+
+// Monitor de uso de RAM para tmpfs (cada 60s)
+setInterval(() => {
+  try {
+    const { execSync } = require('child_process');
+    const output = execSync(`df -h ${HLS_DIR} 2>/dev/null`).toString();
+    const parts = output.split('\n')[1]?.split(/\s+/) || [];
+    const used = parts[2] || '?';
+    const total = parts[1] || '?';
+    const pct = parts[4] || '?';
+    if (parseInt(pct) > 80) {
+      console.warn(`⚠️ tmpfs casi lleno: ${used}/${total} (${pct})`);
+      // Limpieza agresiva: borrar canales sin clientes activos
+      const dirs = fs.readdirSync(HLS_DIR);
+      dirs.forEach(dir => {
+        if (!activeTranscoders.has(dir)) {
+          cleanChannelDir(dir);
+          console.log(`🧹 Canal ${dir} limpiado por presión de memoria`);
+        }
+      });
+    }
+  } catch {}
+}, 60000);
 
 // Limpiar directorio de un canal
 function cleanChannelDir(channelId) {
@@ -564,16 +608,19 @@ function startFFmpegTranscoder(channelId, sourceUrl) {
     '-reconnect', '1',
     '-reconnect_streamed', '1',
     '-reconnect_delay_max', '10',
+    '-rw_timeout', '10000000',     // 10s timeout de lectura
     '-i', sourceUrl,
-    '-c:v', 'copy',          // No re-encodear video (solo re-empaquetar)
-    '-c:a', 'aac',           // Audio a AAC para compatibilidad HLS
+    '-c:v', 'copy',                // No re-encodear video (solo re-empaquetar)
+    '-c:a', 'aac',                 // Audio a AAC para compatibilidad HLS
     '-b:a', '128k',
     '-f', 'hls',
-    '-hls_time', '4',        // Segmentos de 4 segundos
-    '-hls_list_size', '10',  // Mantener últimos 10 segmentos en el manifiesto
-    '-hls_flags', 'delete_segments+append_list', // Borrar segmentos viejos automáticamente
+    '-hls_time', '2',              // Segmentos de 2s (más rápido en RAM)
+    '-hls_list_size', '6',         // Solo 6 segmentos en manifiesto (menos RAM)
+    '-hls_flags', 'delete_segments+append_list+temp_file', // temp_file evita lecturas parciales
+    '-hls_segment_type', 'mpegts',
     '-hls_segment_filename', path.join(channelDir, 'seg_%05d.ts'),
     '-hls_allow_cache', '1',
+    '-y',                          // Sobreescribir sin preguntar
     manifestPath,
   ], {
     stdio: ['pipe', 'pipe', 'pipe'],

@@ -300,6 +300,69 @@ else
 fi
 
 # =============================================
+# PASO 4.5: Configurar tmpfs para HLS (RAM Disk)
+# Segmentos HLS en RAM = latencia casi cero
+# =============================================
+log_step "💾 [3.5/8] Configurando tmpfs para HLS en RAM..."
+
+HLS_TMPFS_DIR="/tmp/streambox-hls"
+HLS_CACHE_DIR="/tmp/streambox-cache"
+TMPFS_SIZE="512M"
+
+# Detectar RAM disponible y ajustar tamaño
+TOTAL_RAM_MB=$(free -m | awk '/^Mem:/{print $2}')
+if [ "$TOTAL_RAM_MB" -ge 16384 ]; then
+  TMPFS_SIZE="4G"
+elif [ "$TOTAL_RAM_MB" -ge 8192 ]; then
+  TMPFS_SIZE="2G"
+elif [ "$TOTAL_RAM_MB" -ge 4096 ]; then
+  TMPFS_SIZE="1G"
+elif [ "$TOTAL_RAM_MB" -ge 2048 ]; then
+  TMPFS_SIZE="512M"
+else
+  TMPFS_SIZE="256M"
+fi
+
+log_info "RAM detectada: ${TOTAL_RAM_MB}MB → tmpfs: ${TMPFS_SIZE}"
+
+# Crear directorios
+mkdir -p "$HLS_TMPFS_DIR" "$HLS_CACHE_DIR"
+
+# Desmontar si ya existe
+umount "$HLS_TMPFS_DIR" 2>/dev/null || true
+
+# Montar tmpfs en RAM
+mount -t tmpfs -o size=${TMPFS_SIZE},noatime,nodiratime tmpfs "$HLS_TMPFS_DIR"
+if mountpoint -q "$HLS_TMPFS_DIR"; then
+  log_ok "tmpfs montado en $HLS_TMPFS_DIR (${TMPFS_SIZE} en RAM)"
+else
+  log_err "No se pudo montar tmpfs, usando disco normal"
+fi
+
+# Agregar a fstab para persistir después de reinicio
+if ! grep -q "streambox-hls" /etc/fstab; then
+  echo "# Omnisync - HLS segments in RAM for zero-latency streaming" >> /etc/fstab
+  echo "tmpfs ${HLS_TMPFS_DIR} tmpfs defaults,noatime,nodiratime,size=${TMPFS_SIZE} 0 0" >> /etc/fstab
+  log_ok "tmpfs agregado a /etc/fstab (persistente)"
+else
+  sed -i "s|tmpfs ${HLS_TMPFS_DIR} tmpfs.*|tmpfs ${HLS_TMPFS_DIR} tmpfs defaults,noatime,nodiratime,size=${TMPFS_SIZE} 0 0|" /etc/fstab
+  log_info "Entrada tmpfs actualizada en /etc/fstab"
+fi
+
+# Dar permisos
+chmod 777 "$HLS_TMPFS_DIR" "$HLS_CACHE_DIR"
+
+# Instalar FFmpeg si no está
+if ! command -v ffmpeg &> /dev/null; then
+  log_info "Instalando FFmpeg..."
+  apt install -y -qq ffmpeg > /dev/null 2>&1
+fi
+FFMPEG_VERSION=$(ffmpeg -version 2>/dev/null | head -1 | awk '{print $3}')
+log_ok "FFmpeg ${FFMPEG_VERSION} listo"
+
+log_ok "Sistema tmpfs configurado - streams HLS en RAM"
+
+# =============================================
 # PASO 5: Configurar la API
 # =============================================
 log_step "⚙️  [4/8] Configurando API Node.js..."
