@@ -15,15 +15,21 @@ export const api = async (path: string, options: RequestInit = {}) => {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers,
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      headers,
+    });
+  } catch (fetchErr: any) {
+    // Network error - give more context for debugging
+    throw new Error(`No se pudo conectar al servidor (${path}). Verifica que el servicio Node.js esté activo. Detalle: ${fetchErr.message}`);
+  }
 
   const contentType = response.headers.get('content-type');
   if (!contentType?.includes('application/json')) {
     const text = await response.text();
-    throw new Error(`Respuesta inesperada del servidor: ${text.substring(0, 200)}`);
+    throw new Error(`Respuesta inesperada del servidor (${response.status}): ${text.substring(0, 200)}`);
   }
 
   const data = await response.json();

@@ -1894,12 +1894,11 @@ app.get('/api/playlist/:token', async (req, res) => {
     }
     
     // Determinar base URL para los streams
-    // Si hay header X-Forwarded-Host (Cloudflare/proxy), usar ese dominio
-    // Si no, usar la IP/host del request (red LAN)
-    const forwardedHost = req.headers['x-forwarded-host'] || req.headers['x-forwarded-for'];
-    const proto = req.headers['x-forwarded-proto'] || 'http';
-    const host = forwardedHost || req.headers.host || `localhost:${PORT}`;
-    const baseUrl = forwardedHost ? `${proto}://${host}` : `http://${host}`;
+    // Cloudflare tunnel pone el dominio en Host header y proto en X-Forwarded-Proto
+    // X-Forwarded-Host tiene prioridad si existe, luego Host header
+    const proto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+    const host = req.headers['x-forwarded-host'] || req.headers.host || `localhost:${PORT}`;
+    const baseUrl = `${proto}://${host}`;
     
     // Generar M3U
     let m3u = '#EXTM3U\n';
