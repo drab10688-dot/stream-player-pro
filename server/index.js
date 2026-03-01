@@ -331,10 +331,11 @@ app.put('/api/clients/:id', authAdmin, async (req, res) => {
     const is_active = req.body.is_active !== undefined ? req.body.is_active : c.is_active;
     const notes = req.body.notes !== undefined ? req.body.notes : c.notes;
     const plan_id = req.body.plan_id !== undefined ? req.body.plan_id : c.plan_id;
+    const vod_enabled = req.body.vod_enabled !== undefined ? req.body.vod_enabled : c.vod_enabled;
 
     const { rows } = await pool.query(
-      'UPDATE clients SET username=$1, password=$2, max_screens=$3, expiry_date=$4, is_active=$5, notes=$6, plan_id=$7 WHERE id=$8 RETURNING *',
-      [username, password, max_screens, expiry_date, is_active, notes, plan_id, req.params.id]
+      'UPDATE clients SET username=$1, password=$2, max_screens=$3, expiry_date=$4, is_active=$5, notes=$6, plan_id=$7, vod_enabled=$8 WHERE id=$9 RETURNING *',
+      [username, password, max_screens, expiry_date, is_active, notes, plan_id, vod_enabled, req.params.id]
     );
     res.json(rows[0]);
   } catch (err) {
@@ -522,7 +523,7 @@ app.post('/api/client/login', async (req, res) => {
     const streamBaseUrl = (tunnelMode === 'hybrid' && tunnelUrl && serverIP) ? `http://${serverIP}` : null;
 
     res.json({
-      client: { id: client.id, username: client.username, max_screens: client.max_screens, expiry_date: client.expiry_date },
+      client: { id: client.id, username: client.username, max_screens: client.max_screens, expiry_date: client.expiry_date, vod_enabled: client.vod_enabled || false },
       channels: safeChannels,
       ads: adsRes.rows,
       stream_base_url: streamBaseUrl,
@@ -2197,6 +2198,171 @@ app.get('/live/:username/:password/:streamId/:segment', async (req, res) => {
 });
 
 console.log('📡 Xtream Codes API habilitada: /player_api.php, /live/, /get.php, /xmltv.php');
+
+// =============================================
+// RUTAS: VOD - Videos/Películas (requiere admin)
+// =============================================
+const VOD_DIR = path.join(__dirname, 'uploads', 'vod');
+const VOD_POSTERS_DIR = path.join(__dirname, 'uploads', 'vod-posters');
+[VOD_DIR, VOD_POSTERS_DIR].forEach(dir => {
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+});
+
+// Serve VOD posters statically
+app.use('/uploads/vod-posters', express.static(VOD_POSTERS_DIR));
+
+// Multer for VOD video uploads (up to 10GB)
+const vodStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    if (file.fieldname === 'poster') cb(null, VOD_POSTERS_DIR);
+    else cb(null, VOD_DIR);
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname) || (file.fieldname === 'poster' ? '.jpg' : '.mp4');
+    cb(null, `${Date.now()}-${Math.random().toString(36).substring(2, 8)}${ext}`);
+  }
+});
+const uploadVod = multer({ 
+  storage: vodStorage, 
+  limits: { fileSize: 10 * 1024 * 1024 * 1024 }, // 10GB
+});
+
+// List all VOD items (admin)
+app.get('/api/vod', authAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM vod_items ORDER BY sort_order, created_at DESC');
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Create VOD item with file upload
+app.post('/api/vod', authAdmin, uploadVod.fields([
+  { name: 'video', maxCount: 1 },
+  { name: 'poster', maxCount: 1 }
+]), async (req, res) => {
+  try {
+    const videoFile = req.files?.['video']?.[0];
+    const posterFile = req.files?.['poster']?.[0];
+    if (!videoFile) return res.status(400).json({ error: 'Se requiere un archivo de video' });
+
+    const { title, description, category, duration_minutes, sort_order } = req.body;
+    if (!title) return res.status(400).json({ error: 'Se requiere un título' });
+
+    const poster_url = posterFile ? `/uploads/vod-posters/${posterFile.filename}` : null;
+
+    const { rows } = await pool.query(
+      'INSERT INTO vod_items (title, description, category, poster_url, video_filename, duration_minutes, sort_order) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *',
+      [title, description || null, category || 'Películas', poster_url, videoFile.filename, parseInt(duration_minutes) || null, parseInt(sort_order) || 0]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Update VOD item
+app.put('/api/vod/:id', authAdmin, uploadVod.fields([
+  { name: 'poster', maxCount: 1 }
+]), async (req, res) => {
+  try {
+    const { rows: current } = await pool.query('SELECT * FROM vod_items WHERE id = $1', [req.params.id]);
+    if (current.length === 0) return res.status(404).json({ error: 'VOD no encontrado' });
+
+    const v = current[0];
+    const posterFile = req.files?.['poster']?.[0];
+    const title = req.body.title !== undefined ? req.body.title : v.title;
+    const description = req.body.description !== undefined ? req.body.description : v.description;
+    const category = req.body.category !== undefined ? req.body.category : v.category;
+    const is_active = req.body.is_active !== undefined ? (req.body.is_active === 'true' || req.body.is_active === true) : v.is_active;
+    const duration_minutes = req.body.duration_minutes !== undefined ? parseInt(req.body.duration_minutes) || null : v.duration_minutes;
+    const sort_order = req.body.sort_order !== undefined ? parseInt(req.body.sort_order) || 0 : v.sort_order;
+    const poster_url = posterFile ? `/uploads/vod-posters/${posterFile.filename}` : v.poster_url;
+
+    const { rows } = await pool.query(
+      'UPDATE vod_items SET title=$1, description=$2, category=$3, poster_url=$4, is_active=$5, duration_minutes=$6, sort_order=$7 WHERE id=$8 RETURNING *',
+      [title, description, category, poster_url, is_active, duration_minutes, sort_order, req.params.id]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Delete VOD item (also delete files)
+app.delete('/api/vod/:id', authAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT video_filename, poster_url FROM vod_items WHERE id = $1', [req.params.id]);
+    if (rows.length > 0) {
+      const videoPath = path.join(VOD_DIR, rows[0].video_filename);
+      if (fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
+      if (rows[0].poster_url) {
+        const posterPath = path.join(__dirname, rows[0].poster_url);
+        if (fs.existsSync(posterPath)) fs.unlinkSync(posterPath);
+      }
+    }
+    await pool.query('DELETE FROM vod_items WHERE id = $1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Public VOD list (only active items, for clients with vod_enabled)
+app.get('/api/vod/public', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT id, title, description, category, poster_url, duration_minutes, sort_order FROM vod_items WHERE is_active = true ORDER BY sort_order, created_at DESC'
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Stream VOD video file
+app.get('/api/vod/stream/:id', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT video_filename FROM vod_items WHERE id = $1 AND is_active = true', [req.params.id]);
+    if (rows.length === 0) return res.status(404).send('Video not found');
+
+    const videoPath = path.join(VOD_DIR, rows[0].video_filename);
+    if (!fs.existsSync(videoPath)) return res.status(404).send('File not found');
+
+    const stat = fs.statSync(videoPath);
+    const fileSize = stat.size;
+    const range = req.headers.range;
+
+    if (range) {
+      const parts = range.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+      const chunkSize = (end - start) + 1;
+      const file = fs.createReadStream(videoPath, { start, end });
+      const head = {
+        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': chunkSize,
+        'Content-Type': 'video/mp4',
+      };
+      res.writeHead(206, head);
+      file.pipe(res);
+    } else {
+      const head = {
+        'Content-Length': fileSize,
+        'Content-Type': 'video/mp4',
+        'Accept-Ranges': 'bytes',
+      };
+      res.writeHead(200, head);
+      fs.createReadStream(videoPath).pipe(res);
+    }
+  } catch (err) {
+    res.status(500).send('Server error');
+  }
+});
+
+console.log('🎬 VOD system habilitado: /api/vod, /api/vod/stream/:id');
 
 // =============================================
 // INICIAR SERVIDOR
