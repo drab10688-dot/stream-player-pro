@@ -150,6 +150,56 @@ CREATE TRIGGER update_vod_items_updated_at
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- =============================================
+-- SERIES (Temporadas y Episodios)
+-- =============================================
+CREATE TABLE vod_series (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title TEXT NOT NULL,
+  description TEXT,
+  category TEXT NOT NULL DEFAULT 'Series',
+  poster_url TEXT,
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  sort_order INTEGER DEFAULT 0,
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+  updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
+);
+
+CREATE TABLE vod_seasons (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  series_id UUID NOT NULL REFERENCES vod_series(id) ON DELETE CASCADE,
+  season_number INTEGER NOT NULL DEFAULT 1,
+  title TEXT,
+  poster_url TEXT,
+  sort_order INTEGER DEFAULT 0,
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+  UNIQUE(series_id, season_number)
+);
+
+CREATE TABLE vod_episodes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  season_id UUID NOT NULL REFERENCES vod_seasons(id) ON DELETE CASCADE,
+  episode_number INTEGER NOT NULL DEFAULT 1,
+  title TEXT NOT NULL,
+  description TEXT,
+  video_filename TEXT NOT NULL,
+  poster_url TEXT,
+  duration_minutes INTEGER,
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  sort_order INTEGER DEFAULT 0,
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+  updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+  UNIQUE(season_id, episode_number)
+);
+
+CREATE TRIGGER update_vod_series_updated_at
+  BEFORE UPDATE ON vod_series
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_vod_episodes_updated_at
+  BEFORE UPDATE ON vod_episodes
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- =============================================
 -- INDICES para rendimiento
 -- =============================================
 CREATE INDEX idx_clients_username ON clients(username);
@@ -163,3 +213,7 @@ CREATE INDEX idx_resellers_active ON resellers(is_active);
 CREATE INDEX idx_clients_reseller ON clients(reseller_id);
 CREATE INDEX idx_plans_active ON plans(is_active);
 CREATE INDEX idx_vod_active ON vod_items(is_active);
+CREATE INDEX idx_vod_series_active ON vod_series(is_active);
+CREATE INDEX idx_vod_seasons_series ON vod_seasons(series_id);
+CREATE INDEX idx_vod_episodes_season ON vod_episodes(season_id);
+CREATE INDEX idx_vod_episodes_active ON vod_episodes(is_active);

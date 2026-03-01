@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { LogOut, X, Bell, Search, Play, Film } from 'lucide-react';
+import { LogOut, X, Bell, Search, Play, Film, Tv2 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -8,12 +8,12 @@ import { Input } from '@/components/ui/input';
 import omnisyncLogo from '@/assets/omnisync-logo.png';
 
 const Dashboard = () => {
-  const { client, channels, ads, vodItems, logout } = useAuth();
+  const { client, channels, ads, vodItems, seriesItems, logout } = useAuth();
   const navigate = useNavigate();
   const [showAd, setShowAd] = useState(true);
   const [currentAd, setCurrentAd] = useState(0);
   const [search, setSearch] = useState('');
-  const [activeTab, setActiveTab] = useState<'channels' | 'vod'>('channels');
+  const [activeTab, setActiveTab] = useState<'channels' | 'vod' | 'series'>('channels');
 
   const categories = [...new Set(channels.map(ch => ch.category))];
 
@@ -42,7 +42,7 @@ const Dashboard = () => {
     }))
     .filter(g => g.items.length > 0);
 
-  const hasVod = client?.vod_enabled && vodItems.length > 0;
+  const hasVod = client?.vod_enabled && (vodItems.length > 0 || seriesItems.length > 0);
 
   return (
     <div className="min-h-screen bg-background bg-grid">
@@ -97,6 +97,14 @@ const Dashboard = () => {
                 }`}
               >
                 <Film className="w-3.5 h-3.5" /> Películas
+              </button>
+              <button
+                onClick={() => setActiveTab('series')}
+                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-1.5 ${
+                  activeTab === 'series' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <Tv2 className="w-3.5 h-3.5" /> Series
               </button>
             </div>
           )}
@@ -273,6 +281,50 @@ const Dashboard = () => {
                   </div>
                 </motion.section>
               ))
+            )}
+          </>
+        )}
+
+        {/* SERIES TAB */}
+        {activeTab === 'series' && hasVod && (
+          <>
+            {seriesItems.length === 0 ? (
+              <div className="glass-strong rounded-2xl p-12 text-center">
+                <Tv2 className="w-20 h-20 text-muted-foreground mx-auto mb-4 opacity-40" />
+                <h2 className="font-semibold text-xl text-foreground mb-2">Sin series disponibles</h2>
+                <p className="text-muted-foreground">No hay series disponibles.</p>
+              </div>
+            ) : (
+              (() => {
+                const seriesCategories = [...new Set(seriesItems.map(s => s.category))];
+                const filteredSeries = seriesItems.filter(s => s.title.toLowerCase().includes(search.toLowerCase()));
+                const seriesByCategory = seriesCategories.map(cat => ({ name: cat, items: filteredSeries.filter(s => s.category === cat) })).filter(g => g.items.length > 0);
+                return seriesByCategory.map((group, gi) => (
+                  <motion.section key={group.name} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: gi * 0.1 }}>
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className="w-1 h-6 rounded-full gradient-primary" />
+                      <h2 className="font-semibold text-lg text-foreground">{group.name}</h2>
+                      <span className="text-xs text-muted-foreground bg-secondary/60 px-2 py-0.5 rounded-full">{group.items.length}</span>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3 sm:gap-4">
+                      {group.items.map((s, i) => (
+                        <motion.button key={s.id} initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: i * 0.02 }}
+                          onClick={() => navigate(`/series/${s.id}`)}
+                          className="group glass-strong rounded-2xl overflow-hidden text-left hover:border-primary/30 transition-all duration-300 cursor-pointer relative tv-focusable">
+                          <div className="w-full aspect-[2/3] bg-secondary/60 flex items-center justify-center overflow-hidden">
+                            {s.poster_url ? <img src={s.poster_url} alt={s.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                              : <Tv2 className="w-10 h-10 text-muted-foreground" />}
+                          </div>
+                          <div className="p-3">
+                            <p className="font-medium text-foreground text-sm truncate">{s.title}</p>
+                            <span className="text-muted-foreground text-xs">{s.category}</span>
+                          </div>
+                        </motion.button>
+                      ))}
+                    </div>
+                  </motion.section>
+                ));
+              })()
             )}
           </>
         )}

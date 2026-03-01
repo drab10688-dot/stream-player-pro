@@ -348,6 +348,59 @@ export type Database = {
         }
         Relationships: []
       }
+      vod_episodes: {
+        Row: {
+          created_at: string
+          description: string | null
+          duration_minutes: number | null
+          episode_number: number
+          id: string
+          is_active: boolean
+          poster_url: string | null
+          season_id: string
+          sort_order: number | null
+          title: string
+          updated_at: string
+          video_filename: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          duration_minutes?: number | null
+          episode_number?: number
+          id?: string
+          is_active?: boolean
+          poster_url?: string | null
+          season_id: string
+          sort_order?: number | null
+          title: string
+          updated_at?: string
+          video_filename: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          duration_minutes?: number | null
+          episode_number?: number
+          id?: string
+          is_active?: boolean
+          poster_url?: string | null
+          season_id?: string
+          sort_order?: number | null
+          title?: string
+          updated_at?: string
+          video_filename?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vod_episodes_season_id_fkey"
+            columns: ["season_id"]
+            isOneToOne: false
+            referencedRelation: "vod_seasons"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       vod_items: {
         Row: {
           category: string
@@ -387,6 +440,80 @@ export type Database = {
           title?: string
           updated_at?: string
           video_filename?: string
+        }
+        Relationships: []
+      }
+      vod_seasons: {
+        Row: {
+          created_at: string
+          id: string
+          poster_url: string | null
+          season_number: number
+          series_id: string
+          sort_order: number | null
+          title: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          poster_url?: string | null
+          season_number?: number
+          series_id: string
+          sort_order?: number | null
+          title?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          poster_url?: string | null
+          season_number?: number
+          series_id?: string
+          sort_order?: number | null
+          title?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vod_seasons_series_id_fkey"
+            columns: ["series_id"]
+            isOneToOne: false
+            referencedRelation: "vod_series"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      vod_series: {
+        Row: {
+          category: string
+          created_at: string
+          description: string | null
+          id: string
+          is_active: boolean
+          poster_url: string | null
+          sort_order: number | null
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          category?: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          poster_url?: string | null
+          sort_order?: number | null
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          category?: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          poster_url?: string | null
+          sort_order?: number | null
+          title?: string
+          updated_at?: string
         }
         Relationships: []
       }
