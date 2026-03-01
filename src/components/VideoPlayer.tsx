@@ -68,6 +68,7 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
   const [quality, setQuality] = useState<QualityInfo | null>(null);
   const [showQualityMenu, setShowQualityMenu] = useState(false);
   const [qualityVisible, setQualityVisible] = useState(true);
+  const [bufferAhead, setBufferAhead] = useState(0);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const retryCountRef = useRef(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout>>();
@@ -216,22 +217,23 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
           abrEwmaSlowVoD: 10,
           abrBandWidthFactor: 0.7,
           abrBandWidthUpFactor: 0.5,
-          maxBufferLength: 30,
-          maxMaxBufferLength: 60,
-          maxBufferSize: 30 * 1000 * 1000,
+          // Buffer agresivo: hasta 500 MB / 30 min adelantados
+          maxBufferLength: 1800,           // 30 min de buffer objetivo
+          maxMaxBufferLength: 3600,        // hasta 60 min si el dispositivo puede
+          maxBufferSize: 500 * 1000 * 1000, // 500 MB máximo en memoria
           maxBufferHole: 0.5,
-          fragLoadingMaxRetry: 15,
+          backBufferLength: 120,           // mantener 2 min de lo ya visto
+          fragLoadingMaxRetry: 20,
           fragLoadingRetryDelay: 1000,
-          fragLoadingMaxRetryTimeout: 45000,
-          manifestLoadingMaxRetry: 10,
+          fragLoadingMaxRetryTimeout: 60000,
+          manifestLoadingMaxRetry: 15,
           manifestLoadingRetryDelay: 1000,
-          levelLoadingMaxRetry: 10,
+          levelLoadingMaxRetry: 15,
           levelLoadingRetryDelay: 1000,
           startLevel: 0,
           startFragPrefetch: true,
           testBandwidth: true,
           progressive: true,
-          backBufferLength: 30,
         });
         hlsRef.current = hls;
         hls.loadSource(src);
@@ -252,6 +254,11 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
 
         hls.on(Hls.Events.FRAG_LOADED, () => {
           updateQualityInfo(hls);
+          // Track buffer ahead
+          if (video.buffered.length > 0) {
+            const buffered = video.buffered.end(video.buffered.length - 1) - video.currentTime;
+            setBufferAhead(Math.max(0, Math.round(buffered)));
+          }
         });
 
         hls.on(Hls.Events.ERROR, (_, data) => {
@@ -387,6 +394,11 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
           >
             <span className="inline-block w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
             {quality.label}
+            {bufferAhead > 0 && (
+              <span className="text-[10px] opacity-70 ml-0.5">
+                {bufferAhead >= 60 ? `${Math.floor(bufferAhead / 60)}m` : `${bufferAhead}s`}
+              </span>
+            )}
             {quality.auto && quality.levels > 1 && (
               <span className="text-[10px] opacity-80">AUTO</span>
             )}
