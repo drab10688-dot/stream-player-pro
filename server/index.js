@@ -578,7 +578,19 @@ function cleanChannelDir(channelId) {
   const dir = path.join(HLS_DIR, channelId);
   if (fs.existsSync(dir)) {
     try {
-      fs.readdirSync(dir).forEach(f => fs.unlinkSync(path.join(dir, f)));
+      // Recursive delete for adaptive subdirectories (low/med/high)
+      const deleteRecursive = (dirPath) => {
+        fs.readdirSync(dirPath).forEach(f => {
+          const fullPath = path.join(dirPath, f);
+          if (fs.statSync(fullPath).isDirectory()) {
+            deleteRecursive(fullPath);
+            fs.rmdirSync(fullPath);
+          } else {
+            fs.unlinkSync(fullPath);
+          }
+        });
+      };
+      deleteRecursive(dir);
       fs.rmdirSync(dir);
     } catch {}
   }
@@ -587,6 +599,17 @@ function cleanChannelDir(channelId) {
 // =============================================
 // TRANSCODIFICADOR TS → HLS con FFmpeg
 // =============================================
+// =============================================
+// CALIDADES ADAPTATIVAS (tipo Netflix)
+// Low: 480p ~800kbps (para 2-3 Mbps)
+// Med: 720p ~2Mbps (para 4-6 Mbps) 
+// High: original (copy, sin re-encode)
+// =============================================
+const QUALITY_PROFILES = [
+  { name: 'low', width: 854, height: 480, vBitrate: '800k', maxrate: '900k', bufsize: '1200k', aBitrate: '96k', bandwidth: 900000 },
+  { name: 'med', width: 1280, height: 720, vBitrate: '2000k', maxrate: '2200k', bufsize: '3000k', aBitrate: '128k', bandwidth: 2200000 },
+];
+
 function startFFmpegTranscoder(channelId, sourceUrl) {
   if (activeTranscoders.has(channelId)) {
     const existing = activeTranscoders.get(channelId);
@@ -600,31 +623,183 @@ function startFFmpegTranscoder(channelId, sourceUrl) {
     fs.mkdirSync(channelDir, { recursive: true });
   }
 
+  // Check if adaptive mode is requested via query param or default
+  const useAdaptive = true; // Always use adaptive for Netflix-like experience
+
+  if (useAdaptive) {
+    return startAdaptiveTranscoder(channelId, sourceUrl, channelDir);
+  }
+}
+
+// Adaptive multi-bitrate transcoder (Netflix-style)
+function startAdaptiveTranscoder(channelId, sourceUrl, channelDir) {
+  const masterPlaylistPath = path.join(channelDir, 'master.m3u8');
+  const copyManifestPath = path.join(channelDir, 'high', 'stream.m3u8');
+
+  // Create subdirectories for each quality
+  ['low', 'med', 'high'].forEach(q => {
+    const qDir = path.join(channelDir, q);
+    if (!fs.existsSync(qDir)) fs.mkdirSync(qDir, { recursive: true });
+  });
+
+  console.log(`🎬 [${channelId}] Iniciando FFmpeg adaptativo (3 calidades): ${sourceUrl}`);
+
+  // Build FFmpeg command for multi-output adaptive streaming
+  const ffmpegArgs = [
+    '-reconnect', '1',
+    '-reconnect_streamed', '1',
+    '-reconnect_delay_max', '10',
+    '-rw_timeout', '10000000',
+    '-i', sourceUrl,
+
+    // --- Output 0: LOW (480p) ---
+    '-map', '0:v:0', '-map', '0:a:0?',
+    '-c:v:0', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency',
+    '-b:v:0', QUALITY_PROFILES[0].vBitrate,
+    '-maxrate:v:0', QUALITY_PROFILES[0].maxrate,
+    '-bufsize:v:0', QUALITY_PROFILES[0].bufsize,
+    '-vf:0', `scale=${QUALITY_PROFILES[0].width}:${QUALITY_PROFILES[0].height}`,
+    '-c:a:0', 'aac', '-b:a:0', QUALITY_PROFILES[0].aBitrate,
+    '-g', '48', '-keyint_min', '48', '-sc_threshold', '0',
+
+    // --- Output 1: MED (720p) ---
+    '-map', '0:v:0', '-map', '0:a:0?',
+    '-c:v:1', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency',
+    '-b:v:1', QUALITY_PROFILES[1].vBitrate,
+    '-maxrate:v:1', QUALITY_PROFILES[1].maxrate,
+    '-bufsize:v:1', QUALITY_PROFILES[1].bufsize,
+    '-vf:1', `scale=${QUALITY_PROFILES[1].width}:${QUALITY_PROFILES[1].height}`,
+    '-c:a:1', 'aac', '-b:a:1', QUALITY_PROFILES[1].aBitrate,
+    '-g', '48', '-keyint_min', '48',
+
+    // --- Output 2: HIGH (original, copy) ---
+    '-map', '0:v:0', '-map', '0:a:0?',
+    '-c:v:2', 'copy',
+    '-c:a:2', 'aac', '-b:a:2', '128k',
+
+    // --- HLS output for LOW ---
+    '-f', 'hls',
+    '-hls_time', '2',
+    '-hls_list_size', '6',
+    '-hls_flags', 'delete_segments+append_list+temp_file',
+    '-hls_segment_type', 'mpegts',
+    '-hls_segment_filename', path.join(channelDir, 'low', 'seg_%05d.ts'),
+    '-hls_allow_cache', '1',
+    '-var_stream_map', 'v:0,a:0 v:1,a:1 v:2,a:2',
+    '-master_pl_name', 'master.m3u8',
+    '-hls_segment_filename', path.join(channelDir, '%v', 'seg_%05d.ts'),
+    '-y',
+    path.join(channelDir, '%v', 'stream.m3u8'),
+  ];
+
+  // Try adaptive first, fallback to single-quality if FFmpeg doesn't support var_stream_map
+  let ffmpeg;
+  try {
+    ffmpeg = spawn('ffmpeg', ffmpegArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
+  } catch (err) {
+    console.error(`❌ [${channelId}] FFmpeg spawn error:`, err.message);
+    return null;
+  }
+
+  const entry = {
+    ffmpeg,
+    clients: 1,
+    lastAccess: Date.now(),
+    type: 'ffmpeg-adaptive',
+    channelDir,
+    manifestPath: masterPlaylistPath,
+    fallbackManifest: path.join(channelDir, 'stream.m3u8'),
+    ready: false,
+    retryCount: 0,
+    maxRetries: 5,
+    adaptive: true,
+  };
+  activeTranscoders.set(channelId, entry);
+
+  let fallbackTriggered = false;
+
+  ffmpeg.stderr.on('data', (data) => {
+    const msg = data.toString();
+
+    // If var_stream_map fails, fallback to single quality optimized for slow internet
+    if (!fallbackTriggered && (msg.includes('var_stream_map') && msg.includes('Error')) || 
+        (msg.includes('Option var_stream_map not found'))) {
+      fallbackTriggered = true;
+      console.log(`⚠️ [${channelId}] var_stream_map no soportado, usando calidad única optimizada`);
+      ffmpeg.kill('SIGTERM');
+      startSingleQualityTranscoder(channelId, sourceUrl, channelDir);
+      return;
+    }
+
+    if (!entry.ready && (msg.includes('Opening') || msg.includes('muxing'))) {
+      entry.ready = true;
+      console.log(`✅ [${channelId}] FFmpeg adaptativo listo (480p/720p/original)`);
+    }
+  });
+
+  ffmpeg.on('error', (err) => {
+    console.error(`❌ [${channelId}] FFmpeg error:`, err.message);
+  });
+
+  ffmpeg.on('close', (code) => {
+    console.log(`⚠️ [${channelId}] FFmpeg terminó (code: ${code})`);
+
+    // If it crashed immediately and no fallback, try single quality
+    if (!fallbackTriggered && code !== 0 && entry.retryCount === 0) {
+      fallbackTriggered = true;
+      console.log(`🔄 [${channelId}] Fallback a calidad única optimizada`);
+      activeTranscoders.delete(channelId);
+      const fallbackEntry = startSingleQualityTranscoder(channelId, sourceUrl, channelDir);
+      if (fallbackEntry) fallbackEntry.clients = entry.clients;
+      return;
+    }
+
+    activeTranscoders.delete(channelId);
+    if (entry.clients > 0 && entry.retryCount < entry.maxRetries) {
+      entry.retryCount++;
+      const delay = Math.min(2000 * entry.retryCount, 15000);
+      console.log(`🔄 [${channelId}] Reiniciando en ${delay}ms (intento ${entry.retryCount}/${entry.maxRetries})`);
+      setTimeout(() => {
+        cleanChannelDir(channelId);
+        startFFmpegTranscoder(channelId, sourceUrl);
+        const newEntry = activeTranscoders.get(channelId);
+        if (newEntry) newEntry.clients = entry.clients;
+      }, delay);
+    } else {
+      cleanChannelDir(channelId);
+    }
+  });
+
+  return entry;
+}
+
+// Fallback: single quality optimized for 2-3 Mbps
+function startSingleQualityTranscoder(channelId, sourceUrl, channelDir) {
   const manifestPath = path.join(channelDir, 'stream.m3u8');
 
-  console.log(`🎬 [${channelId}] Iniciando FFmpeg: ${sourceUrl}`);
+  console.log(`🎬 [${channelId}] FFmpeg calidad única (optimizado 2-3 Mbps): ${sourceUrl}`);
 
   const ffmpeg = spawn('ffmpeg', [
     '-reconnect', '1',
     '-reconnect_streamed', '1',
     '-reconnect_delay_max', '10',
-    '-rw_timeout', '10000000',     // 10s timeout de lectura
+    '-rw_timeout', '10000000',
     '-i', sourceUrl,
-    '-c:v', 'copy',                // No re-encodear video (solo re-empaquetar)
-    '-c:a', 'aac',                 // Audio a AAC para compatibilidad HLS
-    '-b:a', '128k',
+    '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency',
+    '-b:v', '1200k', '-maxrate', '1400k', '-bufsize', '2000k',
+    '-vf', 'scale=1280:720',
+    '-c:a', 'aac', '-b:a', '96k',
+    '-g', '48', '-keyint_min', '48', '-sc_threshold', '0',
     '-f', 'hls',
-    '-hls_time', '2',              // Segmentos de 2s (más rápido en RAM)
-    '-hls_list_size', '6',         // Solo 6 segmentos en manifiesto (menos RAM)
-    '-hls_flags', 'delete_segments+append_list+temp_file', // temp_file evita lecturas parciales
+    '-hls_time', '2',
+    '-hls_list_size', '6',
+    '-hls_flags', 'delete_segments+append_list+temp_file',
     '-hls_segment_type', 'mpegts',
     '-hls_segment_filename', path.join(channelDir, 'seg_%05d.ts'),
     '-hls_allow_cache', '1',
-    '-y',                          // Sobreescribir sin preguntar
+    '-y',
     manifestPath,
-  ], {
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
+  ], { stdio: ['pipe', 'pipe', 'pipe'] });
 
   const entry = {
     ffmpeg,
@@ -636,6 +811,7 @@ function startFFmpegTranscoder(channelId, sourceUrl) {
     ready: false,
     retryCount: 0,
     maxRetries: 5,
+    adaptive: false,
   };
   activeTranscoders.set(channelId, entry);
 
@@ -866,22 +1042,45 @@ app.get('/api/restream/:channelId', async (req, res) => {
       // Liberar al terminar respuesta
       res.on('finish', () => releaseTranscoder(channelId));
     } else {
-      // Canal TS → FFmpeg → HLS
+      // Canal TS → FFmpeg → HLS (adaptive o single)
       const entry = startFFmpegTranscoder(channelId, targetUrl);
 
-      // Esperar a que FFmpeg genere el manifiesto (máximo 15s)
+      // Esperar a que FFmpeg genere el manifiesto (máximo 20s para adaptive)
       let waited = 0;
       const waitForManifest = () => {
-        if (fs.existsSync(entry.manifestPath)) {
-          const manifest = fs.readFileSync(entry.manifestPath, 'utf8');
-          // Reescribir rutas de segmentos para que pasen por nuestro endpoint
-          const rewritten = manifest.replace(/seg_\d+\.ts/g, (match) => {
-            return `/api/hls-local/${channelId}/${match}`;
-          });
+        // Check for master playlist first (adaptive), then fallback manifest
+        const masterPath = path.join(HLS_DIR, channelId, 'master.m3u8');
+        const singlePath = entry.manifestPath || path.join(HLS_DIR, channelId, 'stream.m3u8');
+        const fallbackPath = entry.fallbackManifest || singlePath;
+
+        let manifestFile = null;
+        if (fs.existsSync(masterPath)) {
+          manifestFile = masterPath;
+        } else if (fs.existsSync(singlePath)) {
+          manifestFile = singlePath;
+        } else if (fs.existsSync(fallbackPath)) {
+          manifestFile = fallbackPath;
+        }
+
+        if (manifestFile) {
+          let manifest = fs.readFileSync(manifestFile, 'utf8');
+
+          if (manifestFile.includes('master.m3u8')) {
+            // Rewrite sub-playlist paths in master playlist
+            manifest = manifest.replace(/(low|med|high)\/stream\.m3u8/g, (match, quality) => {
+              return `/api/hls-adaptive/${channelId}/${quality}/stream.m3u8`;
+            });
+          } else {
+            // Single quality: rewrite segment paths
+            manifest = manifest.replace(/seg_\d+\.ts/g, (match) => {
+              return `/api/hls-local/${channelId}/${match}`;
+            });
+          }
+
           res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-          res.send(rewritten);
+          res.send(manifest);
           res.on('finish', () => releaseTranscoder(channelId));
-        } else if (waited < 15000) {
+        } else if (waited < 20000) {
           waited += 500;
           setTimeout(waitForManifest, 500);
         } else {
@@ -897,9 +1096,35 @@ app.get('/api/restream/:channelId', async (req, res) => {
   }
 });
 
-// Servir segmentos locales generados por FFmpeg
-app.get('/api/hls-local/:channelId/:filename', (req, res) => {
-  const filePath = path.join(HLS_DIR, req.params.channelId, req.params.filename);
+// Servir sub-playlists adaptativas (low/med/high)
+app.get('/api/hls-adaptive/:channelId/:quality/stream.m3u8', (req, res) => {
+  const { channelId, quality } = req.params;
+  const filePath = path.join(HLS_DIR, channelId, quality, 'stream.m3u8');
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).send('Quality playlist not found');
+  }
+  let manifest = fs.readFileSync(filePath, 'utf8');
+  // Rewrite segment paths
+  manifest = manifest.replace(/seg_\d+\.ts/g, (match) => {
+    return `/api/hls-local/${channelId}/${quality}/${match}`;
+  });
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.send(manifest);
+});
+
+// Servir segmentos locales generados por FFmpeg (con o sin calidad)
+app.get('/api/hls-local/:channelId/:qualityOrFile/:filename?', (req, res) => {
+  const { channelId, qualityOrFile, filename } = req.params;
+  let filePath;
+  if (filename) {
+    // /api/hls-local/:channelId/:quality/:filename
+    filePath = path.join(HLS_DIR, channelId, qualityOrFile, filename);
+  } else {
+    // /api/hls-local/:channelId/:filename (legacy single quality)
+    filePath = path.join(HLS_DIR, channelId, qualityOrFile);
+  }
   if (!fs.existsSync(filePath)) {
     return res.status(404).send('Segment not found');
   }

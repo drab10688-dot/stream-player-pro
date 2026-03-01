@@ -156,28 +156,34 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
         const hls = new Hls({
           enableWorker: true,
           lowLatencyMode: false,
-          abrEwmaDefaultEstimate: 300000,
-          abrEwmaFastLive: 2,
-          abrEwmaSlowLive: 8,
-          abrEwmaFastVoD: 2,
-          abrEwmaSlowVoD: 8,
-          abrBandWidthFactor: 0.6,
-          abrBandWidthUpFactor: 0.4,
-          maxBufferLength: 60,
-          maxMaxBufferLength: 120,
-          maxBufferSize: 60 * 1000 * 1000,
-          maxBufferHole: 1,
-          fragLoadingMaxRetry: 10,
-          fragLoadingRetryDelay: 1500,
-          fragLoadingMaxRetryTimeout: 30000,
-          manifestLoadingMaxRetry: 6,
-          manifestLoadingRetryDelay: 1500,
-          levelLoadingMaxRetry: 6,
-          levelLoadingRetryDelay: 1500,
+          // Netflix-style: start on lowest quality, ramp up based on bandwidth
+          abrEwmaDefaultEstimate: 500000,    // Assume 500kbps initially (conservative)
+          abrEwmaFastLive: 3,                // React fast to bandwidth changes
+          abrEwmaSlowLive: 10,               // Smooth out slow changes
+          abrEwmaFastVoD: 3,
+          abrEwmaSlowVoD: 10,
+          abrBandWidthFactor: 0.7,           // Use 70% of measured bandwidth (safe margin)
+          abrBandWidthUpFactor: 0.5,         // Only upgrade quality at 50% confidence
+          // Aggressive buffering for slow connections (2-3 Mbps)
+          maxBufferLength: 30,               // Buffer 30s ahead
+          maxMaxBufferLength: 60,            // Allow up to 60s buffer on slow connections
+          maxBufferSize: 30 * 1000 * 1000,   // 30MB max buffer
+          maxBufferHole: 0.5,                // Tolerate small gaps
+          // Retry aggressively on slow connections
+          fragLoadingMaxRetry: 15,
+          fragLoadingRetryDelay: 1000,
+          fragLoadingMaxRetryTimeout: 45000,
+          manifestLoadingMaxRetry: 10,
+          manifestLoadingRetryDelay: 1000,
+          levelLoadingMaxRetry: 10,
+          levelLoadingRetryDelay: 1000,
+          // Start from lowest level for instant playback
           startLevel: 0,
           startFragPrefetch: true,
           testBandwidth: true,
           progressive: true,
+          // Back buffer for seeking back
+          backBufferLength: 30,
         });
         hlsRef.current = hls;
         hls.loadSource(src);
