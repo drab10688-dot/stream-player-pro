@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useEffect, useState, useCallback } from 'react';
 import Hls from 'hls.js';
 import mpegts from 'mpegts.js';
 
@@ -7,6 +7,14 @@ interface VideoPlayerProps {
   channelId?: string;
   muted?: boolean;
   onError?: (message: string) => void;
+}
+
+interface QualityInfo {
+  label: string;
+  current: number;
+  levels: number;
+  bandwidth: number;
+  auto: boolean;
 }
 
 const getYouTubeId = (url: string): string | null => {
@@ -24,10 +32,31 @@ const getYouTubeId = (url: string): string | null => {
 const detectStreamType = (url: string): 'hls' | 'ts' | 'youtube' | 'native' => {
   if (getYouTubeId(url)) return 'youtube';
   if (/\.m3u8?(\?|$)/i.test(url)) return 'hls';
-  // All /api/restream/ URLs now serve HLS (FFmpeg converts TS→HLS on server)
   if (/\/api\/restream\//.test(url)) return 'hls';
   if (/\.ts(\?|$)/i.test(url) || /\/\d+\.ts/.test(url)) return 'ts';
   return 'native';
+};
+
+const getQualityLabel = (height: number | undefined, bandwidth: number | undefined): string => {
+  if (height) {
+    if (height <= 480) return '480p';
+    if (height <= 720) return '720p';
+    if (height <= 1080) return '1080p';
+    return `${height}p`;
+  }
+  if (bandwidth) {
+    if (bandwidth < 1000000) return '480p';
+    if (bandwidth < 2500000) return '720p';
+    return 'HD';
+  }
+  return 'Auto';
+};
+
+const getQualityColor = (label: string): string => {
+  if (label === '480p') return 'bg-yellow-500/90';
+  if (label === '720p') return 'bg-blue-500/90';
+  if (label === '1080p' || label === 'HD') return 'bg-green-500/90';
+  return 'bg-white/70';
 };
 
 const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProps) => {
@@ -36,11 +65,23 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
   const mpegtsRef = useRef<mpegts.Player | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [quality, setQuality] = useState<QualityInfo | null>(null);
+  const [showQualityMenu, setShowQualityMenu] = useState(false);
+  const [qualityVisible, setQualityVisible] = useState(true);
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const retryCountRef = useRef(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout>>();
 
+  // Auto-hide quality badge after 5s of no interaction
+  const resetHideTimer = useCallback(() => {
+    setQualityVisible(true);
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    hideTimerRef.current = setTimeout(() => setQualityVisible(false), 5000);
+  }, []);
+
   const cleanup = () => {
     if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     if (hlsRef.current) {
       hlsRef.current.destroy();
       hlsRef.current = null;
@@ -61,10 +102,11 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
     if (!video || !src) return;
 
     const streamType = detectStreamType(src);
-    if (streamType === 'youtube') return; // handled by iframe render
+    if (streamType === 'youtube') return;
 
     setError(null);
     setLoading(true);
+    setQuality(null);
     retryCountRef.current = 0;
     cleanup();
 
@@ -141,6 +183,17 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
           if (loading && video.readyState >= 2) {
             setLoading(false);
           }
+          // Show TS quality based on video dimensions
+          if (video.videoHeight) {
+            setQuality({
+              label: getQualityLabel(video.videoHeight, undefined),
+              current: 0,
+              levels: 1,
+              bandwidth: 0,
+              auto: false,
+            });
+            resetHideTimer();
+          }
         });
 
         attemptPlay(video);
@@ -156,20 +209,17 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
         const hls = new Hls({
           enableWorker: true,
           lowLatencyMode: false,
-          // Netflix-style: start on lowest quality, ramp up based on bandwidth
-          abrEwmaDefaultEstimate: 500000,    // Assume 500kbps initially (conservative)
-          abrEwmaFastLive: 3,                // React fast to bandwidth changes
-          abrEwmaSlowLive: 10,               // Smooth out slow changes
+          abrEwmaDefaultEstimate: 500000,
+          abrEwmaFastLive: 3,
+          abrEwmaSlowLive: 10,
           abrEwmaFastVoD: 3,
           abrEwmaSlowVoD: 10,
-          abrBandWidthFactor: 0.7,           // Use 70% of measured bandwidth (safe margin)
-          abrBandWidthUpFactor: 0.5,         // Only upgrade quality at 50% confidence
-          // Aggressive buffering for slow connections (2-3 Mbps)
-          maxBufferLength: 30,               // Buffer 30s ahead
-          maxMaxBufferLength: 60,            // Allow up to 60s buffer on slow connections
-          maxBufferSize: 30 * 1000 * 1000,   // 30MB max buffer
-          maxBufferHole: 0.5,                // Tolerate small gaps
-          // Retry aggressively on slow connections
+          abrBandWidthFactor: 0.7,
+          abrBandWidthUpFactor: 0.5,
+          maxBufferLength: 30,
+          maxMaxBufferLength: 60,
+          maxBufferSize: 30 * 1000 * 1000,
+          maxBufferHole: 0.5,
           fragLoadingMaxRetry: 15,
           fragLoadingRetryDelay: 1000,
           fragLoadingMaxRetryTimeout: 45000,
@@ -177,21 +227,33 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
           manifestLoadingRetryDelay: 1000,
           levelLoadingMaxRetry: 10,
           levelLoadingRetryDelay: 1000,
-          // Start from lowest level for instant playback
           startLevel: 0,
           startFragPrefetch: true,
           testBandwidth: true,
           progressive: true,
-          // Back buffer for seeking back
           backBufferLength: 30,
         });
         hlsRef.current = hls;
         hls.loadSource(src);
         hls.attachMedia(video);
+
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           setLoading(false);
           attemptPlay(video);
+          // Set initial quality info
+          updateQualityInfo(hls);
         });
+
+        // Track quality level changes
+        hls.on(Hls.Events.LEVEL_SWITCHED, () => {
+          updateQualityInfo(hls);
+          resetHideTimer();
+        });
+
+        hls.on(Hls.Events.FRAG_LOADED, () => {
+          updateQualityInfo(hls);
+        });
+
         hls.on(Hls.Events.ERROR, (_, data) => {
           if (data.fatal) {
             switch (data.type) {
@@ -218,18 +280,48 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
       attemptPlay(video);
     }
 
-    // Stall recovery
     const stallCheck = setInterval(() => {
       if (video && !video.paused && video.readyState < 3 && !loading) {
         retryStream();
       }
     }, 10000);
 
+    resetHideTimer();
+
     return () => {
       clearInterval(stallCheck);
       cleanup();
     };
   }, [src]);
+
+  const updateQualityInfo = (hls: Hls) => {
+    const currentLevel = hls.currentLevel;
+    const levels = hls.levels;
+    if (!levels || levels.length === 0) return;
+
+    const level = levels[currentLevel] || levels[0];
+    const bw = hls.bandwidthEstimate || 0;
+
+    setQuality({
+      label: getQualityLabel(level?.height, level?.bitrate),
+      current: currentLevel,
+      levels: levels.length,
+      bandwidth: Math.round(bw / 1000),
+      auto: hls.autoLevelEnabled,
+    });
+  };
+
+  const switchQuality = (levelIndex: number) => {
+    const hls = hlsRef.current;
+    if (!hls) return;
+    if (levelIndex === -1) {
+      hls.currentLevel = -1; // Auto
+    } else {
+      hls.currentLevel = levelIndex;
+    }
+    setShowQualityMenu(false);
+    resetHideTimer();
+  };
 
   useEffect(() => {
     if (videoRef.current) {
@@ -255,7 +347,11 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
   }
 
   return (
-    <div className="relative w-full h-full bg-black">
+    <div
+      className="relative w-full h-full bg-black group"
+      onMouseMove={resetHideTimer}
+      onTouchStart={resetHideTimer}
+    >
       <video
         ref={videoRef}
         className="w-full h-full object-contain"
@@ -274,6 +370,75 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
           onError?.(msg);
         }}
       />
+
+      {/* Quality Badge */}
+      {quality && !error && !loading && (
+        <div
+          className={`absolute top-3 right-3 z-20 transition-opacity duration-300 ${
+            qualityVisible || showQualityMenu ? 'opacity-100' : 'opacity-0'
+          }`}
+        >
+          <button
+            onClick={() => {
+              setShowQualityMenu(!showQualityMenu);
+              resetHideTimer();
+            }}
+            className={`${getQualityColor(quality.label)} text-white text-xs font-bold px-2.5 py-1 rounded-md shadow-lg backdrop-blur-sm flex items-center gap-1.5 hover:scale-105 transition-transform cursor-pointer`}
+          >
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+            {quality.label}
+            {quality.auto && quality.levels > 1 && (
+              <span className="text-[10px] opacity-80">AUTO</span>
+            )}
+          </button>
+
+          {/* Quality Selector Menu */}
+          {showQualityMenu && hlsRef.current && hlsRef.current.levels.length > 1 && (
+            <div className="absolute top-full right-0 mt-1 bg-black/90 backdrop-blur-md rounded-lg shadow-2xl border border-white/10 overflow-hidden min-w-[140px]">
+              {/* Auto option */}
+              <button
+                onClick={() => switchQuality(-1)}
+                className={`w-full text-left px-3 py-2 text-xs font-medium flex items-center justify-between hover:bg-white/10 transition-colors ${
+                  quality.auto ? 'text-primary' : 'text-white/80'
+                }`}
+              >
+                <span>Auto</span>
+                {quality.auto && <span className="text-primary">●</span>}
+              </button>
+              <div className="h-px bg-white/10" />
+              {/* Quality levels */}
+              {hlsRef.current.levels.map((level, idx) => {
+                const label = getQualityLabel(level.height, level.bitrate);
+                const bitrateMbps = (level.bitrate / 1000000).toFixed(1);
+                const isActive = !quality.auto && quality.current === idx;
+                return (
+                  <button
+                    key={idx}
+                    onClick={() => switchQuality(idx)}
+                    className={`w-full text-left px-3 py-2 text-xs font-medium flex items-center justify-between hover:bg-white/10 transition-colors ${
+                      isActive ? 'text-primary' : 'text-white/80'
+                    }`}
+                  >
+                    <span>{label}</span>
+                    <span className="text-[10px] text-white/40 ml-2">{bitrateMbps}M</span>
+                    {isActive && <span className="text-primary ml-1">●</span>}
+                  </button>
+                );
+              })}
+              {/* Bandwidth info */}
+              {quality.bandwidth > 0 && (
+                <>
+                  <div className="h-px bg-white/10" />
+                  <div className="px-3 py-1.5 text-[10px] text-white/30">
+                    ↓ {quality.bandwidth} kbps
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {loading && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/80 pointer-events-none">
           <div className="text-center">
