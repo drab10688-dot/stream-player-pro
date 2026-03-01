@@ -2365,6 +2365,174 @@ app.get('/api/vod/stream/:id', async (req, res) => {
 console.log('🎬 VOD system habilitado: /api/vod, /api/vod/stream/:id');
 
 // =============================================
+// SERIES API (Temporadas y Episodios)
+// =============================================
+
+// List all series (admin)
+app.get('/api/vod/series', authAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM vod_series ORDER BY sort_order, created_at DESC');
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Public series list
+app.get('/api/vod/series/public', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT id, title, description, category, poster_url FROM vod_series WHERE is_active = true ORDER BY sort_order, title');
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Get single series
+app.get('/api/vod/series/:id', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM vod_series WHERE id = $1', [req.params.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Serie no encontrada' });
+    res.json(rows[0]);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Create series
+app.post('/api/vod/series', authAdmin, async (req, res) => {
+  try {
+    const { title, description, category, sort_order } = req.body;
+    const { rows } = await pool.query(
+      'INSERT INTO vod_series (title, description, category, sort_order) VALUES ($1, $2, $3, $4) RETURNING *',
+      [title, description || null, category || 'Series', sort_order || 0]
+    );
+    res.json(rows[0]);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Update series
+app.put('/api/vod/series/:id', authAdmin, async (req, res) => {
+  try {
+    const fields = []; const vals = []; let i = 1;
+    for (const key of ['title', 'description', 'category', 'sort_order', 'is_active', 'poster_url']) {
+      if (req.body[key] !== undefined) { fields.push(`${key} = $${i}`); vals.push(req.body[key]); i++; }
+    }
+    if (fields.length === 0) return res.json({ ok: true });
+    vals.push(req.params.id);
+    const { rows } = await pool.query(`UPDATE vod_series SET ${fields.join(', ')} WHERE id = $${i} RETURNING *`, vals);
+    res.json(rows[0]);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Delete series
+app.delete('/api/vod/series/:id', authAdmin, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM vod_series WHERE id = $1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- Seasons ---
+
+app.get('/api/vod/series/:seriesId/seasons', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM vod_seasons WHERE series_id = $1 ORDER BY season_number', [req.params.seriesId]);
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/vod/series/:seriesId/seasons', authAdmin, async (req, res) => {
+  try {
+    const { season_number, title, sort_order } = req.body;
+    const { rows } = await pool.query(
+      'INSERT INTO vod_seasons (series_id, season_number, title, sort_order) VALUES ($1, $2, $3, $4) RETURNING *',
+      [req.params.seriesId, season_number || 1, title || null, sort_order || season_number || 1]
+    );
+    res.json(rows[0]);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/vod/seasons/:id', authAdmin, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM vod_seasons WHERE id = $1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- Episodes ---
+
+app.get('/api/vod/seasons/:seasonId/episodes', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM vod_episodes WHERE season_id = $1 ORDER BY episode_number', [req.params.seasonId]);
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/vod/seasons/:seasonId/episodes', authAdmin, uploadVod.fields([
+  { name: 'video', maxCount: 1 }, { name: 'poster', maxCount: 1 }
+]), async (req, res) => {
+  try {
+    const videoFile = req.files?.video?.[0];
+    if (!videoFile) return res.status(400).json({ error: 'Se requiere un archivo de video' });
+    const posterUrl = req.files?.poster?.[0] ? `/uploads/vod/${req.files.poster[0].filename}` : null;
+    const { episode_number, title, description, duration_minutes, sort_order } = req.body;
+    const { rows } = await pool.query(
+      'INSERT INTO vod_episodes (season_id, episode_number, title, description, video_filename, poster_url, duration_minutes, sort_order) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',
+      [req.params.seasonId, episode_number || 1, title, description || null, videoFile.filename, posterUrl, parseInt(duration_minutes) || null, parseInt(sort_order) || 0]
+    );
+    res.json(rows[0]);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/vod/episodes/:id', authAdmin, async (req, res) => {
+  try {
+    const fields = []; const vals = []; let i = 1;
+    for (const key of ['episode_number', 'title', 'description', 'duration_minutes', 'sort_order', 'is_active']) {
+      if (req.body[key] !== undefined) { fields.push(`${key} = $${i}`); vals.push(req.body[key]); i++; }
+    }
+    if (fields.length === 0) return res.json({ ok: true });
+    vals.push(req.params.id);
+    const { rows } = await pool.query(`UPDATE vod_episodes SET ${fields.join(', ')} WHERE id = $${i} RETURNING *`, vals);
+    res.json(rows[0]);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/vod/episodes/:id', authAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT video_filename, poster_url FROM vod_episodes WHERE id = $1', [req.params.id]);
+    if (rows.length > 0) {
+      const ep = rows[0];
+      const videoPath = path.join(VOD_DIR, ep.video_filename);
+      if (fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
+      if (ep.poster_url) { const pp = path.join(__dirname, ep.poster_url.replace(/^\//, '')); if (fs.existsSync(pp)) fs.unlinkSync(pp); }
+    }
+    await pool.query('DELETE FROM vod_episodes WHERE id = $1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Stream episode video
+app.get('/api/vod/episodes/stream/:id', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT video_filename FROM vod_episodes WHERE id = $1 AND is_active = true', [req.params.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Episodio no encontrado' });
+    const filePath = path.join(VOD_DIR, rows[0].video_filename);
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Archivo no encontrado' });
+    const stat = fs.statSync(filePath);
+    const range = req.headers.range;
+    if (range) {
+      const parts = range.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
+      const chunksize = end - start + 1;
+      const file = fs.createReadStream(filePath, { start, end });
+      res.writeHead(206, { 'Content-Range': `bytes ${start}-${end}/${stat.size}`, 'Accept-Ranges': 'bytes', 'Content-Length': chunksize, 'Content-Type': 'video/mp4' });
+      file.pipe(res);
+    } else {
+      res.writeHead(200, { 'Content-Length': stat.size, 'Content-Type': 'video/mp4' });
+      fs.createReadStream(filePath).pipe(res);
+    }
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+console.log('📺 Series system habilitado: /api/vod/series, /api/vod/seasons, /api/vod/episodes');
+
+// =============================================
 // INICIAR SERVIDOR
 // =============================================
 app.listen(PORT, '0.0.0.0', () => {

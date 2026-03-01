@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAdminAuth } from '@/contexts/AdminAuthContext';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Tv, Users, Megaphone, Store, LogOut, LayoutDashboard, Bell, Activity, Globe, Radio, Bug, Package, HardDrive, Film } from 'lucide-react';
+import { Tv, Users, Megaphone, Store, LogOut, LayoutDashboard, Bell, Activity, Globe, Radio, Bug, Package, HardDrive, Film, Tv2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import AdminStats from '@/components/admin/AdminStats';
 import ChannelsManager from '@/components/admin/ChannelsManager';
@@ -17,6 +17,7 @@ import StreamDiagnostics from '@/components/admin/StreamDiagnostics';
 import PlansManager from '@/components/admin/PlansManager';
 import BackupManager from '@/components/admin/BackupManager';
 import VodManager from '@/components/admin/VodManager';
+import SeriesManager from '@/components/admin/SeriesManager';
 import omnisyncLogo from '@/assets/omnisync-logo.png';
 
 const AdminDashboard = () => {
@@ -105,6 +106,9 @@ const AdminDashboard = () => {
             <TabsTrigger value="vod" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
               <Film className="w-4 h-4" /> Películas
             </TabsTrigger>
+            <TabsTrigger value="series" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
+              <Tv2 className="w-4 h-4" /> Series
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="dashboard"><AdminStats /></TabsContent>
@@ -120,6 +124,7 @@ const AdminDashboard = () => {
           <TabsContent value="plans"><PlansManager /></TabsContent>
           <TabsContent value="backups"><BackupManager /></TabsContent>
           <TabsContent value="vod"><VodManager /></TabsContent>
+          <TabsContent value="series"><SeriesManager /></TabsContent>
         </Tabs>
       </main>
     </div>

@@ -39,12 +39,21 @@ interface VodItem {
   duration_minutes: number | null;
 }
 
+interface SeriesItem {
+  id: string;
+  title: string;
+  description: string | null;
+  category: string;
+  poster_url: string | null;
+}
+
 interface AuthContextType {
   isLoggedIn: boolean;
   client: ClientInfo | null;
   channels: ChannelInfo[];
   ads: AdInfo[];
   vodItems: VodItem[];
+  seriesItems: SeriesItem[];
   login: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
   reportChannelError: (channelId: string, errorMessage: string) => void;
@@ -82,6 +91,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [channels, setChannels] = useState<ChannelInfo[]>([]);
   const [ads, setAds] = useState<AdInfo[]>([]);
   const [vodItems, setVodItems] = useState<VodItem[]>([]);
+  const [seriesItems, setSeriesItems] = useState<SeriesItem[]>([]);
   const heartbeatRef = useRef<ReturnType<typeof setInterval>>();
 
   // Heartbeat - send every 2 minutes to keep connection alive
@@ -275,13 +285,17 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           if (isLovablePreview()) {
             const { data: vodData } = await supabase.from('vod_items' as any).select('id, title, description, category, poster_url, duration_minutes').eq('is_active', true).order('sort_order', { ascending: true });
             setVodItems((vodData as any[]) || []);
+            const { data: seriesData } = await supabase.from('vod_series' as any).select('id, title, description, category, poster_url').eq('is_active', true).order('sort_order', { ascending: true });
+            setSeriesItems((seriesData as any[]) || []);
           } else {
-            const vodRes = await fetch('/api/vod/public');
+            const [vodRes, seriesRes] = await Promise.all([fetch('/api/vod/public'), fetch('/api/vod/series/public')]);
             if (vodRes.ok) setVodItems(await vodRes.json());
+            if (seriesRes.ok) setSeriesItems(await seriesRes.json());
           }
         } catch { /* ignore */ }
       } else {
         setVodItems([]);
+        setSeriesItems([]);
       }
       
       setIsLoggedIn(true);
@@ -299,10 +313,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setChannels([]);
     setAds([]);
     setVodItems([]);
+    setSeriesItems([]);
   };
 
   return (
-    <AuthContext.Provider value={{ isLoggedIn, client, channels, ads, vodItems, login, logout, reportChannelError }}>
+    <AuthContext.Provider value={{ isLoggedIn, client, channels, ads, vodItems, seriesItems, login, logout, reportChannelError }}>
       {children}
     </AuthContext.Provider>
   );
