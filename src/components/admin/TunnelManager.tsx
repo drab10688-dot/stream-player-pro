@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { apiGet, apiPost } from '@/lib/api';
 import { useToast } from '@/hooks/use-toast';
-import { Globe, Shield, ShieldCheck, Play, Square, Download, RefreshCw, Copy, ExternalLink, Loader2 } from 'lucide-react';
+import { Globe, Shield, ShieldCheck, Play, Square, Download, RefreshCw, Copy, ExternalLink, Loader2, Monitor, Split } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { motion } from 'framer-motion';
@@ -12,6 +12,9 @@ interface TunnelStatus {
   url: string | null;
   error: string | null;
   https: boolean;
+  mode: 'full' | 'hybrid';
+  server_ip: string | null;
+  stream_base_url: string | null;
 }
 
 const TunnelManager = () => {
@@ -148,6 +151,45 @@ const TunnelManager = () => {
         {/* Installed - Controls */}
         {tunnel?.installed && (
           <div className="space-y-4">
+            {/* Mode selector */}
+            <div className="bg-muted/30 rounded-lg p-4 border border-border/30">
+              <p className="text-xs font-medium text-foreground mb-3">Modo del túnel</p>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={async () => {
+                    try {
+                      await apiPost('/api/tunnel/mode', { mode: 'full' });
+                      await fetchStatus();
+                      toast({ title: 'Modo cambiado', description: 'Todo el tráfico pasa por Cloudflare' });
+                    } catch (err: any) { toast({ title: 'Error', description: err.message, variant: 'destructive' }); }
+                  }}
+                  className={`p-3 rounded-lg border text-left transition-all ${tunnel.mode === 'full' ? 'border-primary bg-primary/10' : 'border-border/30 hover:border-border'}`}
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <Shield className="w-4 h-4 text-primary" />
+                    <span className="text-xs font-semibold text-foreground">Completo</span>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">Todo por Cloudflare. Máxima privacidad.</p>
+                </button>
+                <button
+                  onClick={async () => {
+                    try {
+                      await apiPost('/api/tunnel/mode', { mode: 'hybrid' });
+                      await fetchStatus();
+                      toast({ title: 'Modo cambiado', description: 'Admin por túnel, streams por IP directa' });
+                    } catch (err: any) { toast({ title: 'Error', description: err.message, variant: 'destructive' }); }
+                  }}
+                  className={`p-3 rounded-lg border text-left transition-all ${tunnel.mode === 'hybrid' ? 'border-primary bg-primary/10' : 'border-border/30 hover:border-border'}`}
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <Split className="w-4 h-4 text-primary" />
+                    <span className="text-xs font-semibold text-foreground">Híbrido</span>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">Admin por túnel, streams por IP. Cumple ToS.</p>
+                </button>
+              </div>
+            </div>
+
             <div className="flex items-center gap-3">
               {status === 'stopped' || status === 'error' ? (
                 <Button onClick={handleStart} disabled={!!actionLoading} className="gradient-primary gap-2">
@@ -161,6 +203,20 @@ const TunnelManager = () => {
                 </Button>
               )}
             </div>
+
+            {/* Hybrid mode info */}
+            {tunnel.mode === 'hybrid' && tunnel.server_ip && status === 'running' && (
+              <div className="bg-primary/5 rounded-lg p-3 border border-primary/10">
+                <div className="flex items-start gap-2">
+                  <Monitor className="w-4 h-4 text-primary mt-0.5 shrink-0" />
+                  <div className="text-xs text-muted-foreground">
+                    <span className="text-foreground font-medium">Modo híbrido activo</span>
+                    <p className="mt-1">🔒 Admin/Login → <code className="bg-muted px-1 rounded text-primary">{tunnel.url}</code></p>
+                    <p className="mt-0.5">📺 Streams → <code className="bg-muted px-1 rounded text-primary">http://{tunnel.server_ip}</code></p>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Error display */}
             {tunnel.error && (

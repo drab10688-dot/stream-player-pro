@@ -484,10 +484,15 @@ app.post('/api/client/login', async (req, res) => {
       };
     });
 
+    // En modo hybrid, incluir stream_base_url para que el frontend use IP directa para streams
+    const serverIP = getServerIP();
+    const streamBaseUrl = (tunnelMode === 'hybrid' && tunnelUrl && serverIP) ? `http://${serverIP}` : null;
+
     res.json({
       client: { id: client.id, username: client.username, max_screens: client.max_screens, expiry_date: client.expiry_date },
       channels: safeChannels,
       ads: adsRes.rows,
+      stream_base_url: streamBaseUrl,
     });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });
@@ -1607,6 +1612,23 @@ let tunnelProcess = null;
 let tunnelUrl = null;
 let tunnelStatus = 'stopped'; // stopped | starting | running | error
 let tunnelError = null;
+let tunnelMode = 'full'; // 'full' = todo por túnel, 'hybrid' = solo admin por túnel
+
+// Detectar IP local del servidor
+const getServerIP = () => {
+  try {
+    const os = require('os');
+    const interfaces = os.networkInterfaces();
+    for (const name of Object.keys(interfaces)) {
+      for (const iface of interfaces[name]) {
+        if (iface.family === 'IPv4' && !iface.internal) {
+          return iface.address;
+        }
+      }
+    }
+  } catch {}
+  return null;
+};
 
 // Check if cloudflared is installed
 const isCloudflaredInstalled = () => {
@@ -1618,13 +1640,28 @@ const isCloudflaredInstalled = () => {
 
 // Get tunnel status
 app.get('/api/tunnel/status', authAdmin, (req, res) => {
+  const serverIP = getServerIP();
   res.json({
     installed: isCloudflaredInstalled(),
     status: tunnelStatus,
     url: tunnelUrl,
     error: tunnelError,
     https: tunnelUrl ? tunnelUrl.startsWith('https://') : false,
+    mode: tunnelMode,
+    server_ip: serverIP,
+    stream_base_url: tunnelMode === 'hybrid' && tunnelUrl && serverIP ? `http://${serverIP}` : null,
   });
+});
+
+// Set tunnel mode
+app.post('/api/tunnel/mode', authAdmin, (req, res) => {
+  const { mode } = req.body;
+  if (!['full', 'hybrid'].includes(mode)) {
+    return res.status(400).json({ error: 'Modo inválido. Usa "full" o "hybrid"' });
+  }
+  tunnelMode = mode;
+  console.log(`🔄 Modo de túnel cambiado a: ${mode}`);
+  res.json({ success: true, mode: tunnelMode });
 });
 
 // Install cloudflared

@@ -8,6 +8,10 @@ interface ClientInfo {
   expiry_date: string;
 }
 
+// Base URL directa para streams cuando el túnel está en modo hybrid
+let streamBaseUrl: string | null = null;
+export const getStreamBaseUrl = () => streamBaseUrl;
+
 interface ChannelInfo {
   id: string;
   name: string;
@@ -149,10 +153,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         const res = await fetch('/api/channels/public');
         if (res.ok) {
           const data = await res.json();
-          // YouTube keeps original URL, everything else uses restream (serves HLS)
+          // YouTube keeps original URL, everything else uses restream
+          // If stream_base_url is set (hybrid mode), use direct IP for streams
+          const base = streamBaseUrl || '';
           const mapped = data.map((ch: any) => ({
             ...ch,
-            url: ch.url || `/api/restream/${ch.id}`,
+            url: ch.url || `${base}/api/restream/${ch.id}`,
           }));
           setChannels(mapped);
         }
@@ -246,6 +252,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         }
         return ch;
       });
+
+      // Guardar stream_base_url si el servidor la envía (modo hybrid)
+      streamBaseUrl = data.stream_base_url || null;
 
       setClient(data.client);
       setChannels(processedChannels);
