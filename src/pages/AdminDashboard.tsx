@@ -19,6 +19,7 @@ import BackupManager from '@/components/admin/BackupManager';
 import VodManager from '@/components/admin/VodManager';
 import SeriesManager from '@/components/admin/SeriesManager';
 import omnisyncLogo from '@/assets/omnisync-logo.png';
+import ChangePasswordDialog from '@/components/admin/ChangePasswordDialog';
 
 const AdminDashboard = () => {
   const navigate = useNavigate();
@@ -58,9 +59,12 @@ const AdminDashboard = () => {
               <p className="text-[10px] text-muted-foreground -mt-0.5 tracking-wider uppercase">Admin Panel</p>
             </div>
           </div>
-          <Button variant="ghost" size="icon" onClick={handleLogout} className="text-muted-foreground hover:text-destructive">
-            <LogOut className="w-5 h-5" />
-          </Button>
+          <div className="flex items-center gap-1">
+            <ChangePasswordDialog />
+            <Button variant="ghost" size="icon" onClick={handleLogout} className="text-muted-foreground hover:text-destructive">
+              <LogOut className="w-5 h-5" />
+            </Button>
+          </div>
         </div>
       </header>
 
