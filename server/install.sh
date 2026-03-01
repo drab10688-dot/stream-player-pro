@@ -92,6 +92,95 @@ if ! command -v apt &> /dev/null; then
   exit 1
 fi
 
+# =============================================
+# Compatibilidad de Ubuntu
+# =============================================
+echo -e "${CYAN}╔══════════════════════════════════════════╗"
+echo "║  📋 Versiones de Ubuntu compatibles:      ║"
+echo "║                                            ║"
+echo "║   ✅ Ubuntu 20.04 LTS (Focal)             ║"
+echo "║   ✅ Ubuntu 22.04 LTS (Jammy)  ← Recom.  ║"
+echo "║   ✅ Ubuntu 24.04 LTS (Noble)             ║"
+echo "║   ✅ Debian 11 (Bullseye)                 ║"
+echo "║   ✅ Debian 12 (Bookworm)                 ║"
+echo "║                                            ║"
+echo "║   ⚠️  Ubuntu 18.04 o menor: NO soportado  ║"
+echo "╚══════════════════════════════════════════╝"
+echo -e "${NC}"
+
+# Detectar versión del sistema
+if [ -f /etc/os-release ]; then
+  . /etc/os-release
+  OS_NAME="${NAME} ${VERSION_ID}"
+  log_info "Sistema detectado: ${OS_NAME}"
+
+  # Advertir si es una versión muy vieja
+  if [ -n "$VERSION_ID" ]; then
+    MAJOR_VER=$(echo "$VERSION_ID" | cut -d'.' -f1)
+    if [[ "$ID" == "ubuntu" && "$MAJOR_VER" -lt 20 ]]; then
+      log_err "Ubuntu $VERSION_ID no es compatible. Se requiere 20.04 o superior."
+      exit 1
+    elif [[ "$ID" == "debian" && "$MAJOR_VER" -lt 11 ]]; then
+      log_err "Debian $VERSION_ID no es compatible. Se requiere Debian 11 o superior."
+      exit 1
+    fi
+  fi
+else
+  log_warn "No se pudo detectar la versión del sistema operativo"
+fi
+
+# =============================================
+# Detectar instalación existente
+# =============================================
+ALREADY_INSTALLED=false
+if [ -d "/opt/streambox" ] || [ -d "/var/www/streambox" ] || pm2 list 2>/dev/null | grep -q "streambox-api"; then
+  ALREADY_INSTALLED=true
+fi
+
+if [ "$ALREADY_INSTALLED" = true ]; then
+  echo ""
+  echo -e "${YELLOW}╔══════════════════════════════════════════╗"
+  echo "║  ⚠️  Omnisync ya está instalado           ║"
+  echo "╚══════════════════════════════════════════╝${NC}"
+  echo ""
+  echo -e "  ${CYAN}1)${NC} Reinstalar (actualizar a última versión)"
+  echo -e "  ${RED}2)${NC} Desinstalar completamente"
+  echo -e "  ${YELLOW}3)${NC} Cancelar"
+  echo ""
+  read -p "  Elige una opción [1/2/3]: " INSTALL_CHOICE
+  INSTALL_CHOICE=${INSTALL_CHOICE:-1}
+
+  case "$INSTALL_CHOICE" in
+    2)
+      SCRIPT_DIR_CURRENT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+      if [ -f "${SCRIPT_DIR_CURRENT}/uninstall.sh" ]; then
+        echo ""
+        log_info "Ejecutando desinstalador..."
+        bash "${SCRIPT_DIR_CURRENT}/uninstall.sh"
+        exit $?
+      else
+        log_err "No se encontró uninstall.sh en ${SCRIPT_DIR_CURRENT}"
+        echo -e "  Ejecuta manualmente: ${CYAN}sudo bash server/uninstall.sh${NC}"
+        exit 1
+      fi
+      ;;
+    3)
+      echo ""
+      log_info "Instalación cancelada."
+      exit 0
+      ;;
+    1)
+      echo ""
+      log_info "Reinstalando Omnisync..."
+      ;;
+    *)
+      log_err "Opción no válida"
+      exit 1
+      ;;
+  esac
+fi
+echo ""
+
 # Detectar directorio del script
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
