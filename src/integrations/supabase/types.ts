@@ -113,30 +113,42 @@ export type Database = {
       }
       channels: {
         Row: {
+          auto_disabled: boolean
           category: string
+          consecutive_failures: number
           created_at: string
           id: string
           is_active: boolean
+          keep_alive: boolean
+          last_checked_at: string | null
           logo_url: string | null
           name: string
           sort_order: number | null
           url: string
         }
         Insert: {
+          auto_disabled?: boolean
           category?: string
+          consecutive_failures?: number
           created_at?: string
           id?: string
           is_active?: boolean
+          keep_alive?: boolean
+          last_checked_at?: string | null
           logo_url?: string | null
           name: string
           sort_order?: number | null
           url: string
         }
         Update: {
+          auto_disabled?: boolean
           category?: string
+          consecutive_failures?: number
           created_at?: string
           id?: string
           is_active?: boolean
+          keep_alive?: boolean
+          last_checked_at?: string | null
           logo_url?: string | null
           name?: string
           sort_order?: number | null

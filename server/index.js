@@ -137,11 +137,16 @@ app.get('/api/channels', authAdmin, async (req, res) => {
   res.json(rows);
 });
 
-// Ping de canales (requiere admin)
+// Ping de canales con auto-gestión (requiere admin)
+const FAILURE_THRESHOLD = 3;
+
 app.post('/api/channels/ping', authAdmin, async (req, res) => {
   try {
+    const { auto_manage = true } = req.body || {};
+
+    // Include auto_disabled channels for recovery check
     const { rows: channels } = await pool.query(
-      'SELECT id, name, url, category, logo_url FROM channels WHERE is_active = true'
+      'SELECT id, name, url, category, logo_url, is_active, auto_disabled, consecutive_failures FROM channels WHERE is_active = true OR auto_disabled = true'
     );
 
     const results = await Promise.all(channels.map(async (ch) => {
@@ -149,7 +154,7 @@ app.post('/api/channels/ping', authAdmin, async (req, res) => {
       try {
         const isYouTube = /youtube\.com|youtu\.be/.test(ch.url);
         if (isYouTube) {
-          return { id: ch.id, name: ch.name, category: ch.category, logo_url: ch.logo_url, status: 'online', response_time: 0, status_code: 200, error: null };
+          return { id: ch.id, name: ch.name, category: ch.category, logo_url: ch.logo_url, status: 'online', response_time: 0, status_code: 200, error: null, was_auto_disabled: ch.auto_disabled, consecutive_failures: ch.consecutive_failures };
         }
 
         const parsedUrl = new URL(ch.url);
@@ -157,23 +162,47 @@ app.post('/api/channels/ping', authAdmin, async (req, res) => {
 
         const result = await new Promise((resolve) => {
           const req = httpClient.request(ch.url, { method: 'GET', headers: { 'User-Agent': 'StreamBox-HealthCheck/1.0', 'Range': 'bytes=0-1024' } }, (response) => {
-            response.destroy(); // No necesitamos el body completo
+            response.destroy();
             const responseTime = Date.now() - start;
             const isOk = response.statusCode >= 200 && response.statusCode < 400;
-            resolve({ id: ch.id, name: ch.name, category: ch.category, logo_url: ch.logo_url, status: isOk ? 'online' : 'offline', response_time: responseTime, status_code: response.statusCode, error: isOk ? null : `HTTP ${response.statusCode}` });
+            resolve({ id: ch.id, name: ch.name, category: ch.category, logo_url: ch.logo_url, status: isOk ? 'online' : 'offline', response_time: responseTime, status_code: response.statusCode, error: isOk ? null : `HTTP ${response.statusCode}`, was_auto_disabled: ch.auto_disabled, consecutive_failures: ch.consecutive_failures });
           });
           req.on('error', (err) => {
-            resolve({ id: ch.id, name: ch.name, category: ch.category, logo_url: ch.logo_url, status: 'offline', response_time: Date.now() - start, status_code: 0, error: err.message });
+            resolve({ id: ch.id, name: ch.name, category: ch.category, logo_url: ch.logo_url, status: 'offline', response_time: Date.now() - start, status_code: 0, error: err.message, was_auto_disabled: ch.auto_disabled, consecutive_failures: ch.consecutive_failures });
           });
-          req.setTimeout(10000, () => { req.destroy(); resolve({ id: ch.id, name: ch.name, category: ch.category, logo_url: ch.logo_url, status: 'offline', response_time: 10000, status_code: 0, error: 'Timeout' }); });
+          req.setTimeout(10000, () => { req.destroy(); resolve({ id: ch.id, name: ch.name, category: ch.category, logo_url: ch.logo_url, status: 'offline', response_time: 10000, status_code: 0, error: 'Timeout', was_auto_disabled: ch.auto_disabled, consecutive_failures: ch.consecutive_failures }); });
           req.end();
         });
 
         return result;
       } catch (err) {
-        return { id: ch.id, name: ch.name, category: ch.category, logo_url: ch.logo_url, status: 'offline', response_time: Date.now() - start, status_code: 0, error: err.message };
+        return { id: ch.id, name: ch.name, category: ch.category, logo_url: ch.logo_url, status: 'offline', response_time: Date.now() - start, status_code: 0, error: err.message, was_auto_disabled: ch.auto_disabled, consecutive_failures: ch.consecutive_failures };
       }
     }));
+
+    // Auto-manage: disable failing channels, re-enable recovered ones
+    const autoActions = { disabled: [], reactivated: [] };
+
+    if (auto_manage) {
+      for (const r of results) {
+        if (r.status === 'offline') {
+          const newFailures = (r.consecutive_failures || 0) + 1;
+          if (newFailures >= FAILURE_THRESHOLD) {
+            await pool.query('UPDATE channels SET consecutive_failures = $1, is_active = false, auto_disabled = true, last_checked_at = now() WHERE id = $2', [newFailures, r.id]);
+            autoActions.disabled.push(r.name);
+          } else {
+            await pool.query('UPDATE channels SET consecutive_failures = $1, last_checked_at = now() WHERE id = $2', [newFailures, r.id]);
+          }
+        } else if (r.status === 'online') {
+          if (r.was_auto_disabled) {
+            await pool.query('UPDATE channels SET consecutive_failures = 0, is_active = true, auto_disabled = false, last_checked_at = now() WHERE id = $1', [r.id]);
+            autoActions.reactivated.push(r.name);
+          } else {
+            await pool.query('UPDATE channels SET consecutive_failures = 0, last_checked_at = now() WHERE id = $1', [r.id]);
+          }
+        }
+      }
+    }
 
     // Log offline channels
     const offlineChannels = results.filter(r => r.status === 'offline');
@@ -181,14 +210,14 @@ app.post('/api/channels/ping', authAdmin, async (req, res) => {
       for (const ch of offlineChannels) {
         await pool.query(
           'INSERT INTO channel_health_logs (channel_id, status, response_code, error_message, checked_by) VALUES ($1, $2, $3, $4, $5)',
-          [ch.id, 'error', ch.status_code, ch.error || 'Canal no responde', 'system:ping']
+          [ch.id, 'error', ch.status_code, ch.error || 'Canal no responde', 'system:auto-ping']
         );
       }
     }
 
     const online = results.filter(r => r.status === 'online').length;
     const offline = offlineChannels.length;
-    res.json({ results, summary: { total: results.length, online, offline } });
+    res.json({ results, summary: { total: results.length, online, offline }, auto_actions: autoActions });
   } catch (err) {
     console.error('Ping error:', err);
     res.status(500).json({ error: 'Error del servidor' });
