@@ -44,6 +44,21 @@ CREATE TABLE clients (
   expiry_date TIMESTAMP WITH TIME ZONE NOT NULL,
   is_active BOOLEAN NOT NULL DEFAULT true,
   notes TEXT,
+  plan_id UUID REFERENCES plans(id) ON DELETE SET NULL,
+  playlist_token TEXT UNIQUE,
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+  updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
+);
+
+-- Planes de suscripción
+CREATE TABLE IF NOT EXISTS plans (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  description TEXT,
+  categories TEXT[] NOT NULL DEFAULT '{}',
+  price NUMERIC(10,2) DEFAULT 0,
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  sort_order INTEGER DEFAULT 0,
   created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
   updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
 );
@@ -117,9 +132,11 @@ CREATE TRIGGER update_resellers_updated_at
 -- =============================================
 CREATE INDEX idx_clients_username ON clients(username);
 CREATE INDEX idx_clients_active ON clients(is_active);
+CREATE INDEX idx_clients_token ON clients(playlist_token);
 CREATE INDEX idx_channels_active ON channels(is_active);
 CREATE INDEX idx_connections_client ON active_connections(client_id);
 CREATE INDEX idx_connections_heartbeat ON active_connections(last_heartbeat);
 CREATE INDEX idx_resellers_username ON resellers(username);
 CREATE INDEX idx_resellers_active ON resellers(is_active);
 CREATE INDEX idx_clients_reseller ON clients(reseller_id);
+CREATE INDEX idx_plans_active ON plans(is_active);

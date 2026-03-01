@@ -5,7 +5,7 @@ import { isLovablePreview } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Plus, Trash2, Edit2, Save, X, Users, UserX, UserCheck, Monitor, Package } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, Users, UserX, UserCheck, Monitor, Package, Link2, Copy, RefreshCw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { motion } from 'framer-motion';
 import { format } from 'date-fns';
@@ -25,6 +25,7 @@ interface Client {
   is_active: boolean;
   notes: string | null;
   plan_id: string | null;
+  playlist_token: string | null;
   created_at: string;
 }
 
@@ -35,6 +36,7 @@ const ClientsManager = () => {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [expandedPlaylist, setExpandedPlaylist] = useState<string | null>(null);
   const [form, setForm] = useState({ username: '', password: '', max_screens: 1, expiry_date: '', notes: '', plan_id: '' });
 
   const fetchClients = async () => {
@@ -54,8 +56,17 @@ const ClientsManager = () => {
   };
 
   const fetchPlans = async () => {
-    const { data } = await (supabase.from('plans' as any).select('id, name, categories').eq('is_active', true).order('sort_order', { ascending: true }) as any);
-    setPlans((data as any[]) || []);
+    try {
+      if (isLovablePreview()) {
+        const { data } = await (supabase.from('plans' as any).select('id, name, categories').eq('is_active', true).order('sort_order', { ascending: true }) as any);
+        setPlans((data as any[]) || []);
+      } else {
+        const data = await apiGet('/api/plans');
+        setPlans((data || []).filter((p: any) => p.is_active));
+      }
+    } catch (err) {
+      console.error('Error fetching plans:', err);
+    }
   };
 
   useEffect(() => { fetchClients(); fetchPlans(); }, []);
@@ -148,6 +159,36 @@ const ClientsManager = () => {
 
   const isExpired = (date: string) => new Date(date) < new Date();
 
+  const getPlaylistUrl = (token: string | null) => {
+    if (!token) return '';
+    const base = window.location.origin;
+    return `${base}/api/playlist/${token}`;
+  };
+
+  const copyPlaylistUrl = (token: string | null) => {
+    const url = getPlaylistUrl(token);
+    if (!url) return;
+    navigator.clipboard.writeText(url);
+    toast({ title: '📋 URL copiada', description: 'Link de playlist M3U copiado al portapapeles' });
+  };
+
+  const regenerateToken = async (clientId: string) => {
+    try {
+      if (isLovablePreview()) {
+        const newToken = Array.from(crypto.getRandomValues(new Uint8Array(16)))
+          .map(b => b.toString(16).padStart(2, '0')).join('');
+        const { error } = await supabase.from('clients').update({ playlist_token: newToken } as any).eq('id', clientId);
+        if (error) throw error;
+      } else {
+        await apiPost(`/api/clients/${clientId}/regenerate-token`, {});
+      }
+      toast({ title: '🔑 Token regenerado', description: 'El link anterior ya no funcionará' });
+      fetchClients();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -220,6 +261,9 @@ const ClientsManager = () => {
                   </div>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
+                  <Button variant="ghost" size="icon" onClick={() => setExpandedPlaylist(expandedPlaylist === c.id ? null : c.id)} className={`text-muted-foreground hover:text-primary ${expandedPlaylist === c.id ? 'text-primary' : ''}`} title="Link M3U">
+                    <Link2 className="w-4 h-4" />
+                  </Button>
                   <Button variant="ghost" size="sm" onClick={() => toggleActive(c)} className="text-xs text-muted-foreground">
                     {c.is_active ? 'Suspender' : 'Activar'}
                   </Button>
@@ -231,6 +275,36 @@ const ClientsManager = () => {
                   </Button>
                 </div>
               </div>
+              {/* Playlist M3U URL expandable */}
+              {expandedPlaylist === c.id && (
+                <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="mt-3 pt-3 border-t border-border/50">
+                  <label className="text-xs text-muted-foreground mb-1.5 block flex items-center gap-1">
+                    <Link2 className="w-3 h-3" /> Link M3U para OTT Player / Smart IPTV
+                  </label>
+                  {c.playlist_token ? (
+                    <div className="flex gap-2">
+                      <Input readOnly value={getPlaylistUrl(c.playlist_token)} className="bg-secondary border-border text-foreground text-xs font-mono" onClick={(e) => (e.target as HTMLInputElement).select()} />
+                      <Button variant="outline" size="icon" onClick={() => copyPlaylistUrl(c.playlist_token)} className="shrink-0 border-border" title="Copiar URL">
+                        <Copy className="w-4 h-4" />
+                      </Button>
+                      <Button variant="outline" size="icon" onClick={() => regenerateToken(c.id)} className="shrink-0 border-border text-muted-foreground hover:text-destructive" title="Regenerar token (invalida el link anterior)">
+                        <RefreshCw className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="flex gap-2 items-center">
+                      <span className="text-xs text-muted-foreground">Sin token generado</span>
+                      <Button variant="outline" size="sm" onClick={() => regenerateToken(c.id)} className="text-xs gap-1">
+                        <RefreshCw className="w-3 h-3" /> Generar Token
+                      </Button>
+                    </div>
+                  )}
+                  <p className="text-[10px] text-muted-foreground mt-1.5">
+                    💡 Este link funciona en OTT Player, Smart IPTV, SS IPTV y cualquier app que acepte M3U. 
+                    En red LAN usa la IP local. Con Cloudflare usa el dominio del túnel.
+                  </p>
+                </motion.div>
+              )}
             </motion.div>
           ))}
         </div>
