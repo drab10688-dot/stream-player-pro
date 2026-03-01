@@ -395,23 +395,23 @@ const PlayerPage = () => {
       {/* Channel List Sidebar */}
       <div
         ref={channelListRef}
-        className={`fixed right-0 top-0 bottom-0 w-80 sm:w-96 z-30 bg-background/95 backdrop-blur-xl border-l border-border/30 transition-transform duration-300 ${
+        className={`fixed right-0 top-0 bottom-0 w-80 sm:w-96 z-30 bg-black/85 backdrop-blur-xl border-l border-white/10 transition-transform duration-300 ${
           showList ? 'translate-x-0' : 'translate-x-full'
         }`}
       >
-        <div className="p-3 sm:p-4 border-b border-border/30 flex items-center gap-2">
+        <div className="p-3 sm:p-4 border-b border-white/10 flex items-center gap-2">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
               placeholder="Buscar canal..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="pl-10 bg-secondary/40 border-border/40 h-11 sm:h-12 text-foreground text-sm sm:text-base placeholder:text-muted-foreground rounded-xl"
+              className="pl-10 bg-white/10 border-white/10 h-11 sm:h-12 text-white placeholder:text-white/40 text-sm sm:text-base rounded-xl"
               maxLength={50}
             />
           </div>
-          <Button variant="ghost" size="icon" onClick={() => setShowList(false)} className="h-11 w-11 sm:h-12 sm:w-12 rounded-xl shrink-0 tv-focusable">
-            <ArrowLeft className="w-4 h-4 sm:w-5 sm:h-5 text-foreground rotate-180" />
+          <Button variant="ghost" size="icon" onClick={() => setShowList(false)} className="h-11 w-11 sm:h-12 sm:w-12 rounded-xl shrink-0 tv-focusable text-white hover:bg-white/10">
+            <ArrowLeft className="w-4 h-4 sm:w-5 sm:h-5 text-white rotate-180" />
           </Button>
         </div>
         <ScrollArea className="h-[calc(100vh-80px)]">
@@ -424,24 +424,24 @@ const PlayerPage = () => {
                 onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { changeChannel(ch); setShowList(false); } }}
                 className={`w-full flex items-center gap-3 px-3 py-3 sm:py-3.5 rounded-xl transition-all duration-200 text-left tv-focusable ${
                   selectedChannel.id === ch.id
-                    ? 'bg-primary/10 border border-primary/20'
-                    : 'hover:bg-secondary/40 border border-transparent'
+                    ? 'bg-primary/20 border border-primary/30'
+                    : 'hover:bg-white/10 border border-transparent'
                 }`}
               >
-                <span className="text-muted-foreground text-xs sm:text-sm font-mono w-6 text-right shrink-0">{channels.indexOf(ch) + 1}</span>
+                <span className="text-white/50 text-xs sm:text-sm font-mono w-6 text-right shrink-0">{channels.indexOf(ch) + 1}</span>
                 <div className={`w-9 h-9 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center shrink-0 overflow-hidden ${
-                  selectedChannel.id === ch.id ? 'bg-primary/20' : 'bg-secondary/60'
+                  selectedChannel.id === ch.id ? 'bg-primary/20' : 'bg-white/10'
                 }`}>
                   {ch.logo_url ? (
                     <img src={ch.logo_url} alt="" className="w-full h-full object-cover rounded-lg" onError={(e) => { const img = e.target as HTMLImageElement; img.style.display = 'none'; }} />
                   ) : null}
-                  <Play className={`w-4 h-4 ${selectedChannel.id === ch.id ? 'text-primary' : 'text-muted-foreground'} ${ch.logo_url ? 'hidden' : ''}`} />
+                  <Play className={`w-4 h-4 ${selectedChannel.id === ch.id ? 'text-primary' : 'text-white/50'} ${ch.logo_url ? 'hidden' : ''}`} />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <span className={`text-sm sm:text-base font-medium block truncate ${selectedChannel.id === ch.id ? 'text-primary' : 'text-foreground'}`}>
+                  <span className={`text-sm sm:text-base font-medium block truncate ${selectedChannel.id === ch.id ? 'text-primary' : 'text-white'}`}>
                     {ch.name}
                   </span>
-                  <span className="text-xs sm:text-sm text-muted-foreground truncate block">{ch.category}</span>
+                  <span className="text-xs sm:text-sm text-white/40 truncate block">{ch.category}</span>
                 </div>
                 {selectedChannel.id === ch.id && (
                   <div className="w-2.5 h-2.5 rounded-full bg-primary animate-pulse shrink-0" />
