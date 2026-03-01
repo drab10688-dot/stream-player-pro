@@ -6,10 +6,31 @@ const jwt = require('jsonwebtoken');
 const http = require('http');
 const https = require('https');
 const { URL } = require('url');
+const path = require('path');
+const fs = require('fs');
+const multer = require('multer');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Servir logos estáticos
+const LOGOS_DIR = path.join(__dirname, 'uploads', 'logos');
+if (!fs.existsSync(LOGOS_DIR)) fs.mkdirSync(LOGOS_DIR, { recursive: true });
+app.use('/uploads/logos', express.static(LOGOS_DIR));
+
+// Multer config for logo uploads
+const logoStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, LOGOS_DIR),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname) || '.png';
+    cb(null, `${Date.now()}-${Math.random().toString(36).substring(2, 8)}${ext}`);
+  }
+});
+const uploadLogo = multer({ storage: logoStorage, limits: { fileSize: 2 * 1024 * 1024 }, fileFilter: (req, file, cb) => {
+  if (file.mimetype.startsWith('image/')) cb(null, true);
+  else cb(new Error('Solo se permiten imágenes'));
+}});
 
 // =============================================
 // CONFIGURACIÓN - Cambiar según tu servidor
@@ -211,6 +232,13 @@ app.get('/api/ads/public', async (req, res) => {
     'SELECT id, title, message, image_url FROM ads WHERE is_active = true'
   );
   res.json(rows);
+});
+
+// Upload channel logo
+app.post('/api/channels/upload-logo', authAdmin, uploadLogo.single('logo'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No se recibió archivo' });
+  const url = `/uploads/logos/${req.file.filename}`;
+  res.json({ url });
 });
 
 app.post('/api/channels', authAdmin, async (req, res) => {

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
 import { supabase } from '@/integrations/supabase/client';
 import { isLovablePreview } from '@/lib/utils';
@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
-import { Plus, Trash2, Edit2, Save, X, Tv, Upload, Link, FileText, Loader2, Zap } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, Tv, Upload, Link, FileText, Loader2, Zap, ImagePlus } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 interface Channel {
@@ -32,6 +32,9 @@ const ChannelsManager = () => {
   const [m3uContent, setM3uContent] = useState('');
   const [m3uUrl, setM3uUrl] = useState('');
   const [importing, setImporting] = useState(false);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [logoPreview, setLogoPreview] = useState<string | null>(null);
+  const logoInputRef = useRef<HTMLInputElement>(null);
 
   const fetchChannels = async () => {
     try {
@@ -91,6 +94,7 @@ const ChannelsManager = () => {
 
   const handleEdit = (ch: Channel) => {
     setForm({ name: ch.name, url: ch.url, category: ch.category, sort_order: ch.sort_order, logo_url: ch.logo_url || '' });
+    setLogoPreview(ch.logo_url || null);
     setEditingId(ch.id);
     setShowForm(true);
   };
@@ -192,7 +196,7 @@ const ChannelsManager = () => {
           <Button onClick={() => { setShowM3UImport(!showM3UImport); setShowForm(false); }} variant="outline" className="gap-2 border-border text-foreground">
             <Upload className="w-4 h-4" /> Importar M3U
           </Button>
-          <Button onClick={() => { setShowForm(true); setShowM3UImport(false); setEditingId(null); setForm({ name: '', url: '', category: 'General', sort_order: 0, logo_url: '' }); }} className="gradient-primary text-primary-foreground gap-2">
+          <Button onClick={() => { setShowForm(true); setShowM3UImport(false); setEditingId(null); setLogoPreview(null); setForm({ name: '', url: '', category: 'General', sort_order: 0, logo_url: '' }); }} className="gradient-primary text-primary-foreground gap-2">
             <Plus className="w-4 h-4" /> Agregar Canal
           </Button>
         </div>
@@ -244,13 +248,70 @@ const ChannelsManager = () => {
           </div>
           <Input placeholder="URL del stream" value={form.url} onChange={e => setForm({ ...form, url: e.target.value })} className="bg-secondary border-border text-foreground" maxLength={500} />
           <div className="flex gap-3 items-end">
-            <div className="flex-1">
-              <label className="text-xs text-muted-foreground mb-1 block">URL del ícono/logo (opcional)</label>
-              <Input placeholder="https://ejemplo.com/logo.png" value={form.logo_url} onChange={e => setForm({ ...form, logo_url: e.target.value })} className="bg-secondary border-border text-foreground" maxLength={500} />
+            <div className="flex-1 space-y-2">
+              <label className="text-xs text-muted-foreground block">Logo del canal (subir archivo o URL)</label>
+              <div className="flex gap-2">
+                <input
+                  ref={logoInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    if (file.size > 2 * 1024 * 1024) {
+                      toast({ title: 'Error', description: 'El logo no debe superar 2MB', variant: 'destructive' });
+                      return;
+                    }
+                    setUploadingLogo(true);
+                    try {
+                      if (isLovablePreview()) {
+                        const ext = file.name.split('.').pop() || 'png';
+                        const fileName = `${crypto.randomUUID()}.${ext}`;
+                        const { error } = await supabase.storage.from('channel-logos').upload(fileName, file, { upsert: true });
+                        if (error) throw error;
+                        const { data: urlData } = supabase.storage.from('channel-logos').getPublicUrl(fileName);
+                        setForm(f => ({ ...f, logo_url: urlData.publicUrl }));
+                        setLogoPreview(urlData.publicUrl);
+                      } else {
+                        // VPS: upload via API
+                        const formData = new FormData();
+                        formData.append('logo', file);
+                        const token = localStorage.getItem('admin_token');
+                        const res = await fetch('/api/channels/upload-logo', {
+                          method: 'POST',
+                          headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+                          body: formData,
+                        });
+                        if (!res.ok) throw new Error('Error al subir logo');
+                        const data = await res.json();
+                        setForm(f => ({ ...f, logo_url: data.url }));
+                        setLogoPreview(data.url);
+                      }
+                      toast({ title: 'Logo subido correctamente' });
+                    } catch (err: any) {
+                      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+                    }
+                    setUploadingLogo(false);
+                    if (logoInputRef.current) logoInputRef.current.value = '';
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => logoInputRef.current?.click()}
+                  disabled={uploadingLogo}
+                  className="gap-2 border-border text-foreground shrink-0"
+                >
+                  {uploadingLogo ? <Loader2 className="w-4 h-4 animate-spin" /> : <ImagePlus className="w-4 h-4" />}
+                  {uploadingLogo ? 'Subiendo...' : 'Subir Logo'}
+                </Button>
+                <Input placeholder="o pegar URL del logo" value={form.logo_url} onChange={e => { setForm({ ...form, logo_url: e.target.value }); setLogoPreview(e.target.value); }} className="bg-secondary border-border text-foreground" maxLength={500} />
+              </div>
             </div>
-            {form.logo_url && (
-              <div className="w-10 h-10 rounded-lg bg-secondary border border-border overflow-hidden shrink-0">
-                <img src={form.logo_url} alt="Preview" className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).src = ''; }} />
+            {(logoPreview || form.logo_url) && (
+              <div className="w-12 h-12 rounded-lg bg-secondary border border-border overflow-hidden shrink-0">
+                <img src={logoPreview || form.logo_url} alt="Preview" className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
               </div>
             )}
           </div>
