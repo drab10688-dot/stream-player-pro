@@ -96,9 +96,22 @@ if systemctl is-active --quiet nginx 2>/dev/null; then
 fi
 
 # =============================================
-# 6. Limpieza
+# 6. tmpfs / HLS cache
 # =============================================
-echo -e "${YELLOW}[6/6] Limpieza final...${NC}"
+echo -e "${YELLOW}[6/7] Limpiando tmpfs y caché HLS...${NC}"
+if mountpoint -q /tmp/streambox-hls 2>/dev/null; then
+  umount /tmp/streambox-hls 2>/dev/null || true
+  echo -e "${GREEN}  ✓ tmpfs desmontado${NC}"
+fi
+rm -rf /tmp/streambox-hls /tmp/streambox-cache 2>/dev/null || true
+# Eliminar entrada de fstab
+sed -i '/streambox-hls/d' /etc/fstab 2>/dev/null || true
+echo -e "${GREEN}  ✓ Entrada tmpfs eliminada de fstab${NC}"
+
+# =============================================
+# 7. Limpieza final
+# =============================================
+echo -e "${YELLOW}[7/7] Limpieza final...${NC}"
 rm -f /var/log/streambox*.log 2>/dev/null || true
 rm -f /var/log/omnisync*.log 2>/dev/null || true
 echo -e "${GREEN}  ✓ Logs eliminados${NC}"
