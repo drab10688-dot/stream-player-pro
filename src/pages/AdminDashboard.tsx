@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAdminAuth } from '@/contexts/AdminAuthContext';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Tv, Users, Megaphone, Store, LogOut, LayoutDashboard, Bell, Activity, Globe, Radio } from 'lucide-react';
+import { Tv, Users, Megaphone, Store, LogOut, LayoutDashboard, Bell, Activity, Globe, Radio, Bug } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import AdminStats from '@/components/admin/AdminStats';
 import ChannelsManager from '@/components/admin/ChannelsManager';
@@ -13,6 +13,7 @@ import ExpirationAlerts from '@/components/admin/ExpirationAlerts';
 import ChannelMonitor from '@/components/admin/ChannelMonitor';
 import TunnelManager from '@/components/admin/TunnelManager';
 import StreamMonitor from '@/components/admin/StreamMonitor';
+import StreamDiagnostics from '@/components/admin/StreamDiagnostics';
 import omnisyncLogo from '@/assets/omnisync-logo.png';
 
 const AdminDashboard = () => {
@@ -89,6 +90,9 @@ const AdminDashboard = () => {
             <TabsTrigger value="streams" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
               <Radio className="w-4 h-4" /> Streams
             </TabsTrigger>
+            <TabsTrigger value="diagnostics" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
+              <Bug className="w-4 h-4" /> Diagnóstico
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="dashboard"><AdminStats /></TabsContent>
@@ -100,6 +104,7 @@ const AdminDashboard = () => {
           <TabsContent value="monitor"><ChannelMonitor /></TabsContent>
           <TabsContent value="tunnel"><TunnelManager /></TabsContent>
           <TabsContent value="streams"><StreamMonitor /></TabsContent>
+          <TabsContent value="diagnostics"><StreamDiagnostics /></TabsContent>
         </Tabs>
       </main>
     </div>
