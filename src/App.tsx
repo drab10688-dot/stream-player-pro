@@ -8,6 +8,7 @@ import { AdminAuthProvider } from "@/contexts/AdminAuthContext";
 import LoginPage from "./pages/LoginPage";
 import Dashboard from "./pages/Dashboard";
 import PlayerPage from "./pages/PlayerPage";
+import VodPlayerPage from "./pages/VodPlayerPage";
 import AdminLogin from "./pages/AdminLogin";
 import AdminDashboard from "./pages/AdminDashboard";
 import NotFound from "./pages/NotFound";
@@ -30,6 +31,7 @@ const AppRoutes = () => {
       <Route path="/channels" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
       <Route path="/player" element={<ProtectedRoute><PlayerPage /></ProtectedRoute>} />
       <Route path="/player/:category" element={<ProtectedRoute><PlayerPage /></ProtectedRoute>} />
+      <Route path="/vod/:id" element={<ProtectedRoute><VodPlayerPage /></ProtectedRoute>} />
       <Route path="/admin" element={<AdminLogin />} />
       <Route path="/admin/panel" element={<AdminDashboard />} />
       <Route path="/install" element={<InstallPage />} />

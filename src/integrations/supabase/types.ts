@@ -158,6 +158,7 @@ export type Database = {
           reseller_id: string | null
           updated_at: string
           username: string
+          vod_enabled: boolean
         }
         Insert: {
           created_at?: string
@@ -172,6 +173,7 @@ export type Database = {
           reseller_id?: string | null
           updated_at?: string
           username: string
+          vod_enabled?: boolean
         }
         Update: {
           created_at?: string
@@ -186,6 +188,7 @@ export type Database = {
           reseller_id?: string | null
           updated_at?: string
           username?: string
+          vod_enabled?: boolean
         }
         Relationships: [
           {
@@ -342,6 +345,48 @@ export type Database = {
           id?: string
           role?: Database["public"]["Enums"]["app_role"]
           user_id?: string
+        }
+        Relationships: []
+      }
+      vod_items: {
+        Row: {
+          category: string
+          created_at: string
+          description: string | null
+          duration_minutes: number | null
+          id: string
+          is_active: boolean
+          poster_url: string | null
+          sort_order: number | null
+          title: string
+          updated_at: string
+          video_filename: string
+        }
+        Insert: {
+          category?: string
+          created_at?: string
+          description?: string | null
+          duration_minutes?: number | null
+          id?: string
+          is_active?: boolean
+          poster_url?: string | null
+          sort_order?: number | null
+          title: string
+          updated_at?: string
+          video_filename: string
+        }
+        Update: {
+          category?: string
+          created_at?: string
+          description?: string | null
+          duration_minutes?: number | null
+          id?: string
+          is_active?: boolean
+          poster_url?: string | null
+          sort_order?: number | null
+          title?: string
+          updated_at?: string
+          video_filename?: string
         }
         Relationships: []
       }

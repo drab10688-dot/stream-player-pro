@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { LogOut, X, Bell, Search, Play } from 'lucide-react';
+import { LogOut, X, Bell, Search, Play, Film } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -8,11 +8,12 @@ import { Input } from '@/components/ui/input';
 import omnisyncLogo from '@/assets/omnisync-logo.png';
 
 const Dashboard = () => {
-  const { client, channels, ads, logout } = useAuth();
+  const { client, channels, ads, vodItems, logout } = useAuth();
   const navigate = useNavigate();
   const [showAd, setShowAd] = useState(true);
   const [currentAd, setCurrentAd] = useState(0);
   const [search, setSearch] = useState('');
+  const [activeTab, setActiveTab] = useState<'channels' | 'vod'>('channels');
 
   const categories = [...new Set(channels.map(ch => ch.category))];
 
@@ -28,6 +29,20 @@ const Dashboard = () => {
     .filter(g => g.channels.length > 0);
 
   const activeAd = ads.length > 0 ? ads[currentAd % ads.length] : null;
+
+  // VOD
+  const vodCategories = [...new Set(vodItems.map(v => v.category))];
+  const filteredVod = vodItems.filter(v =>
+    v.title.toLowerCase().includes(search.toLowerCase())
+  );
+  const vodByCategory = vodCategories
+    .map(cat => ({
+      name: cat,
+      items: filteredVod.filter(v => v.category === cat),
+    }))
+    .filter(g => g.items.length > 0);
+
+  const hasVod = client?.vod_enabled && vodItems.length > 0;
 
   return (
     <div className="min-h-screen bg-background bg-grid">
@@ -64,11 +79,33 @@ const Dashboard = () => {
             <h1 className="font-bold text-lg text-gradient tracking-tight">Omnisync</h1>
           </div>
 
+          {/* Tab switcher (only if VOD enabled) */}
+          {hasVod && (
+            <div className="flex items-center gap-1 bg-secondary/40 rounded-lg p-1 border border-border/30">
+              <button
+                onClick={() => setActiveTab('channels')}
+                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-1.5 ${
+                  activeTab === 'channels' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <Play className="w-3.5 h-3.5" /> TV
+              </button>
+              <button
+                onClick={() => setActiveTab('vod')}
+                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-1.5 ${
+                  activeTab === 'vod' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <Film className="w-3.5 h-3.5" /> Películas
+              </button>
+            </div>
+          )}
+
           <div className="flex-1 max-w-xs mx-4 hidden md:block">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
-                placeholder="Buscar canal..."
+                placeholder={activeTab === 'channels' ? 'Buscar canal...' : 'Buscar película...'}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="pl-10 bg-secondary/40 border-border/40 h-9 text-sm text-foreground placeholder:text-muted-foreground rounded-xl"
@@ -94,7 +131,7 @@ const Dashboard = () => {
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
-            placeholder="Buscar canal..."
+            placeholder={activeTab === 'channels' ? 'Buscar canal...' : 'Buscar película...'}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-10 bg-secondary/40 border-border/40 h-10 text-foreground placeholder:text-muted-foreground rounded-xl"
@@ -104,73 +141,140 @@ const Dashboard = () => {
       </div>
 
       <main className="container px-4 py-6 space-y-8">
-        {channels.length === 0 ? (
-          <div className="glass-strong rounded-2xl p-12 text-center">
-            <div className="w-20 h-20 rounded-full overflow-hidden mx-auto mb-4 opacity-40">
-              <img src={omnisyncLogo} alt="" className="w-full h-full object-cover" />
-            </div>
-            <h2 className="font-semibold text-xl text-foreground mb-2">Sin canales disponibles</h2>
-            <p className="text-muted-foreground">No hay canales asignados a tu cuenta aún.</p>
-          </div>
-        ) : (
-          channelsByCategory.map((group, gi) => (
-            <motion.section
-              key={group.name}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: gi * 0.1 }}
-            >
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-1 h-6 rounded-full gradient-primary" />
-                <h2 className="font-semibold text-lg text-foreground">{group.name}</h2>
-                <span className="text-xs text-muted-foreground bg-secondary/60 px-2 py-0.5 rounded-full">{group.channels.length}</span>
+        {/* CHANNELS TAB */}
+        {activeTab === 'channels' && (
+          <>
+            {channels.length === 0 ? (
+              <div className="glass-strong rounded-2xl p-12 text-center">
+                <div className="w-20 h-20 rounded-full overflow-hidden mx-auto mb-4 opacity-40">
+                  <img src={omnisyncLogo} alt="" className="w-full h-full object-cover" />
+                </div>
+                <h2 className="font-semibold text-xl text-foreground mb-2">Sin canales disponibles</h2>
+                <p className="text-muted-foreground">No hay canales asignados a tu cuenta aún.</p>
               </div>
+            ) : (
+              channelsByCategory.map((group, gi) => (
+                <motion.section
+                  key={group.name}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: gi * 0.1 }}
+                >
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="w-1 h-6 rounded-full gradient-primary" />
+                    <h2 className="font-semibold text-lg text-foreground">{group.name}</h2>
+                    <span className="text-xs text-muted-foreground bg-secondary/60 px-2 py-0.5 rounded-full">{group.channels.length}</span>
+                  </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3 sm:gap-4">
-                {group.channels.map((ch, i) => (
-                  <motion.button
-                    key={ch.id}
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    transition={{ delay: i * 0.02 }}
-                    tabIndex={0}
-                    onClick={() => navigate(`/player/${ch.category}`, { state: { channel: ch } })}
-                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') navigate(`/player/${ch.category}`, { state: { channel: ch } }); }}
-                    className="group glass-strong rounded-2xl p-4 sm:p-5 2xl:p-6 text-left hover:border-primary/30 transition-all duration-300 cursor-pointer relative overflow-hidden tv-focusable"
-                  >
-                    <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 bg-gradient-to-br from-primary/5 to-transparent" />
-                    <div className="relative">
-                      <div className="w-14 h-14 sm:w-16 sm:h-16 2xl:w-20 2xl:h-20 rounded-xl bg-secondary/60 flex items-center justify-center mb-3 overflow-hidden group-hover:scale-105 transition-transform duration-300">
-                        {ch.logo_url ? (
-                          <img
-                            src={ch.logo_url}
-                            alt={ch.name}
-                            className="w-full h-full object-cover rounded-xl"
-                            onError={(e) => {
-                              const img = e.target as HTMLImageElement;
-                              img.style.display = 'none';
-                              // Show Play icon fallback
-                              const parent = img.parentElement;
-                              if (parent && !parent.querySelector('.logo-fallback')) {
-                                const fallback = document.createElement('div');
-                                fallback.className = 'logo-fallback flex items-center justify-center w-full h-full';
-                                fallback.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-primary"><polygon points="6 3 20 12 6 21 6 3"></polygon></svg>`;
-                                parent.appendChild(fallback);
-                              }
-                            }}
-                          />
-                        ) : (
-                          <Play className="w-6 h-6 sm:w-7 sm:h-7 2xl:w-8 2xl:h-8 text-primary" />
-                        )}
-                      </div>
-                      <p className="font-medium text-foreground text-sm sm:text-base 2xl:text-lg truncate">{ch.name}</p>
-                      <p className="text-muted-foreground text-xs sm:text-sm mt-1 truncate">{ch.category}</p>
-                    </div>
-                  </motion.button>
-                ))}
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3 sm:gap-4">
+                    {group.channels.map((ch, i) => (
+                      <motion.button
+                        key={ch.id}
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ delay: i * 0.02 }}
+                        tabIndex={0}
+                        onClick={() => navigate(`/player/${ch.category}`, { state: { channel: ch } })}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') navigate(`/player/${ch.category}`, { state: { channel: ch } }); }}
+                        className="group glass-strong rounded-2xl p-4 sm:p-5 2xl:p-6 text-left hover:border-primary/30 transition-all duration-300 cursor-pointer relative overflow-hidden tv-focusable"
+                      >
+                        <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 bg-gradient-to-br from-primary/5 to-transparent" />
+                        <div className="relative">
+                          <div className="w-14 h-14 sm:w-16 sm:h-16 2xl:w-20 2xl:h-20 rounded-xl bg-secondary/60 flex items-center justify-center mb-3 overflow-hidden group-hover:scale-105 transition-transform duration-300">
+                            {ch.logo_url ? (
+                              <img
+                                src={ch.logo_url}
+                                alt={ch.name}
+                                className="w-full h-full object-cover rounded-xl"
+                                onError={(e) => {
+                                  const img = e.target as HTMLImageElement;
+                                  img.style.display = 'none';
+                                  const parent = img.parentElement;
+                                  if (parent && !parent.querySelector('.logo-fallback')) {
+                                    const fallback = document.createElement('div');
+                                    fallback.className = 'logo-fallback flex items-center justify-center w-full h-full';
+                                    fallback.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-primary"><polygon points="6 3 20 12 6 21 6 3"></polygon></svg>`;
+                                    parent.appendChild(fallback);
+                                  }
+                                }}
+                              />
+                            ) : (
+                              <Play className="w-6 h-6 sm:w-7 sm:h-7 2xl:w-8 2xl:h-8 text-primary" />
+                            )}
+                          </div>
+                          <p className="font-medium text-foreground text-sm sm:text-base 2xl:text-lg truncate">{ch.name}</p>
+                          <p className="text-muted-foreground text-xs sm:text-sm mt-1 truncate">{ch.category}</p>
+                        </div>
+                      </motion.button>
+                    ))}
+                  </div>
+                </motion.section>
+              ))
+            )}
+          </>
+        )}
+
+        {/* VOD TAB */}
+        {activeTab === 'vod' && hasVod && (
+          <>
+            {filteredVod.length === 0 ? (
+              <div className="glass-strong rounded-2xl p-12 text-center">
+                <Film className="w-20 h-20 text-muted-foreground mx-auto mb-4 opacity-40" />
+                <h2 className="font-semibold text-xl text-foreground mb-2">Sin películas disponibles</h2>
+                <p className="text-muted-foreground">No hay contenido VOD disponible.</p>
               </div>
-            </motion.section>
-          ))
+            ) : (
+              vodByCategory.map((group, gi) => (
+                <motion.section
+                  key={group.name}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: gi * 0.1 }}
+                >
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="w-1 h-6 rounded-full gradient-primary" />
+                    <h2 className="font-semibold text-lg text-foreground">{group.name}</h2>
+                    <span className="text-xs text-muted-foreground bg-secondary/60 px-2 py-0.5 rounded-full">{group.items.length}</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3 sm:gap-4">
+                    {group.items.map((vod, i) => (
+                      <motion.button
+                        key={vod.id}
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ delay: i * 0.02 }}
+                        tabIndex={0}
+                        onClick={() => navigate(`/vod/${vod.id}`, { state: { vod } })}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') navigate(`/vod/${vod.id}`, { state: { vod } }); }}
+                        className="group glass-strong rounded-2xl overflow-hidden text-left hover:border-primary/30 transition-all duration-300 cursor-pointer relative tv-focusable"
+                      >
+                        <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 bg-gradient-to-br from-primary/5 to-transparent" />
+                        <div className="relative">
+                          <div className="w-full aspect-[2/3] bg-secondary/60 flex items-center justify-center overflow-hidden">
+                            {vod.poster_url ? (
+                              <img src={vod.poster_url} alt={vod.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                            ) : (
+                              <Film className="w-10 h-10 text-muted-foreground" />
+                            )}
+                          </div>
+                          <div className="p-3">
+                            <p className="font-medium text-foreground text-sm truncate">{vod.title}</p>
+                            <div className="flex items-center gap-2 mt-1">
+                              <span className="text-muted-foreground text-xs truncate">{vod.category}</span>
+                              {vod.duration_minutes && (
+                                <span className="text-muted-foreground text-xs">{vod.duration_minutes} min</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </motion.button>
+                    ))}
+                  </div>
+                </motion.section>
+              ))
+            )}
+          </>
         )}
       </main>
     </div>

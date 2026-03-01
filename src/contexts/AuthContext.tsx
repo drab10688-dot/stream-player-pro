@@ -7,6 +7,7 @@ interface ClientInfo {
   username: string;
   max_screens: number;
   expiry_date: string;
+  vod_enabled: boolean;
 }
 
 // Base URL directa para streams cuando el túnel está en modo hybrid
@@ -29,11 +30,21 @@ interface AdInfo {
   image_url: string | null;
 }
 
+interface VodItem {
+  id: string;
+  title: string;
+  description: string | null;
+  category: string;
+  poster_url: string | null;
+  duration_minutes: number | null;
+}
+
 interface AuthContextType {
   isLoggedIn: boolean;
   client: ClientInfo | null;
   channels: ChannelInfo[];
   ads: AdInfo[];
+  vodItems: VodItem[];
   login: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
   reportChannelError: (channelId: string, errorMessage: string) => void;
@@ -70,6 +81,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [client, setClient] = useState<ClientInfo | null>(null);
   const [channels, setChannels] = useState<ChannelInfo[]>([]);
   const [ads, setAds] = useState<AdInfo[]>([]);
+  const [vodItems, setVodItems] = useState<VodItem[]>([]);
   const heartbeatRef = useRef<ReturnType<typeof setInterval>>();
 
   // Heartbeat - send every 2 minutes to keep connection alive
@@ -256,6 +268,22 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setClient(data.client);
       setChannels(processedChannels);
       setAds(data.ads || []);
+      
+      // Load VOD items if client has VOD enabled
+      if (data.client?.vod_enabled) {
+        try {
+          if (isLovablePreview()) {
+            const { data: vodData } = await supabase.from('vod_items' as any).select('id, title, description, category, poster_url, duration_minutes').eq('is_active', true).order('sort_order', { ascending: true });
+            setVodItems((vodData as any[]) || []);
+          } else {
+            const vodRes = await fetch('/api/vod/public');
+            if (vodRes.ok) setVodItems(await vodRes.json());
+          }
+        } catch { /* ignore */ }
+      } else {
+        setVodItems([]);
+      }
+      
       setIsLoggedIn(true);
       return { success: true };
     } catch (err) {
@@ -270,10 +298,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setClient(null);
     setChannels([]);
     setAds([]);
+    setVodItems([]);
   };
 
   return (
-    <AuthContext.Provider value={{ isLoggedIn, client, channels, ads, login, logout, reportChannelError }}>
+    <AuthContext.Provider value={{ isLoggedIn, client, channels, ads, vodItems, login, logout, reportChannelError }}>
       {children}
     </AuthContext.Provider>
   );

@@ -46,6 +46,7 @@ CREATE TABLE clients (
   notes TEXT,
   plan_id UUID REFERENCES plans(id) ON DELETE SET NULL,
   playlist_token TEXT UNIQUE,
+  vod_enabled BOOLEAN NOT NULL DEFAULT false,
   created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
   updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
 );
@@ -128,6 +129,27 @@ CREATE TRIGGER update_resellers_updated_at
 -- Nota: El primer admin se crea desde la API con /api/admin/setup
 
 -- =============================================
+-- VOD (Películas/Videos bajo demanda)
+-- =============================================
+CREATE TABLE vod_items (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title TEXT NOT NULL,
+  description TEXT,
+  category TEXT NOT NULL DEFAULT 'Películas',
+  poster_url TEXT,
+  video_filename TEXT NOT NULL,
+  duration_minutes INTEGER,
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  sort_order INTEGER DEFAULT 0,
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+  updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
+);
+
+CREATE TRIGGER update_vod_items_updated_at
+  BEFORE UPDATE ON vod_items
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- =============================================
 -- INDICES para rendimiento
 -- =============================================
 CREATE INDEX idx_clients_username ON clients(username);
@@ -140,3 +162,4 @@ CREATE INDEX idx_resellers_username ON resellers(username);
 CREATE INDEX idx_resellers_active ON resellers(is_active);
 CREATE INDEX idx_clients_reseller ON clients(reseller_id);
 CREATE INDEX idx_plans_active ON plans(is_active);
+CREATE INDEX idx_vod_active ON vod_items(is_active);

@@ -5,7 +5,7 @@ import { isLovablePreview } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Plus, Trash2, Edit2, Save, X, Users, UserX, UserCheck, Monitor, Package, Link2, Copy, RefreshCw } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, Users, UserX, UserCheck, Monitor, Package, Link2, Copy, RefreshCw, Film } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { motion } from 'framer-motion';
 import { format } from 'date-fns';
@@ -37,7 +37,7 @@ const ClientsManager = () => {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expandedPlaylist, setExpandedPlaylist] = useState<string | null>(null);
-  const [form, setForm] = useState({ username: '', password: '', max_screens: 1, expiry_date: '', notes: '', plan_id: '' });
+  const [form, setForm] = useState({ username: '', password: '', max_screens: 1, expiry_date: '', notes: '', plan_id: '', vod_enabled: false });
 
   const fetchClients = async () => {
     try {
@@ -83,6 +83,7 @@ const ClientsManager = () => {
       expiry_date: form.expiry_date,
       notes: form.notes.trim() || null,
       plan_id: form.plan_id || null,
+      vod_enabled: form.vod_enabled,
     };
 
     try {
@@ -105,7 +106,7 @@ const ClientsManager = () => {
           toast({ title: 'Cliente creado' });
         }
       }
-      setForm({ username: '', password: '', max_screens: 1, expiry_date: '', notes: '', plan_id: '' });
+      setForm({ username: '', password: '', max_screens: 1, expiry_date: '', notes: '', plan_id: '', vod_enabled: false });
       setShowForm(false);
       setEditingId(null);
       fetchClients();
@@ -122,6 +123,7 @@ const ClientsManager = () => {
       expiry_date: c.expiry_date.split('T')[0],
       notes: c.notes || '',
       plan_id: c.plan_id || '',
+      vod_enabled: (c as any).vod_enabled || false,
     });
     setEditingId(c.id);
     setShowForm(true);
@@ -193,7 +195,7 @@ const ClientsManager = () => {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="font-display font-semibold text-xl text-foreground">Clientes ({clients.length})</h2>
-        <Button onClick={() => { setShowForm(true); setEditingId(null); setForm({ username: '', password: '', max_screens: 1, expiry_date: '', notes: '', plan_id: '' }); }} className="gradient-primary text-primary-foreground gap-2">
+        <Button onClick={() => { setShowForm(true); setEditingId(null); setForm({ username: '', password: '', max_screens: 1, expiry_date: '', notes: '', plan_id: '', vod_enabled: false }); }} className="gradient-primary text-primary-foreground gap-2">
           <Plus className="w-4 h-4" /> Nuevo Cliente
         </Button>
       </div>
@@ -221,7 +223,13 @@ const ClientsManager = () => {
               {plans.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </div>
-          <Input placeholder="Notas (opcional)" value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} className="bg-secondary border-border text-foreground" maxLength={200} />
+          <div className="flex items-center gap-4">
+            <Input placeholder="Notas (opcional)" value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} className="bg-secondary border-border text-foreground flex-1" maxLength={200} />
+            <label className="flex items-center gap-2 cursor-pointer shrink-0">
+              <input type="checkbox" checked={form.vod_enabled} onChange={e => setForm({ ...form, vod_enabled: e.target.checked })} className="w-4 h-4 rounded border-border accent-primary" />
+              <span className="text-sm text-foreground flex items-center gap-1"><Film className="w-3.5 h-3.5" /> VOD</span>
+            </label>
+          </div>
           <div className="flex gap-2 justify-end">
             <Button variant="ghost" onClick={() => { setShowForm(false); setEditingId(null); }} className="text-muted-foreground"><X className="w-4 h-4 mr-1" /> Cancelar</Button>
             <Button onClick={handleSave} className="gradient-primary text-primary-foreground"><Save className="w-4 h-4 mr-1" /> {editingId ? 'Actualizar' : 'Crear'}</Button>
@@ -254,6 +262,11 @@ const ClientsManager = () => {
                       {c.plan_id && plans.find(p => p.id === c.plan_id) && (
                         <Badge variant="secondary" className="text-[10px] py-0 gap-1">
                           <Package className="w-2.5 h-2.5" /> {plans.find(p => p.id === c.plan_id)?.name}
+                        </Badge>
+                      )}
+                      {(c as any).vod_enabled && (
+                        <Badge variant="secondary" className="text-[10px] py-0 gap-1 bg-primary/10 text-primary">
+                          <Film className="w-2.5 h-2.5" /> VOD
                         </Badge>
                       )}
                       {isExpired(c.expiry_date) && <span className="text-destructive font-semibold">EXPIRADO</span>}

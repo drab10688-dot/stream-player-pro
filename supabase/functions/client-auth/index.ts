@@ -78,7 +78,7 @@ serve(async (req) => {
       ]);
 
       return new Response(JSON.stringify({
-        client: { id: client.id, username: client.username, max_screens: client.max_screens, expiry_date: client.expiry_date },
+        client: { id: client.id, username: client.username, max_screens: client.max_screens, expiry_date: client.expiry_date, vod_enabled: (client as any).vod_enabled || false },
         channels: channelsRes.data || [],
         ads: adsRes.data || []
       }), {
