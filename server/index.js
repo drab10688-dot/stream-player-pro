@@ -1166,6 +1166,119 @@ app.get('/api/hls-manifest/:channelId', async (req, res) => {
   }
 });
 
+// =============================================
+// RUTA: DIAGNÓSTICO DE CANAL
+// Prueba la conexión al origen y reporta detalles
+// =============================================
+app.post('/api/channels/diagnose', authAdmin, async (req, res) => {
+  try {
+    const { url, channel_id } = req.body;
+    if (!url) return res.status(400).json({ error: 'URL requerida' });
+
+    const startTime = Date.now();
+    const isHttps = url.startsWith('https');
+    const client = isHttps ? https : http;
+
+    const result = await new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        resolve({
+          status: 'timeout',
+          http_code: null,
+          content_type: null,
+          response_time_ms: Date.now() - startTime,
+          error_message: 'Timeout: El servidor de origen no respondió en 15 segundos',
+          headers: null,
+          details: 'El servidor de origen no responde. Puede estar caído, la URL incorrecta, o bloqueando la IP de este VPS.',
+        });
+      }, 15000);
+
+      const req = client.get(url, { timeout: 15000 }, (response) => {
+        clearTimeout(timeout);
+        const elapsed = Date.now() - startTime;
+        const headers = {};
+        for (const [k, v] of Object.entries(response.headers)) {
+          if (typeof v === 'string') headers[k] = v;
+        }
+        
+        const contentType = response.headers['content-type'] || 'desconocido';
+        const httpCode = response.statusCode;
+        let details = '';
+        
+        if (httpCode >= 200 && httpCode < 300) {
+          details = 'Stream accesible correctamente desde el VPS';
+        } else if (httpCode === 301 || httpCode === 302) {
+          details = `Redirección a: ${response.headers.location || 'desconocido'}. Puede necesitar la URL final.`;
+        } else if (httpCode === 403) {
+          details = 'Acceso denegado (403). La IP del VPS puede estar bloqueada o la URL requiere autenticación.';
+        } else if (httpCode === 404) {
+          details = 'No encontrado (404). La URL del canal puede haber cambiado o ser incorrecta.';
+        } else if (httpCode === 500 || httpCode === 502 || httpCode === 503) {
+          details = `Error del servidor origen (${httpCode}). El proveedor puede tener problemas.`;
+        } else {
+          details = `Respuesta HTTP ${httpCode}`;
+        }
+
+        // Read a small chunk to verify data flows
+        let bytesRead = 0;
+        response.on('data', (chunk) => {
+          bytesRead += chunk.length;
+          if (bytesRead > 4096) {
+            response.destroy(); // Got enough data
+          }
+        });
+
+        response.on('end', () => finalize());
+        response.on('close', () => finalize());
+        
+        let finalized = false;
+        function finalize() {
+          if (finalized) return;
+          finalized = true;
+          
+          if (httpCode >= 200 && httpCode < 300 && bytesRead > 0) {
+            details += ` — Recibidos ${bytesRead} bytes de datos.`;
+          } else if (httpCode >= 200 && httpCode < 300 && bytesRead === 0) {
+            details += ' — ADVERTENCIA: No se recibieron datos. El stream puede estar vacío.';
+          }
+
+          resolve({
+            status: httpCode >= 200 && httpCode < 400 ? 'ok' : 'error',
+            http_code: httpCode,
+            content_type: contentType,
+            response_time_ms: elapsed,
+            error_message: httpCode >= 400 ? `HTTP ${httpCode}: ${details}` : null,
+            headers,
+            details,
+          });
+        }
+      });
+
+      req.on('error', (err) => {
+        clearTimeout(timeout);
+        resolve({
+          status: 'error',
+          http_code: null,
+          content_type: null,
+          response_time_ms: Date.now() - startTime,
+          error_message: `Error de conexión: ${err.message}`,
+          headers: null,
+          details: err.code === 'ECONNREFUSED' 
+            ? 'Conexión rechazada. El servidor de origen no acepta conexiones en ese puerto.'
+            : err.code === 'ENOTFOUND'
+            ? 'DNS no encontrado. El dominio de la URL no existe o no resuelve.'
+            : err.code === 'ETIMEDOUT'
+            ? 'Timeout de conexión. El servidor no responde.'
+            : `Error: ${err.message} (${err.code || 'unknown'})`,
+        });
+      });
+    });
+
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // RUTA: IMPORTAR CANALES DESDE M3U
 // Parsea listas M3U/M3U8 y las agrega como canales
 // =============================================
