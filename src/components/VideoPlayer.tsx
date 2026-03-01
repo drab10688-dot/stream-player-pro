@@ -21,6 +21,7 @@ const getYouTubeId = (url: string): string | null => {
   const patterns = [
     /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/,
     /youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/,
+    /youtube\.com\/live\/([a-zA-Z0-9_-]{11})/,
   ];
   for (const pattern of patterns) {
     const match = url.match(pattern);
@@ -343,10 +344,11 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
       <div className="relative w-full h-full bg-black">
         <iframe
           className="w-full h-full"
-          src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&mute=${muted ? 1 : 0}&rel=0&modestbranding=1`}
+          src={`https://www.youtube-nocookie.com/embed/${youtubeId}?autoplay=1&mute=${muted ? 1 : 0}&rel=0&modestbranding=1&playsinline=1&enablejsapi=1&origin=${window.location.origin}`}
           title="YouTube video"
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
           allowFullScreen
+          referrerPolicy="no-referrer"
           style={{ border: 'none' }}
         />
       </div>
