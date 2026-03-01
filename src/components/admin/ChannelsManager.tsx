@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
+import { supabase } from '@/integrations/supabase/client';
+import { isLovablePreview } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -33,8 +35,17 @@ const ChannelsManager = () => {
 
   const fetchChannels = async () => {
     try {
-      const data = await apiGet('/api/channels');
-      setChannels(data || []);
+      if (isLovablePreview()) {
+        const { data, error } = await supabase
+          .from('channels')
+          .select('*')
+          .order('sort_order');
+        if (error) throw error;
+        setChannels((data as any[]) || []);
+      } else {
+        const data = await apiGet('/api/channels');
+        setChannels(data || []);
+      }
     } catch (err: any) {
       toast({ title: 'Error', description: err.message, variant: 'destructive' });
     }
@@ -50,12 +61,24 @@ const ChannelsManager = () => {
     }
     try {
       const payload = { ...form, logo_url: form.logo_url.trim() || null };
-      if (editingId) {
-        await apiPut(`/api/channels/${editingId}`, payload);
-        toast({ title: 'Canal actualizado' });
+      if (isLovablePreview()) {
+        if (editingId) {
+          const { error } = await supabase.from('channels').update(payload).eq('id', editingId);
+          if (error) throw error;
+          toast({ title: 'Canal actualizado' });
+        } else {
+          const { error } = await supabase.from('channels').insert({ ...payload, is_active: true });
+          if (error) throw error;
+          toast({ title: 'Canal creado' });
+        }
       } else {
-        await apiPost('/api/channels', payload);
-        toast({ title: 'Canal creado' });
+        if (editingId) {
+          await apiPut(`/api/channels/${editingId}`, payload);
+          toast({ title: 'Canal actualizado' });
+        } else {
+          await apiPost('/api/channels', payload);
+          toast({ title: 'Canal creado' });
+        }
       }
       setForm({ name: '', url: '', category: 'General', sort_order: 0, logo_url: '' });
       setShowForm(false);
@@ -74,7 +97,12 @@ const ChannelsManager = () => {
 
   const handleDelete = async (id: string) => {
     try {
-      await apiDelete(`/api/channels/${id}`);
+      if (isLovablePreview()) {
+        const { error } = await supabase.from('channels').delete().eq('id', id);
+        if (error) throw error;
+      } else {
+        await apiDelete(`/api/channels/${id}`);
+      }
       toast({ title: 'Canal eliminado' });
       fetchChannels();
     } catch (err: any) {
@@ -84,7 +112,12 @@ const ChannelsManager = () => {
 
   const toggleActive = async (ch: Channel) => {
     try {
-      await apiPut(`/api/channels/${ch.id}`, { is_active: !ch.is_active });
+      if (isLovablePreview()) {
+        const { error } = await supabase.from('channels').update({ is_active: !ch.is_active }).eq('id', ch.id);
+        if (error) throw error;
+      } else {
+        await apiPut(`/api/channels/${ch.id}`, { is_active: !ch.is_active });
+      }
       fetchChannels();
     } catch (err: any) {
       toast({ title: 'Error', description: err.message, variant: 'destructive' });
@@ -93,6 +126,11 @@ const ChannelsManager = () => {
 
   const toggleKeepAlive = async (ch: Channel) => {
     try {
+      if (isLovablePreview()) {
+        // keep_alive not in supabase schema, skip
+        toast({ title: 'Keep Alive solo disponible en VPS', variant: 'destructive' });
+        return;
+      }
       await apiPut(`/api/channels/${ch.id}`, { keep_alive: !ch.keep_alive });
       toast({ 
         title: !ch.keep_alive ? '💚 Keep Alive activado' : 'Keep Alive desactivado',
@@ -113,14 +151,19 @@ const ChannelsManager = () => {
     }
     setImporting(true);
     try {
-      const data = await apiPost('/api/channels/import-m3u', {
-        m3u_content: m3uContent.trim() || undefined,
-        m3u_url: m3uUrl.trim() || undefined,
-      });
-      toast({
-        title: '¡Importación completada!',
-        description: `${data.imported} de ${data.total} canales importados`,
-      });
+      if (isLovablePreview()) {
+        const { data, error } = await supabase.functions.invoke('import-m3u', {
+          body: { m3u_content: m3uContent.trim() || undefined, m3u_url: m3uUrl.trim() || undefined },
+        });
+        if (error) throw error;
+        toast({ title: '¡Importación completada!', description: `${data.imported} de ${data.total} canales importados` });
+      } else {
+        const data = await apiPost('/api/channels/import-m3u', {
+          m3u_content: m3uContent.trim() || undefined,
+          m3u_url: m3uUrl.trim() || undefined,
+        });
+        toast({ title: '¡Importación completada!', description: `${data.imported} de ${data.total} canales importados` });
+      }
       setM3uContent('');
       setM3uUrl('');
       setShowM3UImport(false);
@@ -245,14 +288,16 @@ const ChannelsManager = () => {
                 </div>
               </div>
               <div className="flex items-center gap-1 shrink-0">
-                <div className="flex items-center gap-1.5 mr-2" title={ch.keep_alive ? 'Keep Alive: ON - Siempre conectado' : 'Keep Alive: OFF - Bajo demanda'}>
-                  <Zap className={`w-3.5 h-3.5 ${ch.keep_alive ? 'text-green-500' : 'text-muted-foreground/40'}`} />
-                  <Switch 
-                    checked={ch.keep_alive} 
-                    onCheckedChange={() => toggleKeepAlive(ch)} 
-                    className="scale-75"
-                  />
-                </div>
+                {!isLovablePreview() && (
+                  <div className="flex items-center gap-1.5 mr-2" title={ch.keep_alive ? 'Keep Alive: ON - Siempre conectado' : 'Keep Alive: OFF - Bajo demanda'}>
+                    <Zap className={`w-3.5 h-3.5 ${ch.keep_alive ? 'text-green-500' : 'text-muted-foreground/40'}`} />
+                    <Switch 
+                      checked={ch.keep_alive} 
+                      onCheckedChange={() => toggleKeepAlive(ch)} 
+                      className="scale-75"
+                    />
+                  </div>
+                )}
                 <Button variant="ghost" size="sm" onClick={() => toggleActive(ch)} className="text-xs text-muted-foreground">
                   {ch.is_active ? 'Desactivar' : 'Activar'}
                 </Button>

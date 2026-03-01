@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import { apiGet } from '@/lib/api';
+import { supabase } from '@/integrations/supabase/client';
+import { isLovablePreview } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { Users, UserCheck, UserX, Clock, Tv, Store, Megaphone, Wifi, AlertTriangle } from 'lucide-react';
 import { motion } from 'framer-motion';
@@ -16,6 +18,7 @@ interface Stats {
   clients_by_month: { month: string; count: number }[];
   categories: { category: string; count: number }[];
 }
+
 
 const COLORS = [
   'hsl(175, 85%, 50%)',
@@ -54,16 +57,67 @@ const AdminStats = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const fetch = async () => {
+    const fetchStats = async () => {
       try {
-        const data = await apiGet('/api/stats');
-        setStats(data);
+        if (isLovablePreview()) {
+          // Build stats from Supabase directly
+          const [clientsRes, channelsRes, resellersRes, adsRes, connectionsRes] = await Promise.all([
+            supabase.from('clients').select('id, username, is_active, expiry_date, created_at'),
+            supabase.from('channels').select('id, is_active, category'),
+            supabase.from('resellers').select('id, is_active'),
+            supabase.from('ads').select('id, is_active'),
+            supabase.from('active_connections').select('id'),
+          ]);
+
+          const clients = clientsRes.data || [];
+          const channels = channelsRes.data || [];
+          const resellers = resellersRes.data || [];
+          const ads = adsRes.data || [];
+          const connections = connectionsRes.data || [];
+
+          const now = new Date();
+          const sevenDays = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+          const active = clients.filter(c => c.is_active && new Date(c.expiry_date) > now).length;
+          const expired = clients.filter(c => new Date(c.expiry_date) <= now).length;
+          const suspended = clients.filter(c => !c.is_active).length;
+          const expiring_soon = clients.filter(c => c.is_active && new Date(c.expiry_date) > now && new Date(c.expiry_date) <= sevenDays).length;
+
+          // Group by month
+          const byMonth: Record<string, number> = {};
+          clients.forEach(c => {
+            const m = c.created_at.substring(0, 7);
+            byMonth[m] = (byMonth[m] || 0) + 1;
+          });
+
+          // Group by category
+          const byCat: Record<string, number> = {};
+          channels.forEach((ch: any) => {
+            byCat[ch.category] = (byCat[ch.category] || 0) + 1;
+          });
+
+          setStats({
+            clients: { total: clients.length, active, expired, suspended, expiring_soon },
+            resellers: { total: resellers.length, active: resellers.filter((r: any) => r.is_active).length },
+            channels: { total: channels.length, active: channels.filter((ch: any) => ch.is_active).length },
+            ads_active: ads.filter((a: any) => a.is_active).length,
+            connections_now: connections.length,
+            recent_clients: clients.slice(-5).reverse().map((c: any) => ({
+              id: c.id, username: c.username, is_active: c.is_active, expiry_date: c.expiry_date, created_at: c.created_at,
+            })),
+            clients_by_month: Object.entries(byMonth).sort().map(([month, count]) => ({ month, count })),
+            categories: Object.entries(byCat).map(([category, count]) => ({ category, count })),
+          });
+        } else {
+          const data = await apiGet('/api/stats');
+          setStats(data);
+        }
       } catch (err: any) {
         toast({ title: 'Error', description: err.message, variant: 'destructive' });
       }
       setLoading(false);
     };
-    fetch();
+    fetchStats();
   }, []);
 
   if (loading) {
@@ -88,7 +142,6 @@ const AdminStats = () => {
 
   return (
     <div className="space-y-6">
-      {/* Stat Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         <StatCard icon={Users} label="Clientes Total" value={stats.clients.total} />
         <StatCard icon={UserCheck} label="Activos" value={stats.clients.active} color="success" />
@@ -104,9 +157,7 @@ const AdminStats = () => {
         <StatCard icon={Clock} label="Suspendidos" value={stats.clients.suspended} color="destructive" />
       </div>
 
-      {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Bar Chart - Clientes por Mes */}
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="glass rounded-xl p-5">
           <h3 className="text-sm font-semibold text-foreground mb-4">Nuevos Clientes por Mes</h3>
           {chartData.length > 0 ? (
@@ -126,7 +177,6 @@ const AdminStats = () => {
           )}
         </motion.div>
 
-        {/* Pie Chart - Categorías */}
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="glass rounded-xl p-5">
           <h3 className="text-sm font-semibold text-foreground mb-4">Canales por Categoría</h3>
           {stats.categories.length > 0 ? (
@@ -159,7 +209,6 @@ const AdminStats = () => {
         </motion.div>
       </div>
 
-      {/* Recent Clients */}
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="glass rounded-xl p-5">
         <h3 className="text-sm font-semibold text-foreground mb-4">Últimos Clientes Registrados</h3>
         {stats.recent_clients.length > 0 ? (
