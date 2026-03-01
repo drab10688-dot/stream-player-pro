@@ -214,10 +214,10 @@ app.get('/api/ads/public', async (req, res) => {
 });
 
 app.post('/api/channels', authAdmin, async (req, res) => {
-  const { name, url, category, sort_order } = req.body;
+  const { name, url, category, sort_order, logo_url } = req.body;
   const { rows } = await pool.query(
-    'INSERT INTO channels (name, url, category, sort_order) VALUES ($1, $2, $3, $4) RETURNING *',
-    [name, url, category || 'General', sort_order || 0]
+    'INSERT INTO channels (name, url, category, sort_order, logo_url) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+    [name, url, category || 'General', sort_order || 0, logo_url || null]
   );
   res.json(rows[0]);
 });
@@ -234,10 +234,11 @@ app.put('/api/channels/:id', authAdmin, async (req, res) => {
     const sort_order = req.body.sort_order !== undefined ? req.body.sort_order : c.sort_order;
     const is_active = req.body.is_active !== undefined ? req.body.is_active : c.is_active;
     const keep_alive = req.body.keep_alive !== undefined ? req.body.keep_alive : c.keep_alive;
+    const logo_url = req.body.logo_url !== undefined ? req.body.logo_url : c.logo_url;
 
     const { rows } = await pool.query(
-      'UPDATE channels SET name=$1, url=$2, category=$3, sort_order=$4, is_active=$5, keep_alive=$6 WHERE id=$7 RETURNING *',
-      [name, url, category, sort_order, is_active, keep_alive, req.params.id]
+      'UPDATE channels SET name=$1, url=$2, category=$3, sort_order=$4, is_active=$5, keep_alive=$6, logo_url=$7 WHERE id=$8 RETURNING *',
+      [name, url, category, sort_order, is_active, keep_alive, logo_url, req.params.id]
     );
 
     // If keep_alive was toggled ON, start the transcoder immediately
