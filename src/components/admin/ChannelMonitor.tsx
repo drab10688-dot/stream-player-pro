@@ -385,50 +385,6 @@ const ChannelMonitor = () => {
         )}
       </div>
 
-      {/* VPN MikroTik Guide */}
-      <div className="glass-strong rounded-2xl p-5 border border-border/30">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
-            <ShieldCheck className="w-5 h-5 text-primary" />
-          </div>
-          <div>
-            <h3 className="font-semibold text-foreground">VPN MikroTik → VPS</h3>
-            <span className="text-xs text-muted-foreground">Guía de configuración para enrutar canales por VPN</span>
-          </div>
-        </div>
-        <div className="rounded-xl bg-secondary/20 p-4 space-y-3 text-sm text-muted-foreground">
-          <p><strong className="text-foreground">1. Configurar WireGuard en MikroTik:</strong></p>
-          <pre className="bg-background/50 rounded-lg p-3 text-xs overflow-x-auto font-mono">{`/interface wireguard add name=wg-vps listen-port=13231
-/interface wireguard peers add interface=wg-vps \\
-  public-key="CLAVE_PUBLICA_VPS" \\
-  endpoint-address=IP_VPS:51820 \\
-  allowed-address=10.10.10.0/24
-/ip address add address=10.10.10.2/24 interface=wg-vps`}</pre>
-
-          <p><strong className="text-foreground">2. En el VPS (Ubuntu):</strong></p>
-          <pre className="bg-background/50 rounded-lg p-3 text-xs overflow-x-auto font-mono">{`sudo apt install wireguard
-wg genkey | tee /etc/wireguard/private.key | wg pubkey > /etc/wireguard/public.key
-
-# /etc/wireguard/wg0.conf
-[Interface]
-Address = 10.10.10.1/24
-ListenPort = 51820
-PrivateKey = CLAVE_PRIVADA_VPS
-
-[Peer]
-PublicKey = CLAVE_PUBLICA_MIKROTIK
-AllowedIPs = 10.10.10.2/32
-
-sudo systemctl enable wg-quick@wg0
-sudo systemctl start wg-quick@wg0`}</pre>
-
-          <p><strong className="text-foreground">3. Enrutar canales por la VPN:</strong></p>
-          <p>Usa las IPs internas de la VPN (10.10.10.x) como URLs de los canales en la plataforma. El tráfico pasará automáticamente por el túnel WireGuard.</p>
-
-          <p><strong className="text-foreground">4. DNS en MikroTik (opcional):</strong></p>
-          <pre className="bg-background/50 rounded-lg p-3 text-xs overflow-x-auto font-mono">{`/ip dns static add name=stream.local address=10.10.10.1`}</pre>
-        </div>
-      </div>
     </div>
   );
 };
