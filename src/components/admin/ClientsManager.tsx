@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
 import { supabase } from '@/integrations/supabase/client';
+import { isLovablePreview } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -38,8 +39,14 @@ const ClientsManager = () => {
 
   const fetchClients = async () => {
     try {
-      const data = await apiGet('/api/clients');
-      setClients(data || []);
+      if (isLovablePreview()) {
+        const { data, error } = await supabase.from('clients').select('*').order('created_at', { ascending: false });
+        if (error) throw error;
+        setClients((data as any[]) || []);
+      } else {
+        const data = await apiGet('/api/clients');
+        setClients(data || []);
+      }
     } catch (err: any) {
       toast({ title: 'Error', description: err.message, variant: 'destructive' });
     }
@@ -68,12 +75,24 @@ const ClientsManager = () => {
     };
 
     try {
-      if (editingId) {
-        await apiPut(`/api/clients/${editingId}`, payload);
-        toast({ title: 'Cliente actualizado' });
+      if (isLovablePreview()) {
+        if (editingId) {
+          const { error } = await supabase.from('clients').update(payload).eq('id', editingId);
+          if (error) throw error;
+          toast({ title: 'Cliente actualizado' });
+        } else {
+          const { error } = await supabase.from('clients').insert({ ...payload, is_active: true });
+          if (error) throw error;
+          toast({ title: 'Cliente creado' });
+        }
       } else {
-        await apiPost('/api/clients', { ...payload, is_active: true });
-        toast({ title: 'Cliente creado' });
+        if (editingId) {
+          await apiPut(`/api/clients/${editingId}`, payload);
+          toast({ title: 'Cliente actualizado' });
+        } else {
+          await apiPost('/api/clients', { ...payload, is_active: true });
+          toast({ title: 'Cliente creado' });
+        }
       }
       setForm({ username: '', password: '', max_screens: 1, expiry_date: '', notes: '', plan_id: '' });
       setShowForm(false);
@@ -99,7 +118,12 @@ const ClientsManager = () => {
 
   const toggleActive = async (c: Client) => {
     try {
-      await apiPut(`/api/clients/${c.id}`, { is_active: !c.is_active });
+      if (isLovablePreview()) {
+        const { error } = await supabase.from('clients').update({ is_active: !c.is_active }).eq('id', c.id);
+        if (error) throw error;
+      } else {
+        await apiPut(`/api/clients/${c.id}`, { is_active: !c.is_active });
+      }
       fetchClients();
       toast({ title: c.is_active ? 'Cliente suspendido' : 'Cliente activado' });
     } catch (err: any) {
@@ -109,7 +133,12 @@ const ClientsManager = () => {
 
   const handleDelete = async (id: string) => {
     try {
-      await apiDelete(`/api/clients/${id}`);
+      if (isLovablePreview()) {
+        const { error } = await supabase.from('clients').delete().eq('id', id);
+        if (error) throw error;
+      } else {
+        await apiDelete(`/api/clients/${id}`);
+      }
       toast({ title: 'Cliente eliminado' });
       fetchClients();
     } catch (err: any) {

@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { isLovablePreview } from '@/lib/utils';
 
 interface ClientInfo {
   id: string;
@@ -63,10 +64,6 @@ const getDeviceId = () => {
   return id;
 };
 
-const isLovablePreview = () => {
-  const host = window.location.hostname;
-  return host.includes('lovable.app') || host.includes('lovable.dev') || host === 'localhost';
-};
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
