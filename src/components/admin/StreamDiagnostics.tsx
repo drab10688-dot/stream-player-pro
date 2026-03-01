@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { apiGet, apiPost } from '@/lib/api';
 import { useToast } from '@/hooks/use-toast';
-import { Bug, Play, RefreshCw, AlertTriangle, CheckCircle, XCircle, Search, Wifi, Clock, FileText } from 'lucide-react';
+import { Bug, Play, RefreshCw, AlertTriangle, CheckCircle, XCircle, Search, Wifi, Clock, FileText, Copy, ClipboardCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { motion } from 'framer-motion';
@@ -44,6 +44,7 @@ const StreamDiagnostics = () => {
   const [search, setSearch] = useState('');
   const [testing, setTesting] = useState(false);
   const [testingAll, setTestingAll] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     fetchChannels();
@@ -174,6 +175,61 @@ const StreamDiagnostics = () => {
     toast({ title: 'Diagnóstico completo', description: `Se probaron ${activeChannels.length} canales` });
   };
 
+  const generateReport = () => {
+    const allResults = Array.from(results.values()).filter(r => r.status !== 'testing');
+    if (allResults.length === 0) {
+      toast({ title: 'Sin datos', description: 'Primero ejecuta el diagnóstico', variant: 'destructive' });
+      return;
+    }
+
+    const now = new Date().toLocaleString();
+    const ok = allResults.filter(r => r.status === 'ok');
+    const errors = allResults.filter(r => r.status === 'error');
+    const timeouts = allResults.filter(r => r.status === 'timeout');
+
+    let report = `📋 REPORTE DE DIAGNÓSTICO DE STREAMS\n`;
+    report += `📅 Fecha: ${now}\n`;
+    report += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    report += `✅ OK: ${ok.length} | ❌ Error: ${errors.length} | ⏱ Timeout: ${timeouts.length} | Total: ${allResults.length}\n\n`;
+
+    if (errors.length > 0 || timeouts.length > 0) {
+      report += `🔴 CANALES CON PROBLEMAS:\n`;
+      report += `──────────────────────────\n`;
+      [...errors, ...timeouts].forEach(r => {
+        report += `\n▸ ${r.channel_name}\n`;
+        report += `  URL: ${r.url}\n`;
+        report += `  Estado: ${r.status.toUpperCase()}`;
+        if (r.http_code) report += ` | HTTP ${r.http_code}`;
+        if (r.response_time_ms) report += ` | ${r.response_time_ms}ms`;
+        report += `\n`;
+        if (r.content_type) report += `  Content-Type: ${r.content_type}\n`;
+        report += `  Formato: ${r.stream_type}\n`;
+        if (r.error_message) report += `  Error: ${r.error_message}\n`;
+        if (r.details) report += `  Detalle: ${r.details}\n`;
+      });
+    }
+
+    if (ok.length > 0) {
+      report += `\n🟢 CANALES OK:\n`;
+      report += `──────────────────────────\n`;
+      ok.forEach(r => {
+        report += `▸ ${r.channel_name} — HTTP ${r.http_code || '?'} | ${r.response_time_ms}ms | ${r.stream_type}\n`;
+      });
+    }
+
+    report += `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    report += `Fin del reporte`;
+
+    navigator.clipboard.writeText(report).then(() => {
+      setCopied(true);
+      toast({ title: 'Reporte copiado', description: 'Pégalo en el chat para que lo revise' });
+      setTimeout(() => setCopied(false), 3000);
+    }).catch(() => {
+      // Fallback: show in a prompt
+      prompt('Copia este reporte:', report);
+    });
+  };
+
   const filteredChannels = channels.filter(c => 
     c.name.toLowerCase().includes(search.toLowerCase()) || 
     c.category.toLowerCase().includes(search.toLowerCase())
@@ -214,15 +270,27 @@ const StreamDiagnostics = () => {
           <Bug className="w-5 h-5 text-primary" />
           Diagnóstico de Streams
         </h2>
-        <Button 
-          onClick={testAllChannels} 
-          disabled={testingAll} 
-          className="gap-2 gradient-primary text-primary-foreground"
-          size="sm"
-        >
-          {testingAll ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-          {testingAll ? `Probando... (${stats.testing} restantes)` : 'Probar Todos'}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button 
+            onClick={generateReport} 
+            disabled={results.size === 0 || testingAll}
+            variant="outline"
+            size="sm"
+            className="gap-2 border-border text-foreground"
+          >
+            {copied ? <ClipboardCheck className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+            {copied ? 'Copiado!' : 'Generar Reporte'}
+          </Button>
+          <Button 
+            onClick={testAllChannels} 
+            disabled={testingAll} 
+            className="gap-2 gradient-primary text-primary-foreground"
+            size="sm"
+          >
+            {testingAll ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+            {testingAll ? `Probando... (${stats.testing} restantes)` : 'Probar Todos'}
+          </Button>
+        </div>
       </div>
 
       {/* Summary */}
