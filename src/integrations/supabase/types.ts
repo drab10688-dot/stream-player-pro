@@ -153,6 +153,7 @@ export type Database = {
           max_screens: number
           notes: string | null
           password: string
+          plan_id: string | null
           reseller_id: string | null
           updated_at: string
           username: string
@@ -165,6 +166,7 @@ export type Database = {
           max_screens?: number
           notes?: string | null
           password: string
+          plan_id?: string | null
           reseller_id?: string | null
           updated_at?: string
           username: string
@@ -177,11 +179,19 @@ export type Database = {
           max_screens?: number
           notes?: string | null
           password?: string
+          plan_id?: string | null
           reseller_id?: string | null
           updated_at?: string
           username?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "clients_plan_id_fkey"
+            columns: ["plan_id"]
+            isOneToOne: false
+            referencedRelation: "plans"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "clients_reseller_id_fkey"
             columns: ["reseller_id"]
@@ -190,6 +200,42 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      plans: {
+        Row: {
+          categories: string[]
+          created_at: string
+          description: string | null
+          id: string
+          is_active: boolean
+          name: string
+          price: number | null
+          sort_order: number | null
+          updated_at: string
+        }
+        Insert: {
+          categories?: string[]
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          name: string
+          price?: number | null
+          sort_order?: number | null
+          updated_at?: string
+        }
+        Update: {
+          categories?: string[]
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          name?: string
+          price?: number | null
+          sort_order?: number | null
+          updated_at?: string
+        }
+        Relationships: []
       }
       resellers: {
         Row: {
@@ -233,6 +279,48 @@ export type Database = {
           phone?: string | null
           updated_at?: string
           username?: string
+        }
+        Relationships: []
+      }
+      system_backups: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          file_path: string | null
+          file_size: number | null
+          id: string
+          includes_config: boolean
+          includes_db: boolean
+          name: string
+          notes: string | null
+          status: string
+          type: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          file_path?: string | null
+          file_size?: number | null
+          id?: string
+          includes_config?: boolean
+          includes_db?: boolean
+          name: string
+          notes?: string | null
+          status?: string
+          type?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          file_path?: string | null
+          file_size?: number | null
+          id?: string
+          includes_config?: boolean
+          includes_db?: boolean
+          name?: string
+          notes?: string | null
+          status?: string
+          type?: string
         }
         Relationships: []
       }
