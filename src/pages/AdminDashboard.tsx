@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAdminAuth } from '@/contexts/AdminAuthContext';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Tv, Users, Megaphone, Store, LogOut, LayoutDashboard, Bell, Activity, Globe, Radio, Bug } from 'lucide-react';
+import { Tv, Users, Megaphone, Store, LogOut, LayoutDashboard, Bell, Activity, Globe, Radio, Bug, Package, HardDrive } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import AdminStats from '@/components/admin/AdminStats';
 import ChannelsManager from '@/components/admin/ChannelsManager';
@@ -14,6 +14,8 @@ import ChannelMonitor from '@/components/admin/ChannelMonitor';
 import TunnelManager from '@/components/admin/TunnelManager';
 import StreamMonitor from '@/components/admin/StreamMonitor';
 import StreamDiagnostics from '@/components/admin/StreamDiagnostics';
+import PlansManager from '@/components/admin/PlansManager';
+import BackupManager from '@/components/admin/BackupManager';
 import omnisyncLogo from '@/assets/omnisync-logo.png';
 
 const AdminDashboard = () => {
@@ -93,6 +95,12 @@ const AdminDashboard = () => {
             <TabsTrigger value="diagnostics" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
               <Bug className="w-4 h-4" /> Diagnóstico
             </TabsTrigger>
+            <TabsTrigger value="plans" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
+              <Package className="w-4 h-4" /> Planes
+            </TabsTrigger>
+            <TabsTrigger value="backups" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
+              <HardDrive className="w-4 h-4" /> Backups
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="dashboard"><AdminStats /></TabsContent>
@@ -105,6 +113,8 @@ const AdminDashboard = () => {
           <TabsContent value="tunnel"><TunnelManager /></TabsContent>
           <TabsContent value="streams"><StreamMonitor /></TabsContent>
           <TabsContent value="diagnostics"><StreamDiagnostics /></TabsContent>
+          <TabsContent value="plans"><PlansManager /></TabsContent>
+          <TabsContent value="backups"><BackupManager /></TabsContent>
         </Tabs>
       </main>
     </div>
