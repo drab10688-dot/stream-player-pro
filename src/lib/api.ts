@@ -1,5 +1,14 @@
 // Helper para llamadas a la API local del VPS (Node.js)
-const API_BASE = import.meta.env.VITE_LOCAL_API_URL || '';
+// En producción con túnel HTTPS, siempre usar URLs relativas para evitar mixed-content
+const getApiBase = () => {
+  const envBase = import.meta.env.VITE_LOCAL_API_URL || '';
+  // Si estamos en HTTPS (túnel Cloudflare, dominio propio) y la API apunta a HTTP, usar relativa
+  if (typeof window !== 'undefined' && window.location.protocol === 'https:' && envBase.startsWith('http://')) {
+    return '';
+  }
+  return envBase;
+};
+const API_BASE = getApiBase();
 
 export const getAdminToken = () => localStorage.getItem('admin_token');
 export const setAdminToken = (token: string) => localStorage.setItem('admin_token', token);
