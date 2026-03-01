@@ -395,7 +395,7 @@ const PlayerPage = () => {
       {/* Channel List Sidebar */}
       <div
         ref={channelListRef}
-        className={`fixed lg:absolute right-0 top-0 bottom-0 w-80 sm:w-96 z-30 bg-background/95 backdrop-blur-xl border-l border-border/30 transition-transform duration-300 ${
+        className={`fixed right-0 top-0 bottom-0 w-80 sm:w-96 z-30 bg-background/95 backdrop-blur-xl border-l border-border/30 transition-transform duration-300 ${
           showList ? 'translate-x-0' : 'translate-x-full'
         }`}
       >
@@ -454,7 +454,7 @@ const PlayerPage = () => {
 
       {/* Overlay backdrop */}
       {showList && (
-        <div className="fixed inset-0 bg-black/50 z-20 lg:hidden" onClick={() => setShowList(false)} />
+        <div className="fixed inset-0 bg-black/50 z-20" onClick={() => setShowList(false)} />
       )}
     </div>
   );
