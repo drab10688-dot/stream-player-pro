@@ -10,6 +10,7 @@ const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 const crypto = require('crypto');
+const { spawn } = require('child_process');
 
 const app = express();
 app.use(cors());
@@ -600,9 +601,7 @@ app.get('/api/validate-stream', async (req, res) => {
 // FFmpeg transcodifica TS → HLS con segmentos en disco
 // HLS nativo se proxea con caché de segmentos
 // =============================================
-const { spawn } = require('child_process');
-const fs = require('fs');
-const path = require('path');
+// child_process, fs, path ya importados arriba
 
 const HLS_DIR = '/tmp/streambox-hls';
 const HLS_CACHE_DIR = '/tmp/streambox-cache';
