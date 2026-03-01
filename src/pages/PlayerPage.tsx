@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { ArrowLeft, Volume2, VolumeX, List, Search, Play, Bell, Hash, Menu, ChevronUp, ChevronDown } from 'lucide-react';
+import { ArrowLeft, Volume2, VolumeX, List, Search, Play, Bell, Hash, Menu, ChevronUp, ChevronDown, Maximize, Minimize } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -30,6 +30,8 @@ const PlayerPage = () => {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const channelListRef = useRef<HTMLDivElement>(null);
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   const activeAds = ads.filter(ad => ad.title || ad.message);
   const currentAd = activeAds.length > 0 ? activeAds[currentAdIndex % activeAds.length] : null;
@@ -77,6 +79,40 @@ const PlayerPage = () => {
     resetHideTimer();
     return () => { if (hideTimerRef.current) clearTimeout(hideTimerRef.current); };
   }, [resetHideTimer]);
+
+  // Fullscreen toggle on the container (keeps overlays visible)
+  const toggleFullscreen = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    } else {
+      el.requestFullscreen().catch(() => {});
+    }
+  }, []);
+
+  // Track fullscreen state
+  useEffect(() => {
+    const handler = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', handler);
+    return () => document.removeEventListener('fullscreenchange', handler);
+  }, []);
+
+  // Auto-fullscreen on mobile landscape
+  useEffect(() => {
+    const mql = window.matchMedia('(orientation: landscape) and (max-height: 500px)');
+    const handler = (e: MediaQueryListEvent | MediaQueryList) => {
+      if (e.matches && containerRef.current && !document.fullscreenElement) {
+        containerRef.current.requestFullscreen().catch(() => {});
+      }
+    };
+    mql.addEventListener('change', handler as (e: MediaQueryListEvent) => void);
+    // Check on mount
+    if (mql.matches && containerRef.current && !document.fullscreenElement) {
+      containerRef.current.requestFullscreen().catch(() => {});
+    }
+    return () => mql.removeEventListener('change', handler as (e: MediaQueryListEvent) => void);
+  }, []);
 
   useEffect(() => {
     if (showList || showSearch) {
@@ -237,6 +273,7 @@ const PlayerPage = () => {
 
   return (
     <div
+      ref={containerRef}
       className="min-h-screen bg-black flex flex-col lg:flex-row relative touch-pan-y"
       onMouseMove={resetHideTimer}
       onTouchStart={handleTouchStart}
@@ -275,6 +312,9 @@ const PlayerPage = () => {
             </Button>
             <Button variant="ghost" size="icon" onClick={() => setMuted(!muted)} className="h-11 w-11 sm:h-12 sm:w-12 rounded-xl hover:bg-white/10 text-white tv-focusable" tabIndex={0}>
               {muted ? <VolumeX className="w-5 h-5 sm:w-6 sm:h-6 text-white/60" /> : <Volume2 className="w-5 h-5 sm:w-6 sm:h-6" />}
+            </Button>
+            <Button variant="ghost" size="icon" onClick={toggleFullscreen} className="h-11 w-11 sm:h-12 sm:w-12 rounded-xl hover:bg-white/10 text-white tv-focusable" tabIndex={0}>
+              {isFullscreen ? <Minimize className="w-5 h-5 sm:w-6 sm:h-6" /> : <Maximize className="w-5 h-5 sm:w-6 sm:h-6" />}
             </Button>
             <Button variant="ghost" size="icon" onClick={() => setShowList(!showList)} className="h-11 w-11 sm:h-12 sm:w-12 rounded-xl hover:bg-white/10 text-white tv-focusable" tabIndex={0}>
               <List className="w-5 h-5 sm:w-6 sm:h-6" />
@@ -364,7 +404,7 @@ const PlayerPage = () => {
         </div>
 
         {/* Video Player */}
-        <div className="flex-1 relative bg-black min-h-[100vh] lg:min-h-0">
+        <div className="flex-1 relative bg-black min-h-[60vh]">
           <VideoPlayer
             src={selectedChannel.url}
             channelId={selectedChannel.id}
@@ -433,7 +473,17 @@ const PlayerPage = () => {
                   selectedChannel.id === ch.id ? 'bg-primary/20' : 'bg-white/10'
                 }`}>
                   {ch.logo_url ? (
-                    <img src={ch.logo_url} alt="" className="w-full h-full object-cover rounded-lg" onError={(e) => { const img = e.target as HTMLImageElement; img.style.display = 'none'; }} />
+                    <img 
+                      src={ch.logo_url} 
+                      alt="" 
+                      className="w-full h-full object-contain rounded-lg bg-white/5" 
+                      onError={(e) => { 
+                        const img = e.target as HTMLImageElement; 
+                        img.style.display = 'none'; 
+                        const next = img.nextElementSibling as HTMLElement;
+                        if (next) next.classList.remove('hidden');
+                      }} 
+                    />
                   ) : null}
                   <Play className={`w-4 h-4 ${selectedChannel.id === ch.id ? 'text-primary' : 'text-white/50'} ${ch.logo_url ? 'hidden' : ''}`} />
                 </div>
