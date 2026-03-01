@@ -30,6 +30,7 @@ CREATE TABLE channels (
   category TEXT NOT NULL DEFAULT 'General',
   logo_url TEXT,
   is_active BOOLEAN NOT NULL DEFAULT true,
+  keep_alive BOOLEAN NOT NULL DEFAULT false,
   sort_order INTEGER DEFAULT 0,
   created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
 );

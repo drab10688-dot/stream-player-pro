@@ -233,11 +233,26 @@ app.put('/api/channels/:id', authAdmin, async (req, res) => {
     const category = req.body.category !== undefined ? req.body.category : c.category;
     const sort_order = req.body.sort_order !== undefined ? req.body.sort_order : c.sort_order;
     const is_active = req.body.is_active !== undefined ? req.body.is_active : c.is_active;
+    const keep_alive = req.body.keep_alive !== undefined ? req.body.keep_alive : c.keep_alive;
 
     const { rows } = await pool.query(
-      'UPDATE channels SET name=$1, url=$2, category=$3, sort_order=$4, is_active=$5 WHERE id=$6 RETURNING *',
-      [name, url, category, sort_order, is_active, req.params.id]
+      'UPDATE channels SET name=$1, url=$2, category=$3, sort_order=$4, is_active=$5, keep_alive=$6 WHERE id=$7 RETURNING *',
+      [name, url, category, sort_order, is_active, keep_alive, req.params.id]
     );
+
+    // If keep_alive was toggled ON, start the transcoder immediately
+    if (keep_alive && !c.keep_alive && is_active) {
+      startKeepAliveChannel(req.params.id, url);
+    }
+    // If keep_alive was toggled OFF, let normal grace period apply
+    if (!keep_alive && c.keep_alive) {
+      const entry = activeTranscoders.get(req.params.id);
+      if (entry) {
+        entry.keepAlive = false;
+        if (entry.clients <= 0) releaseTranscoder(req.params.id);
+      }
+    }
+
     res.json(rows[0]);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -860,12 +875,18 @@ function releaseTranscoder(channelId) {
 
   entry.clients--;
   if (entry.clients <= 0) {
+    // Keep alive channels NEVER stop
+    if (entry.keepAlive) {
+      entry.clients = 0; // Floor at 0
+      console.log(`💚 [${channelId}] Keep-alive activo, FFmpeg permanece encendido`);
+      return;
+    }
     // Esperar 30 segundos antes de matar, por si alguien vuelve
     setTimeout(() => {
       const current = activeTranscoders.get(channelId);
-      if (current && current.clients <= 0) {
+      if (current && current.clients <= 0 && !current.keepAlive) {
         console.log(`🔴 [${channelId}] Sin clientes, deteniendo FFmpeg`);
-        if (current.type === 'ffmpeg' && current.ffmpeg) {
+        if ((current.type === 'ffmpeg' || current.type === 'ffmpeg-adaptive') && current.ffmpeg) {
           current.ffmpeg.kill('SIGTERM');
         }
         activeTranscoders.delete(channelId);
@@ -874,6 +895,71 @@ function releaseTranscoder(channelId) {
     }, 30000);
   }
 }
+
+// =============================================
+// KEEP ALIVE: Iniciar canal persistente
+// =============================================
+function startKeepAliveChannel(channelId, sourceUrl) {
+  const isHLS = /\.m3u8?(\?|$)/i.test(sourceUrl);
+  const isYouTube = /youtube\.com|youtu\.be/.test(sourceUrl);
+  
+  if (isYouTube) return; // YouTube no necesita keep_alive
+  
+  if (isHLS) {
+    const entry = startHLSProxy(channelId, sourceUrl);
+    if (entry) {
+      entry.keepAlive = true;
+      entry.clients = 0; // No hay clientes reales aún
+      console.log(`💚 [${channelId}] Keep-alive HLS proxy iniciado`);
+    }
+  } else {
+    const entry = startFFmpegTranscoder(channelId, sourceUrl);
+    if (entry) {
+      entry.keepAlive = true;
+      entry.clients = 0;
+      // Keep-alive channels use more segments for smoother playback
+      console.log(`💚 [${channelId}] Keep-alive FFmpeg iniciado (pre-buffer activo)`);
+    }
+  }
+}
+
+// Iniciar todos los canales keep_alive al arrancar el servidor
+async function initKeepAliveChannels() {
+  try {
+    const { rows } = await pool.query(
+      'SELECT id, url FROM channels WHERE is_active = true AND keep_alive = true'
+    );
+    if (rows.length === 0) {
+      console.log('📡 No hay canales keep-alive configurados');
+      return;
+    }
+    console.log(`\n💚 Iniciando ${rows.length} canal(es) keep-alive...`);
+    for (const ch of rows) {
+      startKeepAliveChannel(ch.id, ch.url);
+      // Stagger starts to avoid overwhelming the server
+      await new Promise(r => setTimeout(r, 2000));
+    }
+    console.log(`✅ ${rows.length} canal(es) keep-alive iniciados\n`);
+  } catch (err) {
+    console.error('❌ Error iniciando canales keep-alive:', err.message);
+  }
+}
+
+// Health monitor: restart crashed keep-alive channels every 60s
+setInterval(async () => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT id, url FROM channels WHERE is_active = true AND keep_alive = true'
+    );
+    for (const ch of rows) {
+      const entry = activeTranscoders.get(ch.id);
+      if (!entry) {
+        console.log(`🔄 [${ch.id}] Keep-alive caído, reiniciando...`);
+        startKeepAliveChannel(ch.id, ch.url);
+      }
+    }
+  } catch {}
+}, 60000);
 
 // =============================================
 // PROXY HLS NATIVO (para canales que ya son m3u8)
@@ -993,10 +1079,10 @@ const scheduleCacheCleanup = () => {
   midnight.setHours(0, 0, 0, 0);
   setTimeout(() => {
     console.log('🧹 Limpieza de caché a medianoche...');
-    // Matar todos los FFmpeg sin clientes
+    // Matar todos los FFmpeg sin clientes (excepto keep-alive)
     activeTranscoders.forEach((entry, key) => {
-      if (entry.clients <= 0) {
-        if (entry.type === 'ffmpeg' && entry.ffmpeg) entry.ffmpeg.kill('SIGTERM');
+      if (entry.clients <= 0 && !entry.keepAlive) {
+        if ((entry.type === 'ffmpeg' || entry.type === 'ffmpeg-adaptive') && entry.ffmpeg) entry.ffmpeg.kill('SIGTERM');
         activeTranscoders.delete(key);
         cleanChannelDir(key);
       }
@@ -1451,6 +1537,7 @@ app.get('/api/streams/active', authAdmin, async (req, res) => {
         type: entry.type,
         clients: Math.max(0, entry.clients),
         ready: entry.ready !== undefined ? entry.ready : true,
+        keep_alive: entry.keepAlive || false,
         uptime_seconds: Math.floor((Date.now() - entry.lastAccess) / 1000),
         source_url: sourceUrl.substring(0, 60) + (sourceUrl.length > 60 ? '...' : ''),
       });
@@ -1639,4 +1726,7 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`\n🚀 StreamBox API corriendo en http://0.0.0.0:${PORT}`);
   console.log(`📺 Panel Admin: http://TU_IP:80`);
   console.log(`🔐 Setup inicial: POST http://localhost:${PORT}/api/admin/setup\n`);
+  
+  // Iniciar canales keep-alive después de 3 segundos (esperar conexión DB)
+  setTimeout(() => initKeepAliveChannels(), 3000);
 });

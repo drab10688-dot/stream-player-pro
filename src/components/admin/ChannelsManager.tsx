@@ -4,7 +4,8 @@ import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Plus, Trash2, Edit2, Save, X, Tv, Upload, Link, FileText, Loader2 } from 'lucide-react';
+import { Switch } from '@/components/ui/switch';
+import { Plus, Trash2, Edit2, Save, X, Tv, Upload, Link, FileText, Loader2, Zap } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 interface Channel {
@@ -13,6 +14,7 @@ interface Channel {
   url: string;
   category: string;
   is_active: boolean;
+  keep_alive: boolean;
   sort_order: number;
   logo_url: string | null;
 }
@@ -82,7 +84,22 @@ const ChannelsManager = () => {
 
   const toggleActive = async (ch: Channel) => {
     try {
-      await apiPut(`/api/channels/${ch.id}`, { ...ch, is_active: !ch.is_active });
+      await apiPut(`/api/channels/${ch.id}`, { is_active: !ch.is_active });
+      fetchChannels();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+  };
+
+  const toggleKeepAlive = async (ch: Channel) => {
+    try {
+      await apiPut(`/api/channels/${ch.id}`, { keep_alive: !ch.keep_alive });
+      toast({ 
+        title: !ch.keep_alive ? '💚 Keep Alive activado' : 'Keep Alive desactivado',
+        description: !ch.keep_alive 
+          ? `${ch.name} se mantendrá conectado permanentemente al origen` 
+          : `${ch.name} se conectará solo cuando haya clientes`
+      });
       fetchChannels();
     } catch (err: any) {
       toast({ title: 'Error', description: err.message, variant: 'destructive' });
@@ -228,6 +245,14 @@ const ChannelsManager = () => {
                 </div>
               </div>
               <div className="flex items-center gap-1 shrink-0">
+                <div className="flex items-center gap-1.5 mr-2" title={ch.keep_alive ? 'Keep Alive: ON - Siempre conectado' : 'Keep Alive: OFF - Bajo demanda'}>
+                  <Zap className={`w-3.5 h-3.5 ${ch.keep_alive ? 'text-green-500' : 'text-muted-foreground/40'}`} />
+                  <Switch 
+                    checked={ch.keep_alive} 
+                    onCheckedChange={() => toggleKeepAlive(ch)} 
+                    className="scale-75"
+                  />
+                </div>
                 <Button variant="ghost" size="sm" onClick={() => toggleActive(ch)} className="text-xs text-muted-foreground">
                   {ch.is_active ? 'Desactivar' : 'Activar'}
                 </Button>
