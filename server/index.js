@@ -1960,6 +1960,245 @@ app.delete('/api/plans/:id', authAdmin, async (req, res) => {
 });
 
 // =============================================
+// XTREAM CODES API - Compatible con OTT Navigator,
+// TiviMate, IPTV Smarters, XCIPTV, GSE, Purple, etc.
+// Endpoints: /player_api.php, /live/, /get.php, /xmltv.php
+// =============================================
+
+// Helper: authenticate Xtream client
+const xtreamAuth = async (username, password) => {
+  const { rows } = await pool.query(
+    'SELECT * FROM clients WHERE username = $1 AND password = $2',
+    [username, password]
+  );
+  if (rows.length === 0) return null;
+  const client = rows[0];
+  if (!client.is_active) return null;
+  if (new Date(client.expiry_date) < new Date()) return null;
+  return client;
+};
+
+// Helper: get channels for client (filtered by plan)
+const getXtreamChannels = async (client) => {
+  let query = 'SELECT * FROM channels WHERE is_active = true ORDER BY sort_order';
+  let { rows: channels } = await pool.query(query);
+
+  // Filter by plan if client has one
+  if (client.plan_id) {
+    const { rows: planRows } = await pool.query('SELECT categories FROM plans WHERE id = $1', [client.plan_id]);
+    if (planRows.length > 0 && planRows[0].categories && planRows[0].categories.length > 0) {
+      const allowedCategories = planRows[0].categories;
+      channels = channels.filter(ch => allowedCategories.includes(ch.category));
+    }
+  }
+  return channels;
+};
+
+// Helper: get unique categories from channels
+const getXtreamCategories = (channels) => {
+  const cats = {};
+  channels.forEach(ch => {
+    if (!cats[ch.category]) {
+      cats[ch.category] = { category_id: Object.keys(cats).length + 1, category_name: ch.category, parent_id: 0 };
+    }
+  });
+  return Object.values(cats);
+};
+
+// Main Xtream API endpoint - /player_api.php
+app.get('/player_api.php', async (req, res) => {
+  try {
+    const { username, password, action } = req.query;
+    if (!username || !password) {
+      return res.status(401).json({ user_info: { auth: 0, message: 'Authentication required' } });
+    }
+
+    const client = await xtreamAuth(username, password);
+    if (!client) {
+      return res.status(401).json({ user_info: { auth: 0, message: 'Authentication failed' } });
+    }
+
+    const serverUrl = `${req.protocol}://${req.get('host')}`;
+    const now = new Date();
+    const expiry = new Date(client.expiry_date);
+
+    // No action = auth info (panel login)
+    if (!action) {
+      return res.json({
+        user_info: {
+          username: client.username,
+          password: client.password,
+          message: 'Welcome',
+          auth: 1,
+          status: 'Active',
+          exp_date: Math.floor(expiry.getTime() / 1000).toString(),
+          is_trial: '0',
+          active_cons: '0',
+          created_at: Math.floor(new Date(client.created_at).getTime() / 1000).toString(),
+          max_connections: client.max_screens.toString(),
+          allowed_output_formats: ['ts', 'm3u8'],
+        },
+        server_info: {
+          url: serverUrl,
+          port: req.get('host').split(':')[1] || '80',
+          https_port: '443',
+          server_protocol: req.protocol,
+          rtmp_port: '0',
+          timezone: 'America/New_York',
+          timestamp_now: Math.floor(now.getTime() / 1000),
+          time_now: now.toISOString(),
+        },
+      });
+    }
+
+    const channels = await getXtreamChannels(client);
+    const categories = getXtreamCategories(channels);
+
+    // GET LIVE CATEGORIES
+    if (action === 'get_live_categories') {
+      return res.json(categories);
+    }
+
+    // GET LIVE STREAMS
+    if (action === 'get_live_streams') {
+      const categoryFilter = req.query.category_id;
+      let filteredChannels = channels;
+      if (categoryFilter) {
+        const cat = categories.find(c => c.category_id === parseInt(categoryFilter));
+        if (cat) filteredChannels = channels.filter(ch => ch.category === cat.category_name);
+      }
+
+      const streams = filteredChannels.map((ch, idx) => {
+        const cat = categories.find(c => c.category_name === ch.category);
+        return {
+          num: idx + 1,
+          name: ch.name,
+          stream_type: 'live',
+          stream_id: ch.id,
+          stream_icon: ch.logo_url || '',
+          epg_channel_id: null,
+          added: Math.floor(new Date(ch.created_at).getTime() / 1000).toString(),
+          category_id: cat ? cat.category_id.toString() : '1',
+          category_name: ch.category,
+          custom_sid: null,
+          tv_archive: 0,
+          direct_source: '',
+          tv_archive_duration: 0,
+        };
+      });
+      return res.json(streams);
+    }
+
+    // GET VOD CATEGORIES (empty - no VOD support)
+    if (action === 'get_vod_categories') return res.json([]);
+    // GET VOD STREAMS (empty)
+    if (action === 'get_vod_streams') return res.json([]);
+    // GET SERIES CATEGORIES (empty)
+    if (action === 'get_series_categories') return res.json([]);
+    // GET SERIES (empty)
+    if (action === 'get_series') return res.json([]);
+
+    // GET SHORT EPG (empty for now)
+    if (action === 'get_short_epg' || action === 'get_simple_data_table') {
+      return res.json({ epg_listings: [] });
+    }
+
+    return res.json({ error: 'Unknown action' });
+  } catch (err) {
+    console.error('Xtream API error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Also support POST for some apps
+app.post('/player_api.php', (req, res) => {
+  // Forward to GET handler with body params as query
+  req.query = { ...req.query, ...req.body };
+  app.handle(req, res);
+});
+
+// XMLTV EPG endpoint (empty for now)
+app.get('/xmltv.php', (req, res) => {
+  res.set('Content-Type', 'application/xml');
+  res.send('<?xml version="1.0" encoding="UTF-8"?>\n<tv generator-info-name="StreamBox"></tv>');
+});
+
+// GET M3U via Xtream format: /get.php?username=X&password=X&type=m3u_plus&output=ts
+app.get('/get.php', async (req, res) => {
+  try {
+    const { username, password, type } = req.query;
+    const client = await xtreamAuth(username, password);
+    if (!client) return res.status(401).send('#EXTM3U\n#EXTINF:-1,Auth Error\nhttp://error');
+
+    const channels = await getXtreamChannels(client);
+    const serverUrl = `${req.protocol}://${req.get('host')}`;
+
+    let m3u = '#EXTM3U\n';
+    channels.forEach(ch => {
+      const logoTag = ch.logo_url ? ` tvg-logo="${ch.logo_url}"` : '';
+      m3u += `#EXTINF:-1 tvg-id="${ch.id}" tvg-name="${ch.name}"${logoTag} group-title="${ch.category}",${ch.name}\n`;
+      m3u += `${serverUrl}/live/${username}/${password}/${ch.id}.ts\n`;
+    });
+
+    res.set({
+      'Content-Type': 'audio/mpegurl',
+      'Content-Disposition': `inline; filename="${username}.m3u"`,
+    });
+    res.send(m3u);
+  } catch (err) {
+    res.status(500).send('#EXTM3U\n#EXTINF:-1,Server Error\nhttp://error');
+  }
+});
+
+// LIVE STREAM endpoint: /live/username/password/channelId.ts (or .m3u8)
+// This is the core streaming endpoint that all Xtream-compatible apps use
+app.get('/live/:username/:password/:streamId', async (req, res) => {
+  try {
+    const { username, password, streamId } = req.params;
+    const client = await xtreamAuth(username, password);
+    if (!client) return res.status(403).send('Forbidden');
+
+    // Remove extension (.ts, .m3u8, .mp4)
+    const channelId = streamId.replace(/\.(ts|m3u8|mp4|mkv)$/, '');
+
+    // Verify channel exists and client has access
+    const channels = await getXtreamChannels(client);
+    const channel = channels.find(ch => ch.id === channelId);
+    if (!channel) return res.status(404).send('Channel not found');
+
+    // Redirect to the restream endpoint (reuses existing FFmpeg infrastructure)
+    // This avoids duplicating the entire restreaming logic
+    req.url = `/api/restream/${channelId}`;
+    app.handle(req, res);
+  } catch (err) {
+    console.error('Xtream live error:', err);
+    res.status(500).send('Server error');
+  }
+});
+
+// Also support /live/username/password/channelId/segment.ts for HLS segments
+app.get('/live/:username/:password/:streamId/:segment', async (req, res) => {
+  try {
+    const { username, password, streamId, segment } = req.params;
+    const client = await xtreamAuth(username, password);
+    if (!client) return res.status(403).send('Forbidden');
+
+    const channelId = streamId.replace(/\.(ts|m3u8|mp4|mkv)$/, '');
+    const channels = await getXtreamChannels(client);
+    const channel = channels.find(ch => ch.id === channelId);
+    if (!channel) return res.status(404).send('Channel not found');
+
+    // Forward to restream segment handler
+    req.url = `/api/restream/${channelId}/${segment}`;
+    app.handle(req, res);
+  } catch (err) {
+    res.status(500).send('Server error');
+  }
+});
+
+console.log('📡 Xtream Codes API habilitada: /player_api.php, /live/, /get.php, /xmltv.php');
+
+// =============================================
 // INICIAR SERVIDOR
 // =============================================
 app.listen(PORT, '0.0.0.0', () => {
