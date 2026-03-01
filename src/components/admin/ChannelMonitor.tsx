@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { apiPost, apiGet, apiDelete } from '@/lib/api';
-import { AlertTriangle, Wifi, WifiOff, RefreshCw, Trash2, Activity, Clock, Zap } from 'lucide-react';
+import { AlertTriangle, Wifi, WifiOff, RefreshCw, Trash2, Activity, Clock, Zap, Power, PowerOff, Timer, ShieldCheck, ShieldAlert, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -17,6 +18,13 @@ interface PingResult {
   response_time: number;
   status_code: number;
   error: string | null;
+  was_auto_disabled?: boolean;
+  consecutive_failures?: number;
+}
+
+interface AutoActions {
+  disabled: string[];
+  reactivated: string[];
 }
 
 interface HealthLog {
@@ -41,6 +49,9 @@ const ChannelMonitor = () => {
   const [pinging, setPinging] = useState(false);
   const [loadingLogs, setLoadingLogs] = useState(true);
   const [lastPing, setLastPing] = useState<Date | null>(null);
+  const [autoActions, setAutoActions] = useState<AutoActions | null>(null);
+  const [autoPing, setAutoPing] = useState(false);
+  const [autoPingInterval, setAutoPingInterval] = useState<ReturnType<typeof setInterval> | null>(null);
 
   const fetchLogs = useCallback(async () => {
     setLoadingLogs(true);
@@ -68,21 +79,33 @@ const ChannelMonitor = () => {
       let data: any;
 
       if (isLovable()) {
-        const { data: fnData, error } = await supabase.functions.invoke('channel-ping', { body: {} });
+        const { data: fnData, error } = await supabase.functions.invoke('channel-ping', { body: { auto_manage: true } });
         if (error) throw error;
         data = fnData;
       } else {
-        data = await apiPost('/api/channels/ping', {});
+        data = await apiPost('/api/channels/ping', { auto_manage: true });
       }
 
       if (data?.results) {
         setPingResults(data.results);
         setLastPing(new Date());
+        setAutoActions(data.auto_actions || null);
+
         const offline = data.results.filter((r: PingResult) => r.status === 'offline').length;
+        const actions = data.auto_actions;
+        
+        let description = '';
+        if (actions?.disabled?.length > 0) {
+          description += `Desactivados: ${actions.disabled.join(', ')}. `;
+        }
+        if (actions?.reactivated?.length > 0) {
+          description += `Reactivados: ${actions.reactivated.join(', ')}`;
+        }
+
         if (offline > 0) {
-          toast({ title: `${offline} canal(es) caído(s)`, variant: 'destructive' });
+          toast({ title: `${offline} canal(es) caído(s)`, description: description || undefined, variant: 'destructive' });
         } else {
-          toast({ title: `Todos los canales online (${data.results.length})` });
+          toast({ title: `Todos los canales online (${data.results.length})`, description: description || undefined });
         }
         fetchLogs();
       }
@@ -92,6 +115,24 @@ const ChannelMonitor = () => {
     setPinging(false);
   }, [toast, fetchLogs]);
 
+  // Auto-ping toggle
+  const toggleAutoPing = useCallback((enabled: boolean) => {
+    setAutoPing(enabled);
+    if (enabled) {
+      // Run immediately then every 5 minutes
+      runPing();
+      const interval = setInterval(runPing, 5 * 60 * 1000);
+      setAutoPingInterval(interval);
+      toast({ title: 'Auto-verificación activada', description: 'Los canales se verificarán cada 5 minutos' });
+    } else {
+      if (autoPingInterval) {
+        clearInterval(autoPingInterval);
+        setAutoPingInterval(null);
+      }
+      toast({ title: 'Auto-verificación desactivada' });
+    }
+  }, [runPing, autoPingInterval, toast]);
+
   useEffect(() => {
     fetchLogs();
     const channel = supabase
@@ -100,7 +141,10 @@ const ChannelMonitor = () => {
         fetchLogs();
       })
       .subscribe();
-    return () => { supabase.removeChannel(channel); };
+    return () => {
+      supabase.removeChannel(channel);
+      if (autoPingInterval) clearInterval(autoPingInterval);
+    };
   }, [fetchLogs]);
 
   const clearLogs = async () => {
@@ -121,7 +165,6 @@ const ChannelMonitor = () => {
   const online = pingResults.filter(r => r.status === 'online');
   const offline = pingResults.filter(r => r.status === 'offline');
 
-  // Group error logs by channel
   const errorsByChannel = logs.reduce((acc, log) => {
     const name = (log.channels as any)?.name || 'Desconocido';
     if (!acc[name]) acc[name] = [];
@@ -145,11 +188,48 @@ const ChannelMonitor = () => {
               </p>
             </div>
           </div>
-          <Button onClick={runPing} disabled={pinging} className="gap-2">
-            <RefreshCw className={`w-4 h-4 ${pinging ? 'animate-spin' : ''}`} />
-            {pinging ? 'Verificando...' : 'Verificar canales'}
-          </Button>
+          <div className="flex items-center gap-3">
+            {/* Auto-ping toggle */}
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-secondary/30 border border-border/20">
+              <Timer className="w-4 h-4 text-muted-foreground" />
+              <span className="text-xs text-muted-foreground">Auto (5min)</span>
+              <Switch checked={autoPing} onCheckedChange={toggleAutoPing} />
+            </div>
+            <Button onClick={runPing} disabled={pinging} className="gap-2">
+              <RefreshCw className={`w-4 h-4 ${pinging ? 'animate-spin' : ''}`} />
+              {pinging ? 'Verificando...' : 'Verificar'}
+            </Button>
+          </div>
         </div>
+
+        {/* Auto-actions summary */}
+        <AnimatePresence>
+          {autoActions && (autoActions.disabled.length > 0 || autoActions.reactivated.length > 0) && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="mb-4 space-y-2"
+            >
+              {autoActions.disabled.length > 0 && (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-destructive/10 border border-destructive/20 text-sm">
+                  <PowerOff className="w-4 h-4 text-destructive shrink-0" />
+                  <span className="text-destructive">
+                    <strong>Auto-desactivados ({autoActions.disabled.length}):</strong> {autoActions.disabled.join(', ')}
+                  </span>
+                </div>
+              )}
+              {autoActions.reactivated.length > 0 && (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-green-500/10 border border-green-500/20 text-sm">
+                  <RotateCcw className="w-4 h-4 text-green-500 shrink-0" />
+                  <span className="text-green-500">
+                    <strong>Reactivados ({autoActions.reactivated.length}):</strong> {autoActions.reactivated.join(', ')}
+                  </span>
+                </div>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Summary cards */}
         {pingResults.length > 0 && (
@@ -169,11 +249,19 @@ const ChannelMonitor = () => {
           </div>
         )}
 
+        {/* Info about auto-management */}
+        <div className="flex items-start gap-2 px-3 py-2 rounded-xl bg-primary/5 border border-primary/10 mb-4">
+          <ShieldCheck className="w-4 h-4 text-primary shrink-0 mt-0.5" />
+          <p className="text-xs text-muted-foreground">
+            <strong className="text-foreground">Auto-gestión:</strong> Los canales que fallen <strong>3 veces consecutivas</strong> se desactivan automáticamente del login. 
+            Cuando vuelven a responder, se reactivan solos.
+          </p>
+        </div>
+
         {/* Channel status list */}
         {pingResults.length > 0 && (
           <ScrollArea className="max-h-[400px]">
             <div className="space-y-1.5">
-              {/* Offline first, then online */}
               {[...offline, ...online].map((ch, i) => (
                 <motion.div
                   key={ch.id}
@@ -186,12 +274,10 @@ const ChannelMonitor = () => {
                       : 'bg-secondary/20 border border-transparent'
                   }`}
                 >
-                  {/* Status indicator */}
                   <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${
                     ch.status === 'online' ? 'bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.5)]' : 'bg-destructive shadow-[0_0_6px_rgba(239,68,68,0.5)]'
                   }`} />
 
-                  {/* Logo */}
                   <div className="w-8 h-8 rounded-lg overflow-hidden bg-secondary/40 shrink-0 flex items-center justify-center">
                     {ch.logo_url ? (
                       <img src={ch.logo_url} alt="" className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
@@ -200,13 +286,25 @@ const ChannelMonitor = () => {
                     )}
                   </div>
 
-                  {/* Info */}
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-foreground truncate">{ch.name}</p>
                     <p className="text-[11px] text-muted-foreground">{ch.category}</p>
                   </div>
 
-                  {/* Response time / Error */}
+                  {/* Failure counter for offline */}
+                  {ch.status === 'offline' && (ch.consecutive_failures || 0) > 0 && (
+                    <div className="flex items-center gap-1 text-xs text-amber-500 shrink-0">
+                      <ShieldAlert className="w-3 h-3" />
+                      <span>{(ch.consecutive_failures || 0) + 1}/3</span>
+                    </div>
+                  )}
+
+                  {ch.was_auto_disabled && ch.status === 'online' && (
+                    <span className="text-[10px] bg-green-500/20 text-green-500 px-1.5 py-0.5 rounded-full shrink-0">
+                      Recuperado
+                    </span>
+                  )}
+
                   {ch.status === 'online' ? (
                     <div className="flex items-center gap-1 text-xs text-green-500/80 shrink-0">
                       <Zap className="w-3 h-3" />
@@ -285,6 +383,51 @@ const ChannelMonitor = () => {
             ))}
           </div>
         )}
+      </div>
+
+      {/* VPN MikroTik Guide */}
+      <div className="glass-strong rounded-2xl p-5 border border-border/30">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+            <ShieldCheck className="w-5 h-5 text-primary" />
+          </div>
+          <div>
+            <h3 className="font-semibold text-foreground">VPN MikroTik → VPS</h3>
+            <span className="text-xs text-muted-foreground">Guía de configuración para enrutar canales por VPN</span>
+          </div>
+        </div>
+        <div className="rounded-xl bg-secondary/20 p-4 space-y-3 text-sm text-muted-foreground">
+          <p><strong className="text-foreground">1. Configurar WireGuard en MikroTik:</strong></p>
+          <pre className="bg-background/50 rounded-lg p-3 text-xs overflow-x-auto font-mono">{`/interface wireguard add name=wg-vps listen-port=13231
+/interface wireguard peers add interface=wg-vps \\
+  public-key="CLAVE_PUBLICA_VPS" \\
+  endpoint-address=IP_VPS:51820 \\
+  allowed-address=10.10.10.0/24
+/ip address add address=10.10.10.2/24 interface=wg-vps`}</pre>
+
+          <p><strong className="text-foreground">2. En el VPS (Ubuntu):</strong></p>
+          <pre className="bg-background/50 rounded-lg p-3 text-xs overflow-x-auto font-mono">{`sudo apt install wireguard
+wg genkey | tee /etc/wireguard/private.key | wg pubkey > /etc/wireguard/public.key
+
+# /etc/wireguard/wg0.conf
+[Interface]
+Address = 10.10.10.1/24
+ListenPort = 51820
+PrivateKey = CLAVE_PRIVADA_VPS
+
+[Peer]
+PublicKey = CLAVE_PUBLICA_MIKROTIK
+AllowedIPs = 10.10.10.2/32
+
+sudo systemctl enable wg-quick@wg0
+sudo systemctl start wg-quick@wg0`}</pre>
+
+          <p><strong className="text-foreground">3. Enrutar canales por la VPN:</strong></p>
+          <p>Usa las IPs internas de la VPN (10.10.10.x) como URLs de los canales en la plataforma. El tráfico pasará automáticamente por el túnel WireGuard.</p>
+
+          <p><strong className="text-foreground">4. DNS en MikroTik (opcional):</strong></p>
+          <pre className="bg-background/50 rounded-lg p-3 text-xs overflow-x-auto font-mono">{`/ip dns static add name=stream.local address=10.10.10.1`}</pre>
+        </div>
       </div>
     </div>
   );
