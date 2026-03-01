@@ -4,6 +4,8 @@ import { useToast } from '@/hooks/use-toast';
 import { Bug, Play, RefreshCw, AlertTriangle, CheckCircle, XCircle, Search, Wifi, Clock, FileText, Copy, ClipboardCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { motion } from 'framer-motion';
 
 interface Channel {
@@ -45,7 +47,8 @@ const StreamDiagnostics = () => {
   const [testing, setTesting] = useState(false);
   const [testingAll, setTestingAll] = useState(false);
   const [copied, setCopied] = useState(false);
-
+  const [reportText, setReportText] = useState('');
+  const [showReport, setShowReport] = useState(false);
   useEffect(() => {
     fetchChannels();
   }, []);
@@ -220,13 +223,21 @@ const StreamDiagnostics = () => {
     report += `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
     report += `Fin del reporte`;
 
-    navigator.clipboard.writeText(report).then(() => {
+    setReportText(report);
+    setShowReport(true);
+  };
+
+  const copyReport = () => {
+    navigator.clipboard.writeText(reportText).then(() => {
       setCopied(true);
       toast({ title: 'Reporte copiado', description: 'Pégalo en el chat para que lo revise' });
       setTimeout(() => setCopied(false), 3000);
     }).catch(() => {
-      // Fallback: show in a prompt
-      prompt('Copia este reporte:', report);
+      // Select all text in textarea as fallback
+      const textarea = document.querySelector('#report-textarea') as HTMLTextAreaElement;
+      if (textarea) { textarea.select(); document.execCommand('copy'); }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 3000);
     });
   };
 
@@ -434,6 +445,27 @@ const StreamDiagnostics = () => {
           </div>
         </div>
       </div>
+      {/* Report Dialog */}
+      <Dialog open={showReport} onOpenChange={setShowReport}>
+        <DialogContent className="max-w-lg max-h-[80vh]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileText className="w-5 h-5 text-primary" />
+              Reporte de Diagnóstico
+            </DialogTitle>
+          </DialogHeader>
+          <Textarea
+            id="report-textarea"
+            value={reportText}
+            readOnly
+            className="min-h-[300px] font-mono text-xs bg-muted/50 border-border"
+          />
+          <Button onClick={copyReport} className="gap-2 gradient-primary text-primary-foreground">
+            {copied ? <ClipboardCheck className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+            {copied ? 'Copiado!' : 'Copiar Reporte'}
+          </Button>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
