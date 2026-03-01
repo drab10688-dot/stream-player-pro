@@ -1989,6 +1989,96 @@ app.delete('/api/plans/:id', authAdmin, async (req, res) => {
 });
 
 // =============================================
+// RUTAS: BACKUPS (requiere admin)
+// =============================================
+const backupDir = path.join(__dirname, 'backups');
+if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
+
+app.get('/api/backups', authAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM system_backups ORDER BY created_at DESC');
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/backups', authAdmin, async (req, res) => {
+  const { type = 'full' } = req.body;
+  try {
+    const tables = ['plans', 'resellers', 'channels', 'ads', 'clients', 'active_connections'];
+    const backupData = {};
+    for (const table of tables) {
+      const { rows } = await pool.query(`SELECT * FROM ${table}`);
+      backupData[table] = rows;
+    }
+    const backupContent = JSON.stringify({ version: '1.0', created_at: new Date().toISOString(), type, tables: backupData }, null, 2);
+    const fileName = `backup-${type}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+    const filePath = path.join(backupDir, fileName);
+    fs.writeFileSync(filePath, backupContent);
+    const fileSize = Buffer.byteLength(backupContent);
+    const { rows } = await pool.query(
+      'INSERT INTO system_backups (name, type, file_size, status, includes_db, includes_config) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+      [fileName, type, fileSize, 'completed', type === 'full' || type === 'database', type === 'full' || type === 'config']
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/backups/:id/download', authAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM system_backups WHERE id = $1', [req.params.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Backup no encontrado' });
+    const filePath = path.join(backupDir, rows[0].name);
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Archivo no encontrado' });
+    res.download(filePath, rows[0].name);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/backups/:id/restore', authAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM system_backups WHERE id = $1', [req.params.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Backup no encontrado' });
+    const filePath = path.join(backupDir, rows[0].name);
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Archivo no encontrado' });
+    const content = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    if (!content.tables) return res.status(400).json({ error: 'Formato de backup inválido' });
+    const restoreOrder = ['plans', 'resellers', 'channels', 'ads', 'clients'];
+    for (const table of restoreOrder) {
+      if (content.tables[table]) {
+        await pool.query(`DELETE FROM ${table}`);
+        for (const row of content.tables[table]) {
+          const keys = Object.keys(row);
+          const values = keys.map((_, i) => `$${i + 1}`);
+          await pool.query(`INSERT INTO ${table} (${keys.join(',')}) VALUES (${values.join(',')}) ON CONFLICT DO NOTHING`, keys.map(k => row[k]));
+        }
+      }
+    }
+    res.json({ ok: true, message: 'Backup restaurado' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/backups/:id', authAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM system_backups WHERE id = $1', [req.params.id]);
+    if (rows.length > 0) {
+      const filePath = path.join(backupDir, rows[0].name);
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    }
+    await pool.query('DELETE FROM system_backups WHERE id = $1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// =============================================
 // XTREAM CODES API - Compatible con OTT Navigator,
 // TiviMate, IPTV Smarters, XCIPTV, GSE, Purple, etc.
 // Endpoints: /player_api.php, /live/, /get.php, /xmltv.php
