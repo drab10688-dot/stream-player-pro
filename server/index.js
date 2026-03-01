@@ -1050,6 +1050,39 @@ app.get('/api/stats', authAdmin, async (req, res) => {
 });
 
 // =============================================
+// RUTA: STREAMS ACTIVOS (monitor de conexiones al origen)
+// =============================================
+app.get('/api/streams/active', authAdmin, async (req, res) => {
+  try {
+    const streams = [];
+    for (const [channelId, entry] of activeTranscoders) {
+      const { rows } = await pool.query('SELECT name, url FROM channels WHERE id = $1', [channelId]);
+      const channelName = rows.length > 0 ? rows[0].name : 'Desconocido';
+      const sourceUrl = rows.length > 0 ? rows[0].url : entry.sourceUrl || 'N/A';
+      
+      streams.push({
+        channel_id: channelId,
+        channel_name: channelName,
+        type: entry.type,
+        clients: Math.max(0, entry.clients),
+        ready: entry.ready !== undefined ? entry.ready : true,
+        uptime_seconds: Math.floor((Date.now() - entry.lastAccess) / 1000),
+        source_url: sourceUrl.substring(0, 60) + (sourceUrl.length > 60 ? '...' : ''),
+      });
+    }
+    
+    res.json({
+      total_streams: streams.length,
+      total_clients_watching: streams.reduce((sum, s) => sum + s.clients, 0),
+      origin_connections: streams.length,
+      streams,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// =============================================
 // RUTA: CLIENTES POR EXPIRAR
 // =============================================
 app.get('/api/clients/expiring', authAdmin, async (req, res) => {
