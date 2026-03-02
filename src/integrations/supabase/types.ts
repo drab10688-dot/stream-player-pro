@@ -16,25 +16,37 @@ export type Database = {
     Tables: {
       active_connections: {
         Row: {
+          city: string | null
           client_id: string
           connected_at: string
+          country: string | null
           device_id: string
           id: string
+          ip_address: string | null
           last_heartbeat: string
+          watching_channel_id: string | null
         }
         Insert: {
+          city?: string | null
           client_id: string
           connected_at?: string
+          country?: string | null
           device_id: string
           id?: string
+          ip_address?: string | null
           last_heartbeat?: string
+          watching_channel_id?: string | null
         }
         Update: {
+          city?: string | null
           client_id?: string
           connected_at?: string
+          country?: string | null
           device_id?: string
           id?: string
+          ip_address?: string | null
           last_heartbeat?: string
+          watching_channel_id?: string | null
         }
         Relationships: [
           {
@@ -42,6 +54,13 @@ export type Database = {
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "active_connections_watching_channel_id_fkey"
+            columns: ["watching_channel_id"]
+            isOneToOne: false
+            referencedRelation: "channels"
             referencedColumns: ["id"]
           },
         ]

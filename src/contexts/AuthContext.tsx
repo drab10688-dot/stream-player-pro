@@ -57,6 +57,7 @@ interface AuthContextType {
   login: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
   reportChannelError: (channelId: string, errorMessage: string) => void;
+  setCurrentChannelId: (channelId: string | null) => void;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -93,6 +94,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [vodItems, setVodItems] = useState<VodItem[]>([]);
   const [seriesItems, setSeriesItems] = useState<SeriesItem[]>([]);
   const heartbeatRef = useRef<ReturnType<typeof setInterval>>();
+  const currentChannelIdRef = useRef<string | null>(null);
+
+  const setCurrentChannelId = useCallback((channelId: string | null) => {
+    currentChannelIdRef.current = channelId;
+  }, []);
 
   // Heartbeat - send every 2 minutes to keep connection alive
   useEffect(() => {
@@ -108,7 +114,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           await fetch('/api/client/heartbeat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ client_id: client.id, device_id: getDeviceId() }),
+            body: JSON.stringify({ client_id: client.id, device_id: getDeviceId(), channel_id: currentChannelIdRef.current }),
           });
         }
       } catch (err) {
@@ -317,7 +323,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ isLoggedIn, client, channels, ads, vodItems, seriesItems, login, logout, reportChannelError }}>
+    <AuthContext.Provider value={{ isLoggedIn, client, channels, ads, vodItems, seriesItems, login, logout, reportChannelError, setCurrentChannelId }}>
       {children}
     </AuthContext.Provider>
   );

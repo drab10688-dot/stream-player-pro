@@ -12,7 +12,7 @@ import omnisyncLogo from '@/assets/omnisync-logo.png';
 const PlayerPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { channels, ads, reportChannelError } = useAuth();
+  const { channels, ads, reportChannelError, setCurrentChannelId } = useAuth();
 
   const initialChannel = location.state?.channel || channels[0];
   const [selectedChannel, setSelectedChannel] = useState(initialChannel);
@@ -47,6 +47,7 @@ const PlayerPage = () => {
   // Change channel helper
   const changeChannel = useCallback((channel: typeof channels[0]) => {
     setSelectedChannel(channel);
+    setCurrentChannelId(channel.id);
     setShowList(false);
     setShowSearch(false);
     setSearch('');
@@ -56,6 +57,12 @@ const PlayerPage = () => {
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     hideTimerRef.current = setTimeout(() => setShowControls(false), 2500);
   }, [channels, showChannelChange]);
+
+  // Set initial channel for heartbeat tracking
+  useEffect(() => {
+    if (selectedChannel) setCurrentChannelId(selectedChannel.id);
+    return () => setCurrentChannelId(null);
+  }, []);
 
   // Rotate ads
   useEffect(() => {

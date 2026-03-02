@@ -104,6 +104,7 @@ const VodManager = () => {
 
         const xhr = new XMLHttpRequest();
         xhr.open(method, url);
+        xhr.timeout = 30 * 60 * 1000; // 30 minutos para archivos grandes
         if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
 
         xhr.upload.onprogress = (e) => {
@@ -120,11 +121,13 @@ const VodManager = () => {
                 const err = JSON.parse(xhr.responseText);
                 reject(new Error(err.error || 'Error del servidor'));
               } catch {
-                reject(new Error('Error del servidor'));
+                reject(new Error(`Error del servidor (${xhr.status})`));
               }
             }
           };
-          xhr.onerror = () => reject(new Error('Error de red'));
+          xhr.onerror = () => reject(new Error('Error de red. Si el archivo es muy grande, intenta desde la red local.'));
+          xhr.ontimeout = () => reject(new Error('Timeout: el archivo es demasiado grande o la conexión es lenta. Sube desde la red local del VPS.'));
+          xhr.onabort = () => reject(new Error('Subida cancelada'));
           xhr.send(formData);
         });
       }

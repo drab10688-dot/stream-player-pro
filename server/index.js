@@ -16,6 +16,49 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Aumentar timeout para uploads grandes (30 minutos)
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/vod')) {
+    req.setTimeout(30 * 60 * 1000);
+    res.setTimeout(30 * 60 * 1000);
+  }
+  next();
+});
+
+// Helper: obtener IP real del cliente (soporta proxies/tunnels)
+const getClientIP = (req) => {
+  return req.headers['cf-connecting-ip'] 
+    || req.headers['x-real-ip'] 
+    || req.headers['x-forwarded-for']?.split(',')[0]?.trim() 
+    || req.connection?.remoteAddress 
+    || req.ip;
+};
+
+// Helper: geolocalizar IP usando ip-api.com (gratis, 45 req/min)
+const geoCache = new Map();
+const geoLookup = async (ip) => {
+  if (!ip || ip === '127.0.0.1' || ip === '::1' || ip.startsWith('192.168.') || ip.startsWith('10.')) {
+    return { country: 'Local', city: 'LAN' };
+  }
+  if (geoCache.has(ip)) return geoCache.get(ip);
+  try {
+    const res = await new Promise((resolve, reject) => {
+      http.get(`http://ip-api.com/json/${ip}?fields=country,city,status`, (resp) => {
+        let data = '';
+        resp.on('data', chunk => data += chunk);
+        resp.on('end', () => resolve(JSON.parse(data)));
+      }).on('error', reject);
+    });
+    const result = res.status === 'success' ? { country: res.country, city: res.city } : { country: 'Desconocido', city: '' };
+    geoCache.set(ip, result);
+    // Limpiar caché cada 1 hora
+    setTimeout(() => geoCache.delete(ip), 3600000);
+    return result;
+  } catch {
+    return { country: 'Desconocido', city: '' };
+  }
+};
+
 // Servir logos estáticos
 const LOGOS_DIR = path.join(__dirname, 'uploads', 'logos');
 if (!fs.existsSync(LOGOS_DIR)) fs.mkdirSync(LOGOS_DIR, { recursive: true });
@@ -523,12 +566,14 @@ app.post('/api/client/login', async (req, res) => {
         return res.status(403).json({ error: `Límite de ${client.max_screens} pantalla(s) alcanzado` });
       }
 
-      // Registrar conexión
+      // Registrar conexión con IP y geo
+      const clientIP = getClientIP(req);
+      const geo = await geoLookup(clientIP);
       await pool.query(
-        `INSERT INTO active_connections (client_id, device_id, last_heartbeat) 
-         VALUES ($1, $2, now()) 
-         ON CONFLICT (client_id, device_id) DO UPDATE SET last_heartbeat = now()`,
-        [client.id, device_id]
+        `INSERT INTO active_connections (client_id, device_id, ip_address, country, city, last_heartbeat) 
+         VALUES ($1, $2, $3, $4, $5, now()) 
+         ON CONFLICT (client_id, device_id) DO UPDATE SET last_heartbeat = now(), ip_address = $3, country = $4, city = $5`,
+        [client.id, device_id, clientIP, geo.country, geo.city]
       );
     }
 
@@ -563,13 +608,19 @@ app.post('/api/client/login', async (req, res) => {
   }
 });
 
-// Heartbeat (mantener conexión activa)
+// Heartbeat (mantener conexión activa + canal que ve)
 app.post('/api/client/heartbeat', async (req, res) => {
-  const { client_id, device_id } = req.body;
+  const { client_id, device_id, channel_id } = req.body;
   if (client_id && device_id) {
+    const updates = ['last_heartbeat = now()'];
+    const vals = [client_id, device_id];
+    if (channel_id) {
+      updates.push(`watching_channel_id = $3`);
+      vals.push(channel_id);
+    }
     await pool.query(
-      'UPDATE active_connections SET last_heartbeat = now() WHERE client_id = $1 AND device_id = $2',
-      [client_id, device_id]
+      `UPDATE active_connections SET ${updates.join(', ')} WHERE client_id = $1 AND device_id = $2`,
+      vals
     );
   }
   res.json({ ok: true });
@@ -1622,8 +1673,32 @@ app.get('/api/streams/active', authAdmin, async (req, res) => {
 });
 
 // =============================================
-// RUTA: CLIENTES POR EXPIRAR
+// RUTA: ESPECTADORES ACTIVOS (quién ve qué, desde dónde)
 // =============================================
+app.get('/api/viewers/active', authAdmin, async (req, res) => {
+  try {
+    const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    const { rows } = await pool.query(`
+      SELECT 
+        ac.id, ac.device_id, ac.ip_address, ac.country, ac.city, ac.connected_at, ac.last_heartbeat,
+        c.username AS client_username, c.id AS client_id,
+        ch.name AS channel_name, ch.category AS channel_category, ch.logo_url AS channel_logo
+      FROM active_connections ac
+      JOIN clients c ON ac.client_id = c.id
+      LEFT JOIN channels ch ON ac.watching_channel_id = ch.id
+      WHERE ac.last_heartbeat >= $1
+      ORDER BY ac.last_heartbeat DESC
+    `, [fiveMinAgo]);
+    
+    res.json({
+      total_viewers: rows.length,
+      viewers: rows,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/clients/expiring', authAdmin, async (req, res) => {
   try {
     const now = new Date();

@@ -99,6 +99,10 @@ CREATE TABLE IF NOT EXISTS active_connections (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   client_id UUID NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
   device_id TEXT NOT NULL,
+  ip_address TEXT,
+  country TEXT,
+  city TEXT,
+  watching_channel_id UUID REFERENCES channels(id) ON DELETE SET NULL,
   connected_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
   last_heartbeat TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
   UNIQUE(client_id, device_id)
@@ -231,6 +235,7 @@ CREATE INDEX IF NOT EXISTS idx_clients_reseller ON clients(reseller_id);
 CREATE INDEX IF NOT EXISTS idx_channels_active ON channels(is_active);
 CREATE INDEX IF NOT EXISTS idx_connections_client ON active_connections(client_id);
 CREATE INDEX IF NOT EXISTS idx_connections_heartbeat ON active_connections(last_heartbeat);
+CREATE INDEX IF NOT EXISTS idx_connections_channel ON active_connections(watching_channel_id);
 CREATE INDEX IF NOT EXISTS idx_resellers_username ON resellers(username);
 CREATE INDEX IF NOT EXISTS idx_resellers_active ON resellers(is_active);
 CREATE INDEX IF NOT EXISTS idx_plans_active ON plans(is_active);
