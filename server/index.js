@@ -2214,6 +2214,8 @@ app.get('/player_api.php', async (req, res) => {
     const serverUrl = `${req.protocol}://${req.get('host')}`;
     const now = new Date();
     const expiry = new Date(client.expiry_date);
+    const hostParts = (req.get('host') || '').split(':');
+    const serverPort = hostParts[1] || (req.protocol === 'https' ? '443' : '80');
 
     // No action = auth info (panel login)
     if (!action) {
@@ -2233,8 +2235,8 @@ app.get('/player_api.php', async (req, res) => {
         },
         server_info: {
           url: serverUrl,
-          port: req.get('host').split(':')[1] || '80',
-          https_port: '443',
+          port: serverPort,
+          https_port: req.protocol === 'https' ? serverPort : '443',
           server_protocol: req.protocol,
           rtmp_port: '0',
           timezone: 'America/New_York',
@@ -2303,11 +2305,17 @@ app.get('/player_api.php', async (req, res) => {
   }
 });
 
-// Also support POST for some apps
-app.post('/player_api.php', (req, res) => {
-  // Forward to GET handler with body params as query
+// Also support POST for some apps (Smarters Pro, etc.)
+app.post('/player_api.php', async (req, res) => {
+  // Merge body params into query so the GET handler logic works
   req.query = { ...req.query, ...req.body };
-  app.handle(req, res);
+  // Re-route through the GET handler directly
+  const originalMethod = req.method;
+  req.method = 'GET';
+  app._router.handle(req, res, () => {
+    req.method = originalMethod;
+    res.status(404).json({ error: 'Not found' });
+  });
 });
 
 // XMLTV EPG endpoint (empty for now)
