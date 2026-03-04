@@ -7,8 +7,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
-import { Plus, Trash2, Edit2, Save, X, Tv, Upload, Link, FileText, Loader2, Zap, ImagePlus } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { Plus, Trash2, Edit2, Save, X, Tv, Upload, Link, FileText, Loader2, Zap, ImagePlus, Play, Square } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import VideoPlayer from '@/components/VideoPlayer';
 
 interface Channel {
   id: string;
@@ -34,6 +35,7 @@ const ChannelsManager = () => {
   const [importing, setImporting] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
+  const [previewChannelId, setPreviewChannelId] = useState<string | null>(null);
   const logoInputRef = useRef<HTMLInputElement>(null);
 
   const fetchChannels = async () => {
@@ -334,41 +336,67 @@ const ChannelsManager = () => {
         <div className="space-y-2">
           {channels.map((ch, i) => (
             <motion.div key={ch.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.03 }}
-              className={`glass rounded-xl p-4 flex items-center justify-between ${!ch.is_active ? 'opacity-50' : ''}`}>
-              <div className="flex items-center gap-3 flex-1 min-w-0">
-                <div className="w-10 h-10 rounded-lg bg-secondary flex items-center justify-center shrink-0 overflow-hidden">
-                  {ch.logo_url ? (
-                    <img src={ch.logo_url} alt={ch.name} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
-                  ) : (
-                    <Tv className="w-5 h-5 text-primary" />
-                  )}
-                </div>
-                <div className="min-w-0">
-                  <p className="font-semibold text-foreground text-sm truncate">{ch.name}</p>
-                  <p className="text-xs text-muted-foreground truncate">{ch.category} · {ch.url.substring(0, 50)}{ch.url.length > 50 ? '...' : ''}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-1 shrink-0">
-                {!isLovablePreview() && (
-                  <div className="flex items-center gap-1.5 mr-2" title={ch.keep_alive ? 'Keep Alive: ON - Siempre conectado' : 'Keep Alive: OFF - Bajo demanda'}>
-                    <Zap className={`w-3.5 h-3.5 ${ch.keep_alive ? 'text-green-500' : 'text-muted-foreground/40'}`} />
-                    <Switch 
-                      checked={ch.keep_alive} 
-                      onCheckedChange={() => toggleKeepAlive(ch)} 
-                      className="scale-75"
-                    />
+              className={`glass rounded-xl overflow-hidden ${!ch.is_active ? 'opacity-50' : ''}`}>
+              <div className="p-4 flex items-center justify-between">
+                <div className="flex items-center gap-3 flex-1 min-w-0">
+                  <div className="w-10 h-10 rounded-lg bg-secondary flex items-center justify-center shrink-0 overflow-hidden">
+                    {ch.logo_url ? (
+                      <img src={ch.logo_url} alt={ch.name} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                    ) : (
+                      <Tv className="w-5 h-5 text-primary" />
+                    )}
                   </div>
-                )}
-                <Button variant="ghost" size="sm" onClick={() => toggleActive(ch)} className="text-xs text-muted-foreground">
-                  {ch.is_active ? 'Desactivar' : 'Activar'}
-                </Button>
-                <Button variant="ghost" size="icon" onClick={() => handleEdit(ch)} className="text-muted-foreground hover:text-primary">
-                  <Edit2 className="w-4 h-4" />
-                </Button>
-                <Button variant="ghost" size="icon" onClick={() => handleDelete(ch.id)} className="text-muted-foreground hover:text-destructive">
-                  <Trash2 className="w-4 h-4" />
-                </Button>
+                  <div className="min-w-0">
+                    <p className="font-semibold text-foreground text-sm truncate">{ch.name}</p>
+                    <p className="text-xs text-muted-foreground truncate">{ch.category} · {ch.url.substring(0, 50)}{ch.url.length > 50 ? '...' : ''}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  {/* Play/Stop preview button */}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setPreviewChannelId(previewChannelId === ch.id ? null : ch.id)}
+                    className={`${previewChannelId === ch.id ? 'text-red-500 hover:text-red-600' : 'text-green-500 hover:text-green-600'}`}
+                    title={previewChannelId === ch.id ? 'Detener preview' : 'Reproducir canal'}
+                  >
+                    {previewChannelId === ch.id ? <Square className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                  </Button>
+                  {!isLovablePreview() && (
+                    <div className="flex items-center gap-1.5 mr-2" title={ch.keep_alive ? 'Keep Alive: ON - Siempre conectado' : 'Keep Alive: OFF - Bajo demanda'}>
+                      <Zap className={`w-3.5 h-3.5 ${ch.keep_alive ? 'text-green-500' : 'text-muted-foreground/40'}`} />
+                      <Switch 
+                        checked={ch.keep_alive} 
+                        onCheckedChange={() => toggleKeepAlive(ch)} 
+                        className="scale-75"
+                      />
+                    </div>
+                  )}
+                  <Button variant="ghost" size="sm" onClick={() => toggleActive(ch)} className="text-xs text-muted-foreground">
+                    {ch.is_active ? 'Desactivar' : 'Activar'}
+                  </Button>
+                  <Button variant="ghost" size="icon" onClick={() => handleEdit(ch)} className="text-muted-foreground hover:text-primary">
+                    <Edit2 className="w-4 h-4" />
+                  </Button>
+                  <Button variant="ghost" size="icon" onClick={() => handleDelete(ch.id)} className="text-muted-foreground hover:text-destructive">
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </div>
               </div>
+              {/* Inline video preview */}
+              <AnimatePresence>
+                {previewChannelId === ch.id && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 300, opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.3 }}
+                    className="border-t border-border bg-black"
+                  >
+                    <VideoPlayer src={ch.url} channelId={ch.id} />
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </motion.div>
           ))}
         </div>

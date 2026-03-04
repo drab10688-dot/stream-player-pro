@@ -242,30 +242,35 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
       } else if (Hls.isSupported()) {
         const hls = new Hls({
           enableWorker: true,
-          lowLatencyMode: false,
-          abrEwmaDefaultEstimate: 500000,
+          lowLatencyMode: true,           // arranque más rápido
+          abrEwmaDefaultEstimate: 1000000, // asumir 1Mbps para iniciar rápido
           abrEwmaFastLive: 3,
-          abrEwmaSlowLive: 10,
+          abrEwmaSlowLive: 9,
           abrEwmaFastVoD: 3,
-          abrEwmaSlowVoD: 10,
-          abrBandWidthFactor: 0.7,
-          abrBandWidthUpFactor: 0.5,
+          abrEwmaSlowVoD: 9,
+          abrBandWidthFactor: 0.8,
+          abrBandWidthUpFactor: 0.6,
+          // Buffer: arrancar rápido, luego acumular
           maxBufferLength: 1800,
           maxMaxBufferLength: 3600,
           maxBufferSize: 500 * 1000 * 1000,
-          maxBufferHole: 0.5,
+          maxBufferHole: 0.8,              // tolerar huecos más grandes
           backBufferLength: 120,
-          // Reintentos agresivos para streams que tardan en arrancar
+          // Arranque instantáneo
+          liveSyncDurationCount: 2,        // empezar cerca del live edge
+          liveMaxLatencyDurationCount: 5,
+          liveDurationInfinity: true,
+          // Reintentos agresivos
           fragLoadingMaxRetry: 30,
-          fragLoadingRetryDelay: 2000,
+          fragLoadingRetryDelay: 1500,
           fragLoadingMaxRetryTimeout: 64000,
           manifestLoadingMaxRetry: 25,
-          manifestLoadingRetryDelay: 2000,
+          manifestLoadingRetryDelay: 1500,
           manifestLoadingMaxRetryTimeout: 64000,
           levelLoadingMaxRetry: 25,
-          levelLoadingRetryDelay: 2000,
+          levelLoadingRetryDelay: 1500,
           levelLoadingMaxRetryTimeout: 64000,
-          startLevel: 0,
+          startLevel: 0,                   // empezar en la calidad más baja = más rápido
           startFragPrefetch: true,
           testBandwidth: true,
           progressive: true,
