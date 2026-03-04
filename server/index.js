@@ -743,7 +743,11 @@ const QUALITY_PROFILES = [
   { name: 'med', width: 1280, height: 720, vBitrate: '2000k', maxrate: '2200k', bufsize: '3000k', aBitrate: '128k', bandwidth: 2200000 },
 ];
 
-function startFFmpegTranscoder(channelId, sourceUrl) {
+// Configuración de caché según modo
+const CACHE_NORMAL = { hls_list_size: 30, hls_time: 4 };       // 30×4s = 2 min
+const CACHE_KEEPALIVE = { hls_list_size: 450, hls_time: 4 };   // 450×4s = 30 min
+
+function startFFmpegTranscoder(channelId, sourceUrl, isKeepAlive = false) {
   if (activeTranscoders.has(channelId)) {
     const existing = activeTranscoders.get(channelId);
     existing.clients++;
@@ -756,18 +760,14 @@ function startFFmpegTranscoder(channelId, sourceUrl) {
     fs.mkdirSync(channelDir, { recursive: true });
   }
 
-  // Check if adaptive mode is requested via query param or default
-  const useAdaptive = true; // Always use adaptive for Netflix-like experience
-
-  if (useAdaptive) {
-    return startAdaptiveTranscoder(channelId, sourceUrl, channelDir);
-  }
+  return startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive);
 }
 
 // Adaptive multi-bitrate transcoder (Netflix-style)
-function startAdaptiveTranscoder(channelId, sourceUrl, channelDir) {
+function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive = false) {
   const masterPlaylistPath = path.join(channelDir, 'master.m3u8');
   const copyManifestPath = path.join(channelDir, 'high', 'stream.m3u8');
+  const cacheConfig = isKeepAlive ? CACHE_KEEPALIVE : CACHE_NORMAL;
 
   // Create subdirectories for each quality
   ['low', 'med', 'high'].forEach(q => {
@@ -775,7 +775,8 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir) {
     if (!fs.existsSync(qDir)) fs.mkdirSync(qDir, { recursive: true });
   });
 
-  console.log(`🎬 [${channelId}] Iniciando FFmpeg adaptativo (3 calidades): ${sourceUrl}`);
+  const cacheLabel = isKeepAlive ? `${cacheConfig.hls_list_size}seg ≈ ${Math.round(cacheConfig.hls_list_size * cacheConfig.hls_time / 60)}min` : '2min';
+  console.log(`🎬 [${channelId}] FFmpeg adaptativo (3 calidades, caché: ${cacheLabel}): ${sourceUrl}`);
 
   // Build FFmpeg command for multi-output adaptive streaming
   const ffmpegArgs = [
@@ -810,11 +811,11 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir) {
     '-c:v:2', 'copy',
     '-c:a:2', 'aac', '-b:a:2', '128k',
 
-    // --- HLS output for LOW ---
+    // --- HLS output ---
     '-f', 'hls',
-    '-hls_time', '4',
-    '-hls_list_size', '30',
-    '-hls_flags', 'append_list+temp_file',
+    '-hls_time', String(cacheConfig.hls_time),
+    '-hls_list_size', String(cacheConfig.hls_list_size),
+    '-hls_flags', isKeepAlive ? 'append_list+delete_segments+temp_file' : 'append_list+temp_file',
     '-hls_segment_type', 'mpegts',
     '-hls_segment_filename', path.join(channelDir, 'low', 'seg_%05d.ts'),
     '-hls_allow_cache', '1',
@@ -861,7 +862,7 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir) {
       fallbackTriggered = true;
       console.log(`⚠️ [${channelId}] var_stream_map no soportado, usando calidad única optimizada`);
       ffmpeg.kill('SIGTERM');
-      startSingleQualityTranscoder(channelId, sourceUrl, channelDir);
+      startSingleQualityTranscoder(channelId, sourceUrl, channelDir, isKeepAlive);
       return;
     }
 
@@ -885,7 +886,7 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir) {
       fallbackTriggered = true;
       console.log(`🔄 [${channelId}] Fallback a calidad única optimizada`);
       activeTranscoders.delete(channelId);
-      const fallbackEntry = startSingleQualityTranscoder(channelId, sourceUrl, channelDir);
+      const fallbackEntry = startSingleQualityTranscoder(channelId, sourceUrl, channelDir, wasKeepAlive);
       if (fallbackEntry) {
         fallbackEntry.clients = entry.clients;
         fallbackEntry.keepAlive = wasKeepAlive; // PRESERVAR keepAlive
@@ -905,7 +906,7 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir) {
       console.log(`🔄 [${channelId}] Reiniciando en ${delay}ms (intento ${entry.retryCount}/${maxLabel})${wasKeepAlive ? ' [KEEP-ALIVE]' : ''}`);
       setTimeout(() => {
         cleanChannelDir(channelId);
-        startFFmpegTranscoder(channelId, sourceUrl);
+        startFFmpegTranscoder(channelId, sourceUrl, wasKeepAlive);
         const newEntry = activeTranscoders.get(channelId);
         if (newEntry) {
           newEntry.clients = entry.clients;
@@ -923,10 +924,12 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir) {
 }
 
 // Fallback: single quality optimized for 2-3 Mbps
-function startSingleQualityTranscoder(channelId, sourceUrl, channelDir) {
+function startSingleQualityTranscoder(channelId, sourceUrl, channelDir, isKeepAlive = false) {
   const manifestPath = path.join(channelDir, 'stream.m3u8');
+  const cacheConfig = isKeepAlive ? CACHE_KEEPALIVE : CACHE_NORMAL;
 
-  console.log(`🎬 [${channelId}] FFmpeg calidad única (optimizado 2-3 Mbps): ${sourceUrl}`);
+  const cacheLabel = isKeepAlive ? `${cacheConfig.hls_list_size}seg ≈ ${Math.round(cacheConfig.hls_list_size * cacheConfig.hls_time / 60)}min` : '2min';
+  console.log(`🎬 [${channelId}] FFmpeg calidad única (caché: ${cacheLabel}): ${sourceUrl}`);
 
   const ffmpeg = spawn('ffmpeg', [
     '-reconnect', '1',
@@ -940,9 +943,9 @@ function startSingleQualityTranscoder(channelId, sourceUrl, channelDir) {
     '-c:a', 'aac', '-b:a', '96k',
     '-g', '48', '-keyint_min', '48', '-sc_threshold', '0',
     '-f', 'hls',
-    '-hls_time', '4',
-    '-hls_list_size', '30',
-    '-hls_flags', 'append_list+temp_file',
+    '-hls_time', String(cacheConfig.hls_time),
+    '-hls_list_size', String(cacheConfig.hls_list_size),
+    '-hls_flags', isKeepAlive ? 'append_list+delete_segments+temp_file' : 'append_list+temp_file',
     '-hls_segment_type', 'mpegts',
     '-hls_segment_filename', path.join(channelDir, 'seg_%05d.ts'),
     '-hls_allow_cache', '1',
@@ -995,7 +998,7 @@ function startSingleQualityTranscoder(channelId, sourceUrl, channelDir) {
       console.log(`🔄 [${channelId}] Reiniciando FFmpeg en ${delay}ms (intento ${entry.retryCount}/${maxLabel})${wasKeepAlive ? ' [KEEP-ALIVE]' : ''}`);
       setTimeout(() => {
         cleanChannelDir(channelId);
-        startFFmpegTranscoder(channelId, sourceUrl);
+        startFFmpegTranscoder(channelId, sourceUrl, wasKeepAlive);
         const newEntry = activeTranscoders.get(channelId);
         if (newEntry) {
           newEntry.clients = entry.clients;
@@ -1052,16 +1055,15 @@ function startKeepAliveChannel(channelId, sourceUrl) {
     const entry = startHLSProxy(channelId, sourceUrl);
     if (entry) {
       entry.keepAlive = true;
-      entry.clients = 0; // No hay clientes reales aún
+      entry.clients = 0;
       console.log(`💚 [${channelId}] Keep-alive HLS proxy iniciado`);
     }
   } else {
-    const entry = startFFmpegTranscoder(channelId, sourceUrl);
+    const entry = startFFmpegTranscoder(channelId, sourceUrl, true); // isKeepAlive = true → 30 min caché
     if (entry) {
       entry.keepAlive = true;
       entry.clients = 0;
-      // Keep-alive channels use more segments for smoother playback
-      console.log(`💚 [${channelId}] Keep-alive FFmpeg iniciado (pre-buffer activo)`);
+      console.log(`💚 [${channelId}] Keep-alive FFmpeg iniciado (caché: 30 min)`);
     }
   }
 }
