@@ -194,36 +194,52 @@ const LoginPage = () => {
             transition={{ delay: 0.6 }}
             className="mt-5"
           >
-            {/* Direct install button */}
-            {!isInstalled && deferredPrompt && (
+            {/* Install app button - always visible */}
+            {isInstalled ? (
+              <div className="w-full h-12 2xl:h-14 rounded-xl border border-primary/20 bg-primary/5 flex items-center justify-center gap-2 text-primary mb-2">
+                <Check className="w-5 h-5" />
+                <span className="font-medium text-base">App instalada</span>
+              </div>
+            ) : (
               <Button
                 type="button"
                 variant="outline"
                 onClick={async () => {
-                  await deferredPrompt.prompt();
-                  const { outcome } = await deferredPrompt.userChoice;
-                  if (outcome === 'accepted') {
-                    setIsInstalled(true);
-                    toast({ title: '¡App instalada!', description: 'Búscala en tu pantalla de inicio' });
+                  if (deferredPrompt) {
+                    // Direct install via browser API
+                    await deferredPrompt.prompt();
+                    const { outcome } = await deferredPrompt.userChoice;
+                    if (outcome === 'accepted') {
+                      setIsInstalled(true);
+                      toast({ title: '¡App instalada!', description: 'Búscala en tu pantalla de inicio' });
+                    }
+                    setDeferredPrompt(null);
+                  } else {
+                    // Detect platform and show instructions
+                    const ua = navigator.userAgent.toLowerCase();
+                    const isIOS = /iphone|ipad|ipod/.test(ua);
+                    const isMac = /macintosh/.test(ua) && 'ontouchend' in document;
+                    
+                    if (isIOS || isMac) {
+                      toast({ 
+                        title: 'Instalar en iPhone/iPad', 
+                        description: 'Toca el botón Compartir (⬆) y luego "Agregar a pantalla de inicio"',
+                      });
+                    } else {
+                      // Navigate to install page for other devices
+                      navigate('/install');
+                    }
                   }
-                  setDeferredPrompt(null);
                 }}
                 tabIndex={0}
-                className="w-full h-12 2xl:h-14 rounded-xl border-primary/30 bg-primary/5 hover:bg-primary/10 text-primary font-medium text-base 2xl:text-lg tv-focusable gap-2"
+                className="w-full h-12 2xl:h-14 rounded-xl border-primary/30 bg-primary/5 hover:bg-primary/10 text-primary font-medium text-base 2xl:text-lg tv-focusable gap-2 mb-2"
               >
                 <Download className="w-5 h-5" />
                 Instalar App
               </Button>
             )}
 
-            {isInstalled && (
-              <div className="w-full h-12 2xl:h-14 rounded-xl border border-primary/20 bg-primary/5 flex items-center justify-center gap-2 text-primary">
-                <Check className="w-5 h-5" />
-                <span className="font-medium text-base">App instalada</span>
-              </div>
-            )}
-
-            {/* Smart TV / manual install */}
+            {/* Smart TV link */}
             <Button
               type="button"
               variant="ghost"
