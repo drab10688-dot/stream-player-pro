@@ -52,16 +52,56 @@ Deno.serve(async (req) => {
             };
           }
 
+          const isTS = /\.ts(\?|$)/i.test(ch.url);
           const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 10000);
+          const timeout = setTimeout(() => controller.abort(), isTS ? 15000 : 10000);
 
           const res = await fetch(ch.url, {
             method: "GET",
             signal: controller.signal,
-            headers: { "User-Agent": "StreamBox-HealthCheck/1.0", "Range": "bytes=0-1024" },
+            headers: {
+              "User-Agent": "StreamBox-HealthCheck/1.0",
+              ...(isTS ? {} : { "Range": "bytes=0-1024" }),
+            },
           });
-          clearTimeout(timeout);
 
+          if (isTS) {
+            // For .ts streams: read just the first chunk to confirm data is flowing
+            const reader = res.body?.getReader();
+            if (reader) {
+              try {
+                const { value, done } = await reader.read();
+                const gotBytes = value && value.length > 0;
+                // Cancel the rest of the stream immediately
+                await reader.cancel();
+                clearTimeout(timeout);
+                controller.abort();
+
+                const responseTime = Date.now() - start;
+                return {
+                  id: ch.id, name: ch.name, category: ch.category, logo_url: ch.logo_url,
+                  status: gotBytes ? "online" : "offline",
+                  response_time: responseTime, status_code: res.status,
+                  error: gotBytes ? null : "No data received from stream",
+                  was_auto_disabled: ch.auto_disabled, consecutive_failures: ch.consecutive_failures,
+                };
+              } catch (_readErr) {
+                await reader.cancel().catch(() => {});
+                clearTimeout(timeout);
+                // If we got a 200 but read failed, still count as online (stream started)
+                const responseTime = Date.now() - start;
+                return {
+                  id: ch.id, name: ch.name, category: ch.category, logo_url: ch.logo_url,
+                  status: res.status >= 200 && res.status < 400 ? "online" : "offline",
+                  response_time: responseTime, status_code: res.status,
+                  error: null,
+                  was_auto_disabled: ch.auto_disabled, consecutive_failures: ch.consecutive_failures,
+                };
+              }
+            }
+          }
+
+          clearTimeout(timeout);
           const responseTime = Date.now() - start;
           const isOk = res.status >= 200 && res.status < 400;
 
