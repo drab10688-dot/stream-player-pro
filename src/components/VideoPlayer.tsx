@@ -60,6 +60,9 @@ const getQualityColor = (label: string): string => {
   return 'bg-white/70';
 };
 
+const MAX_RETRIES = 12;          // más reintentos antes de rendirse
+const MAX_FULL_RECONNECTS = 3;   // reconexiones completas (destruir y recrear)
+
 const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
@@ -70,9 +73,13 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
   const [showQualityMenu, setShowQualityMenu] = useState(false);
   const [qualityVisible, setQualityVisible] = useState(true);
   const [bufferAhead, setBufferAhead] = useState(0);
+  const [retryInfo, setRetryInfo] = useState<string | null>(null);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const retryCountRef = useRef(0);
+  const fullReconnectCountRef = useRef(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const isPlayingRef = useRef(false); // tracks if we ever got playback
+  const initializerRef = useRef<(() => void) | null>(null);
 
   // Auto-hide quality badge after 5s of no interaction
   const resetHideTimer = useCallback(() => {
@@ -81,7 +88,7 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
     hideTimerRef.current = setTimeout(() => setQualityVisible(false), 5000);
   }, []);
 
-  const cleanup = () => {
+  const cleanup = useCallback(() => {
     if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     if (hlsRef.current) {
@@ -97,9 +104,9 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
       } catch { /* ignore */ }
       mpegtsRef.current = null;
     }
-  };
+  }, []);
 
-  useEffect(() => {
+  const initStream = useCallback(() => {
     const video = videoRef.current;
     if (!video || !src) return;
 
@@ -109,22 +116,43 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
     setError(null);
     setLoading(true);
     setQuality(null);
+    setRetryInfo(null);
     retryCountRef.current = 0;
+    isPlayingRef.current = false;
     cleanup();
 
     const reportError = (msg: string) => {
       setError(msg);
       setLoading(false);
+      setRetryInfo(null);
       onError?.(msg);
     };
 
-    const retryStream = () => {
-      if (retryCountRef.current >= 5) {
+    // Full reconnect: destroy everything and re-initialize from scratch
+    const fullReconnect = () => {
+      if (fullReconnectCountRef.current >= MAX_FULL_RECONNECTS) {
         reportError('No se pudo conectar al stream después de varios intentos.');
+        return;
+      }
+      fullReconnectCountRef.current++;
+      const delay = 3000 * fullReconnectCountRef.current;
+      setRetryInfo(`Reconectando (${fullReconnectCountRef.current}/${MAX_FULL_RECONNECTS})...`);
+      retryTimerRef.current = setTimeout(() => {
+        retryCountRef.current = 0;
+        cleanup();
+        initStream();
+      }, delay);
+    };
+
+    const retryStream = () => {
+      if (retryCountRef.current >= MAX_RETRIES) {
+        // Try full reconnect instead of giving up
+        fullReconnect();
         return;
       }
       retryCountRef.current++;
       const delay = Math.min(2000 * retryCountRef.current, 10000);
+      setRetryInfo(`Reintentando (${retryCountRef.current}/${MAX_RETRIES})...`);
       retryTimerRef.current = setTimeout(() => {
         if (mpegtsRef.current) {
           try {
@@ -142,11 +170,15 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
         v.muted = false;
         await v.play();
         setLoading(false);
+        setRetryInfo(null);
+        isPlayingRef.current = true;
       } catch {
         v.muted = true;
         try {
           await v.play();
           setLoading(false);
+          setRetryInfo(null);
+          isPlayingRef.current = true;
           setTimeout(() => { v.muted = false; }, 500);
         } catch {
           setLoading(false);
@@ -184,8 +216,8 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
         player.on(mpegts.Events.STATISTICS_INFO, () => {
           if (loading && video.readyState >= 2) {
             setLoading(false);
+            setRetryInfo(null);
           }
-          // Show TS quality based on video dimensions
           if (video.videoHeight) {
             setQuality({
               label: getQualityLabel(video.videoHeight, undefined),
@@ -218,19 +250,21 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
           abrEwmaSlowVoD: 10,
           abrBandWidthFactor: 0.7,
           abrBandWidthUpFactor: 0.5,
-          // Buffer agresivo: hasta 500 MB / 30 min adelantados
-          maxBufferLength: 1800,           // 30 min de buffer objetivo
-          maxMaxBufferLength: 3600,        // hasta 60 min si el dispositivo puede
-          maxBufferSize: 500 * 1000 * 1000, // 500 MB máximo en memoria
+          maxBufferLength: 1800,
+          maxMaxBufferLength: 3600,
+          maxBufferSize: 500 * 1000 * 1000,
           maxBufferHole: 0.5,
-          backBufferLength: 120,           // mantener 2 min de lo ya visto
-          fragLoadingMaxRetry: 20,
-          fragLoadingRetryDelay: 1000,
-          fragLoadingMaxRetryTimeout: 60000,
-          manifestLoadingMaxRetry: 15,
-          manifestLoadingRetryDelay: 1000,
-          levelLoadingMaxRetry: 15,
-          levelLoadingRetryDelay: 1000,
+          backBufferLength: 120,
+          // Reintentos agresivos para streams que tardan en arrancar
+          fragLoadingMaxRetry: 30,
+          fragLoadingRetryDelay: 2000,
+          fragLoadingMaxRetryTimeout: 64000,
+          manifestLoadingMaxRetry: 25,
+          manifestLoadingRetryDelay: 2000,
+          manifestLoadingMaxRetryTimeout: 64000,
+          levelLoadingMaxRetry: 25,
+          levelLoadingRetryDelay: 2000,
+          levelLoadingMaxRetryTimeout: 64000,
           startLevel: 0,
           startFragPrefetch: true,
           testBandwidth: true,
@@ -242,20 +276,22 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
 
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           setLoading(false);
+          setRetryInfo(null);
           attemptPlay(video);
-          // Set initial quality info
           updateQualityInfo(hls);
         });
 
-        // Track quality level changes
         hls.on(Hls.Events.LEVEL_SWITCHED, () => {
           updateQualityInfo(hls);
           resetHideTimer();
         });
 
         hls.on(Hls.Events.FRAG_LOADED, () => {
+          // Reset retry counter on successful fragment load
+          retryCountRef.current = 0;
+          setRetryInfo(null);
+          isPlayingRef.current = true;
           updateQualityInfo(hls);
-          // Track buffer ahead
           if (video.buffered.length > 0) {
             const buffered = video.buffered.end(video.buffered.length - 1) - video.currentTime;
             setBufferAhead(Math.max(0, Math.round(buffered)));
@@ -266,17 +302,26 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
           if (data.fatal) {
             switch (data.type) {
               case Hls.ErrorTypes.NETWORK_ERROR:
+                console.warn('HLS network error, retrying...', data.details);
                 retryStream();
                 break;
               case Hls.ErrorTypes.MEDIA_ERROR:
+                console.warn('HLS media error, recovering...', data.details);
                 hls.recoverMediaError();
                 break;
               default:
-                reportError(`Error HLS: ${data.details || 'Error fatal del stream'}`);
+                // Si nunca llegamos a reproducir, intentar reconexión completa
+                if (!isPlayingRef.current) {
+                  console.warn('HLS fatal error before playback, full reconnect...', data.details);
+                  fullReconnect();
+                } else {
+                  reportError(`Error HLS: ${data.details || 'Error fatal del stream'}`);
+                }
                 break;
             }
           }
         });
+
         hls.on(Hls.Events.BUFFER_EOS, () => {
           if (!video.ended) retryStream();
         });
@@ -296,11 +341,25 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
 
     resetHideTimer();
 
-    return () => {
+    // Store cleanup for this initialization
+    const localCleanup = () => {
       clearInterval(stallCheck);
       cleanup();
     };
-  }, [src]);
+
+    // We need to return cleanup, but since we're in a callback we store it
+    initializerRef.current = localCleanup;
+
+    return localCleanup;
+  }, [src, cleanup, resetHideTimer, onError]);
+
+  useEffect(() => {
+    fullReconnectCountRef.current = 0;
+    const localCleanup = initStream();
+    return () => {
+      localCleanup?.();
+    };
+  }, [src]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const updateQualityInfo = (hls: Hls) => {
     const currentLevel = hls.currentLevel;
@@ -323,7 +382,7 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
     const hls = hlsRef.current;
     if (!hls) return;
     if (levelIndex === -1) {
-      hls.currentLevel = -1; // Auto
+      hls.currentLevel = -1;
     } else {
       hls.currentLevel = levelIndex;
     }
@@ -369,14 +428,18 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
         muted={muted}
         preload="auto"
         crossOrigin="anonymous"
-        onCanPlay={() => setLoading(false)}
+        onCanPlay={() => { setLoading(false); setRetryInfo(null); }}
         onWaiting={() => setLoading(true)}
-        onPlaying={() => setLoading(false)}
+        onPlaying={() => { setLoading(false); setRetryInfo(null); isPlayingRef.current = true; }}
         onError={() => {
-          const msg = 'No se pudo reproducir este canal. Verifica la URL.';
-          setError(msg);
-          setLoading(false);
-          onError?.(msg);
+          // Solo mostrar error si NO hay un HLS/mpegts manejando reintentos
+          if (!hlsRef.current && !mpegtsRef.current) {
+            const msg = 'No se pudo reproducir este canal. Verifica la URL.';
+            setError(msg);
+            setLoading(false);
+            onError?.(msg);
+          }
+          // Si hay HLS/mpegts, dejar que ellos manejen el error
         }}
       />
 
@@ -409,7 +472,6 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
           {/* Quality Selector Menu */}
           {showQualityMenu && hlsRef.current && hlsRef.current.levels.length > 1 && (
             <div className="absolute top-full right-0 mt-1 bg-black/90 backdrop-blur-md rounded-lg shadow-2xl border border-white/10 overflow-hidden min-w-[140px]">
-              {/* Auto option */}
               <button
                 onClick={() => switchQuality(-1)}
                 className={`w-full text-left px-3 py-2 text-xs font-medium flex items-center justify-between hover:bg-white/10 transition-colors ${
@@ -420,7 +482,6 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
                 {quality.auto && <span className="text-primary">●</span>}
               </button>
               <div className="h-px bg-white/10" />
-              {/* Quality levels */}
               {hlsRef.current.levels.map((level, idx) => {
                 const label = getQualityLabel(level.height, level.bitrate);
                 const bitrateMbps = (level.bitrate / 1000000).toFixed(1);
@@ -439,7 +500,6 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
                   </button>
                 );
               })}
-              {/* Bandwidth info */}
               {quality.bandwidth > 0 && (
                 <>
                   <div className="h-px bg-white/10" />
@@ -453,11 +513,14 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
         </div>
       )}
 
+      {/* Loading / Retry indicator */}
       {loading && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/80 pointer-events-none">
           <div className="text-center">
             <div className="w-10 h-10 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-            <p className="text-muted-foreground text-sm">Cargando stream...</p>
+            <p className="text-muted-foreground text-sm">
+              {retryInfo || 'Cargando stream...'}
+            </p>
           </div>
         </div>
       )}
@@ -465,7 +528,18 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
         <div className="absolute inset-0 flex items-center justify-center bg-black/80">
           <div className="text-center max-w-sm px-4">
             <p className="text-destructive font-semibold mb-2">Error de reproducción</p>
-            <p className="text-muted-foreground text-sm">{error}</p>
+            <p className="text-muted-foreground text-sm mb-4">{error}</p>
+            <button
+              onClick={() => {
+                setError(null);
+                fullReconnectCountRef.current = 0;
+                retryCountRef.current = 0;
+                initStream();
+              }}
+              className="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors"
+            >
+              Reintentar
+            </button>
           </div>
         </div>
       )}
