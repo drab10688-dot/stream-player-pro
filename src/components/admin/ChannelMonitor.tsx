@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { apiPost, apiGet, apiDelete } from '@/lib/api';
-import { AlertTriangle, Wifi, WifiOff, RefreshCw, Trash2, Activity, Clock, Zap, Power, PowerOff, Timer, ShieldCheck, ShieldAlert, RotateCcw } from 'lucide-react';
+import { AlertTriangle, Wifi, WifiOff, RefreshCw, Trash2, Activity, Clock, Zap, Power, PowerOff, Timer, ShieldCheck, ShieldAlert, RotateCcw, ServerCrash, CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Switch } from '@/components/ui/switch';
@@ -37,6 +37,19 @@ interface HealthLog {
   channels?: { name: string } | null;
 }
 
+interface AutoPingStatus {
+  running: boolean;
+  interval_minutes: number;
+  last_result: {
+    timestamp: string;
+    total: number;
+    online: number;
+    offline: number;
+    disabled: string[];
+    reactivated: string[];
+  } | null;
+}
+
 const ChannelMonitor = () => {
   const { toast } = useToast();
   const isLovable = () => {
@@ -52,6 +65,8 @@ const ChannelMonitor = () => {
   const [autoActions, setAutoActions] = useState<AutoActions | null>(null);
   const [autoPing, setAutoPing] = useState(false);
   const [autoPingInterval, setAutoPingInterval] = useState<ReturnType<typeof setInterval> | null>(null);
+  const [serverAutoPing, setServerAutoPing] = useState<AutoPingStatus | null>(null);
+  const [togglingServer, setTogglingServer] = useState(false);
 
   const fetchLogs = useCallback(async () => {
     setLoadingLogs(true);
@@ -115,37 +130,74 @@ const ChannelMonitor = () => {
     setPinging(false);
   }, [toast, fetchLogs]);
 
-  // Auto-ping toggle
-  const toggleAutoPing = useCallback((enabled: boolean) => {
-    setAutoPing(enabled);
-    if (enabled) {
-      // Run immediately then every 5 minutes
-      runPing();
-      const interval = setInterval(runPing, 5 * 60 * 1000);
-      setAutoPingInterval(interval);
-      toast({ title: 'Auto-verificación activada', description: 'Los canales se verificarán cada 5 minutos' });
-    } else {
-      if (autoPingInterval) {
-        clearInterval(autoPingInterval);
-        setAutoPingInterval(null);
-      }
-      toast({ title: 'Auto-verificación desactivada' });
+  // Fetch server-side auto-ping status
+  const fetchServerAutoPingStatus = useCallback(async () => {
+    if (isLovable()) return;
+    try {
+      const status = await apiGet('/api/auto-ping/status');
+      setServerAutoPing(status);
+      setAutoPing(status.running);
+    } catch {
+      // Server might not support it yet
     }
-  }, [runPing, autoPingInterval, toast]);
+  }, []);
+
+  // Toggle auto-ping: use server-side on VPS, client-side on Lovable
+  const toggleAutoPing = useCallback(async (enabled: boolean) => {
+    if (!isLovable()) {
+      // SERVER-SIDE: persists across sessions
+      setTogglingServer(true);
+      try {
+        if (enabled) {
+          await apiPost('/api/auto-ping/start', { interval_minutes: 5 });
+          toast({ title: 'Auto-ping activado en servidor', description: 'Funciona 24/7, incluso sin sesión abierta' });
+        } else {
+          await apiPost('/api/auto-ping/stop', {});
+          toast({ title: 'Auto-ping detenido en servidor' });
+        }
+        setAutoPing(enabled);
+        await fetchServerAutoPingStatus();
+      } catch (err: any) {
+        toast({ title: 'Error', description: err.message, variant: 'destructive' });
+      }
+      setTogglingServer(false);
+    } else {
+      // CLIENT-SIDE fallback for Lovable preview
+      setAutoPing(enabled);
+      if (enabled) {
+        runPing();
+        const interval = setInterval(runPing, 5 * 60 * 1000);
+        setAutoPingInterval(interval);
+        toast({ title: 'Auto-verificación activada', description: 'Los canales se verificarán cada 5 minutos' });
+      } else {
+        if (autoPingInterval) {
+          clearInterval(autoPingInterval);
+          setAutoPingInterval(null);
+        }
+        toast({ title: 'Auto-verificación desactivada' });
+      }
+    }
+  }, [runPing, autoPingInterval, toast, fetchServerAutoPingStatus]);
 
   useEffect(() => {
     fetchLogs();
+    fetchServerAutoPingStatus();
     const channel = supabase
       .channel('channel-health-monitor')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'channel_health_logs' }, () => {
         fetchLogs();
       })
       .subscribe();
+
+    // Poll server auto-ping status every 30s
+    const statusInterval = !isLovable() ? setInterval(fetchServerAutoPingStatus, 30000) : null;
+
     return () => {
       supabase.removeChannel(channel);
       if (autoPingInterval) clearInterval(autoPingInterval);
+      if (statusInterval) clearInterval(statusInterval);
     };
-  }, [fetchLogs]);
+  }, [fetchLogs, fetchServerAutoPingStatus]);
 
   const clearLogs = async () => {
     try {
@@ -190,10 +242,17 @@ const ChannelMonitor = () => {
           </div>
           <div className="flex items-center gap-3">
             {/* Auto-ping toggle */}
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-secondary/30 border border-border/20">
-              <Timer className="w-4 h-4 text-muted-foreground" />
-              <span className="text-xs text-muted-foreground">Auto (5min)</span>
-              <Switch checked={autoPing} onCheckedChange={toggleAutoPing} />
+            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border ${autoPing ? 'bg-primary/10 border-primary/30' : 'bg-secondary/30 border-border/20'}`}>
+              <Timer className={`w-4 h-4 ${autoPing ? 'text-primary' : 'text-muted-foreground'}`} />
+              <div className="flex flex-col">
+                <span className={`text-xs ${autoPing ? 'text-primary font-semibold' : 'text-muted-foreground'}`}>
+                  {autoPing ? 'Auto-ping activo' : 'Auto (5min)'}
+                </span>
+                {autoPing && !isLovable() && (
+                  <span className="text-[10px] text-primary/70">Servidor 24/7</span>
+                )}
+              </div>
+              <Switch checked={autoPing} onCheckedChange={toggleAutoPing} disabled={togglingServer} />
             </div>
             <Button onClick={runPing} disabled={pinging} className="gap-2">
               <RefreshCw className={`w-4 h-4 ${pinging ? 'animate-spin' : ''}`} />
@@ -202,7 +261,22 @@ const ChannelMonitor = () => {
           </div>
         </div>
 
-        {/* Auto-actions summary */}
+        {/* Server-side auto-ping status */}
+        {serverAutoPing?.running && serverAutoPing.last_result && (
+          <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-primary/5 border border-primary/20 mb-4">
+            <CheckCircle2 className="w-4 h-4 text-primary shrink-0 animate-pulse" />
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-semibold text-primary">Auto-ping del servidor activo 24/7</p>
+              <p className="text-[10px] text-muted-foreground">
+                Último: {new Date(serverAutoPing.last_result.timestamp).toLocaleTimeString()} — 
+                {serverAutoPing.last_result.online}/{serverAutoPing.last_result.total} online
+                {serverAutoPing.last_result.disabled.length > 0 && ` · ${serverAutoPing.last_result.disabled.length} desactivados`}
+                {serverAutoPing.last_result.reactivated.length > 0 && ` · ${serverAutoPing.last_result.reactivated.length} reactivados`}
+              </p>
+            </div>
+          </div>
+        )}
+
         <AnimatePresence>
           {autoActions && (autoActions.disabled.length > 0 || autoActions.reactivated.length > 0) && (
             <motion.div

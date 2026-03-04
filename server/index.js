@@ -184,6 +184,135 @@ app.get('/api/channels', authAdmin, async (req, res) => {
 // Ping de canales con auto-gestión (requiere admin)
 const FAILURE_THRESHOLD = 3;
 
+// =============================================
+// AUTO-PING SERVER-SIDE (persiste sin sesión)
+// =============================================
+let autoPingInterval = null;
+let autoPingRunning = false;
+let autoPingIntervalMs = 5 * 60 * 1000; // 5 minutos por defecto
+let lastAutoPingResult = null;
+
+async function runAutoPing() {
+  try {
+    const { rows: channels } = await pool.query(
+      'SELECT id, name, url, category, logo_url, is_active, auto_disabled, consecutive_failures FROM channels WHERE is_active = true OR auto_disabled = true'
+    );
+
+    const results = await Promise.all(channels.map(async (ch) => {
+      const start = Date.now();
+      try {
+        const isYouTube = /youtube\.com|youtu\.be/.test(ch.url);
+        if (isYouTube) {
+          return { id: ch.id, name: ch.name, status: 'online', consecutive_failures: ch.consecutive_failures, was_auto_disabled: ch.auto_disabled };
+        }
+        const parsedUrl = new URL(ch.url);
+        const httpClient = parsedUrl.protocol === 'https:' ? https : http;
+        const result = await new Promise((resolve) => {
+          const req = httpClient.request(ch.url, { method: 'GET', headers: { 'User-Agent': 'StreamBox-HealthCheck/1.0', 'Range': 'bytes=0-1024' } }, (response) => {
+            response.destroy();
+            const isOk = response.statusCode >= 200 && response.statusCode < 400;
+            resolve({ id: ch.id, name: ch.name, status: isOk ? 'online' : 'offline', consecutive_failures: ch.consecutive_failures, was_auto_disabled: ch.auto_disabled, error: isOk ? null : `HTTP ${response.statusCode}` });
+          });
+          req.on('error', (err) => resolve({ id: ch.id, name: ch.name, status: 'offline', consecutive_failures: ch.consecutive_failures, was_auto_disabled: ch.auto_disabled, error: err.message }));
+          req.setTimeout(10000, () => { req.destroy(); resolve({ id: ch.id, name: ch.name, status: 'offline', consecutive_failures: ch.consecutive_failures, was_auto_disabled: ch.auto_disabled, error: 'Timeout' }); });
+          req.end();
+        });
+        return result;
+      } catch (err) {
+        return { id: ch.id, name: ch.name, status: 'offline', consecutive_failures: ch.consecutive_failures, was_auto_disabled: ch.auto_disabled, error: err.message };
+      }
+    }));
+
+    // Auto-manage
+    const disabled = [];
+    const reactivated = [];
+    for (const r of results) {
+      if (r.status === 'offline') {
+        const newFailures = (r.consecutive_failures || 0) + 1;
+        if (newFailures >= FAILURE_THRESHOLD) {
+          await pool.query('UPDATE channels SET consecutive_failures = $1, is_active = false, auto_disabled = true, last_checked_at = now() WHERE id = $2', [newFailures, r.id]);
+          disabled.push(r.name);
+        } else {
+          await pool.query('UPDATE channels SET consecutive_failures = $1, last_checked_at = now() WHERE id = $2', [newFailures, r.id]);
+        }
+      } else if (r.status === 'online') {
+        if (r.was_auto_disabled) {
+          await pool.query('UPDATE channels SET consecutive_failures = 0, is_active = true, auto_disabled = false, last_checked_at = now() WHERE id = $1', [r.id]);
+          reactivated.push(r.name);
+        } else {
+          await pool.query('UPDATE channels SET consecutive_failures = 0, last_checked_at = now() WHERE id = $1', [r.id]);
+        }
+      }
+    }
+
+    // Log offline
+    const offlineResults = results.filter(r => r.status === 'offline');
+    for (const ch of offlineResults) {
+      await pool.query(
+        'INSERT INTO channel_health_logs (channel_id, status, response_code, error_message, checked_by) VALUES ($1, $2, $3, $4, $5)',
+        [ch.id, 'error', 0, ch.error || 'Canal no responde', 'system:auto-ping']
+      );
+    }
+
+    const online = results.filter(r => r.status === 'online').length;
+    lastAutoPingResult = {
+      timestamp: new Date().toISOString(),
+      total: results.length,
+      online,
+      offline: offlineResults.length,
+      disabled,
+      reactivated
+    };
+
+    if (disabled.length > 0) console.log(`⚠️  Auto-ping: Desactivados: ${disabled.join(', ')}`);
+    if (reactivated.length > 0) console.log(`✅ Auto-ping: Reactivados: ${reactivated.join(', ')}`);
+    console.log(`📡 Auto-ping: ${online}/${results.length} online`);
+  } catch (err) {
+    console.error('Auto-ping error:', err.message);
+  }
+}
+
+function startAutoPing(intervalMs) {
+  if (autoPingInterval) clearInterval(autoPingInterval);
+  autoPingIntervalMs = intervalMs || autoPingIntervalMs;
+  autoPingRunning = true;
+  runAutoPing(); // run immediately
+  autoPingInterval = setInterval(runAutoPing, autoPingIntervalMs);
+  console.log(`📡 Auto-ping iniciado (cada ${autoPingIntervalMs / 1000}s)`);
+}
+
+function stopAutoPing() {
+  if (autoPingInterval) clearInterval(autoPingInterval);
+  autoPingInterval = null;
+  autoPingRunning = false;
+  console.log('📡 Auto-ping detenido');
+}
+
+// API endpoints for auto-ping control
+app.post('/api/auto-ping/start', authAdmin, (req, res) => {
+  const { interval_minutes = 5 } = req.body || {};
+  startAutoPing(interval_minutes * 60 * 1000);
+  res.json({ success: true, running: true, interval_minutes });
+});
+
+app.post('/api/auto-ping/stop', authAdmin, (req, res) => {
+  stopAutoPing();
+  res.json({ success: true, running: false });
+});
+
+app.get('/api/auto-ping/status', authAdmin, (req, res) => {
+  res.json({
+    running: autoPingRunning,
+    interval_minutes: autoPingIntervalMs / 60000,
+    last_result: lastAutoPingResult
+  });
+});
+
+// Auto-ping sin auth para consulta interna
+app.get('/api/auto-ping/health', (req, res) => {
+  res.json({ running: autoPingRunning });
+});
+
 app.post('/api/channels/ping', authAdmin, async (req, res) => {
   try {
     const { auto_manage = true } = req.body || {};
