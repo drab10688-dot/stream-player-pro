@@ -613,6 +613,105 @@ systemctl enable nginx > /dev/null 2>&1
 log_ok "Nginx configurado en puerto $WEB_PORT"
 
 # =============================================
+# PASO 7.5: Optimizar Kernel (sysctl) para streaming
+# =============================================
+log_step "⚡ Optimizando kernel para streaming masivo..."
+
+cat > /etc/sysctl.d/99-streambox.conf << 'SYSCTLEOF'
+# =============================================
+# Omnisync - Optimización de kernel para streaming
+# =============================================
+
+# --- TCP Congestion Control ---
+# BBR: algoritmo de Google, mejor throughput para streaming
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+
+# --- Buffers de red (TCP) ---
+# min / default / max en bytes
+net.ipv4.tcp_rmem = 8192 87380 134217728
+net.ipv4.tcp_wmem = 8192 65536 134217728
+
+# --- Buffers de red (UDP) ---
+net.ipv4.udp_rmem_min = 16384
+net.ipv4.udp_wmem_min = 16384
+
+# --- Buffers globales del socket ---
+net.core.rmem_default = 262144
+net.core.rmem_max = 268435456
+net.core.wmem_default = 262144
+net.core.wmem_max = 268435456
+
+# --- Capacidad de conexiones ---
+net.core.somaxconn = 65535
+net.core.netdev_max_backlog = 250000
+net.core.optmem_max = 65535
+
+# --- TCP tuning avanzado ---
+net.ipv4.tcp_max_tw_buckets = 1440000
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_fin_timeout = 15
+net.ipv4.tcp_keepalive_time = 300
+net.ipv4.tcp_keepalive_intvl = 30
+net.ipv4.tcp_keepalive_probes = 5
+net.ipv4.tcp_max_syn_backlog = 65535
+net.ipv4.tcp_syncookies = 1
+net.ipv4.tcp_slow_start_after_idle = 0
+net.ipv4.tcp_mtu_probing = 1
+net.ipv4.tcp_fastopen = 3
+net.ipv4.tcp_window_scaling = 1
+net.ipv4.tcp_timestamps = 1
+net.ipv4.tcp_sack = 1
+
+# --- Manejo de archivos (HLS segments) ---
+fs.file-max = 2097152
+fs.inotify.max_user_watches = 524288
+fs.inotify.max_user_instances = 8192
+
+# --- Memoria virtual ---
+vm.swappiness = 10
+vm.dirty_ratio = 15
+vm.dirty_background_ratio = 5
+vm.vfs_cache_pressure = 50
+
+# --- Seguridad de red ---
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+net.ipv4.icmp_echo_ignore_broadcasts = 1
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.default.accept_redirects = 0
+
+# --- IPv6 (desactivar si no se usa) ---
+# net.ipv6.conf.all.disable_ipv6 = 1
+# net.ipv6.conf.default.disable_ipv6 = 1
+SYSCTLEOF
+
+# Aplicar sysctl
+sysctl -p /etc/sysctl.d/99-streambox.conf > /dev/null 2>&1
+
+# Verificar BBR
+if sysctl net.ipv4.tcp_congestion_control 2>/dev/null | grep -q bbr; then
+  log_ok "TCP BBR activado"
+else
+  log_warn "BBR no disponible en este kernel (se usará cubic)"
+fi
+
+# Aumentar límites de archivos abiertos
+cat > /etc/security/limits.d/streambox.conf << 'LIMITSEOF'
+* soft nofile 1048576
+* hard nofile 1048576
+root soft nofile 1048576
+root hard nofile 1048576
+* soft nproc 65535
+* hard nproc 65535
+LIMITSEOF
+
+# Para la sesión actual
+ulimit -n 1048576 2>/dev/null || true
+
+log_ok "Kernel optimizado para streaming (sysctl + limits)"
+
+# =============================================
 # PASO 8: Iniciar API con PM2
 # =============================================
 log_step "🚀 [7/8] Iniciando API..."

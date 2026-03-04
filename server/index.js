@@ -2826,6 +2826,230 @@ app.get('/api/vod/episodes/stream/:id', async (req, res) => {
 console.log('📺 Series system habilitado: /api/vod/series, /api/vod/seasons, /api/vod/episodes');
 
 // =============================================
+// ENDPOINT: System Info (sysctl, recursos, etc)
+// =============================================
+app.get('/api/admin/system-info', async (req, res) => {
+  try {
+    const { execSync } = require('child_process');
+    const os = require('os');
+
+    // Helper para ejecutar comandos seguros
+    const run = (cmd) => { try { return execSync(cmd, { timeout: 5000 }).toString().trim(); } catch { return null; } };
+
+    // --- Sysctl params ---
+    const sysctlKeys = [
+      'net.ipv4.tcp_congestion_control',
+      'net.core.default_qdisc',
+      'net.ipv4.tcp_rmem',
+      'net.ipv4.tcp_wmem',
+      'net.ipv4.udp_rmem_min',
+      'net.ipv4.udp_wmem_min',
+      'net.core.rmem_default',
+      'net.core.rmem_max',
+      'net.core.wmem_default',
+      'net.core.wmem_max',
+      'net.core.somaxconn',
+      'net.core.netdev_max_backlog',
+      'net.core.optmem_max',
+      'net.ipv4.tcp_max_tw_buckets',
+      'net.ipv4.tcp_tw_reuse',
+      'net.ipv4.tcp_fin_timeout',
+      'net.ipv4.tcp_keepalive_time',
+      'net.ipv4.tcp_keepalive_intvl',
+      'net.ipv4.tcp_keepalive_probes',
+      'net.ipv4.tcp_max_syn_backlog',
+      'net.ipv4.tcp_syncookies',
+      'net.ipv4.tcp_slow_start_after_idle',
+      'net.ipv4.tcp_mtu_probing',
+      'net.ipv4.tcp_fastopen',
+      'net.ipv4.tcp_window_scaling',
+      'net.ipv4.tcp_timestamps',
+      'net.ipv4.tcp_sack',
+      'fs.file-max',
+      'fs.inotify.max_user_watches',
+      'fs.inotify.max_user_instances',
+      'vm.swappiness',
+      'vm.dirty_ratio',
+      'vm.dirty_background_ratio',
+      'vm.vfs_cache_pressure',
+    ];
+
+    const recommended = {
+      'net.ipv4.tcp_congestion_control': 'bbr',
+      'net.core.default_qdisc': 'fq',
+      'net.ipv4.tcp_rmem': '8192\t87380\t134217728',
+      'net.ipv4.tcp_wmem': '8192\t65536\t134217728',
+      'net.ipv4.udp_rmem_min': '16384',
+      'net.ipv4.udp_wmem_min': '16384',
+      'net.core.rmem_default': '262144',
+      'net.core.rmem_max': '268435456',
+      'net.core.wmem_default': '262144',
+      'net.core.wmem_max': '268435456',
+      'net.core.somaxconn': '65535',
+      'net.core.netdev_max_backlog': '250000',
+      'net.core.optmem_max': '65535',
+      'net.ipv4.tcp_max_tw_buckets': '1440000',
+      'net.ipv4.tcp_tw_reuse': '1',
+      'net.ipv4.tcp_fin_timeout': '15',
+      'net.ipv4.tcp_keepalive_time': '300',
+      'net.ipv4.tcp_keepalive_intvl': '30',
+      'net.ipv4.tcp_keepalive_probes': '5',
+      'net.ipv4.tcp_max_syn_backlog': '65535',
+      'net.ipv4.tcp_syncookies': '1',
+      'net.ipv4.tcp_slow_start_after_idle': '0',
+      'net.ipv4.tcp_mtu_probing': '1',
+      'net.ipv4.tcp_fastopen': '3',
+      'net.ipv4.tcp_window_scaling': '1',
+      'net.ipv4.tcp_timestamps': '1',
+      'net.ipv4.tcp_sack': '1',
+      'fs.file-max': '2097152',
+      'fs.inotify.max_user_watches': '524288',
+      'fs.inotify.max_user_instances': '8192',
+      'vm.swappiness': '10',
+      'vm.dirty_ratio': '15',
+      'vm.dirty_background_ratio': '5',
+      'vm.vfs_cache_pressure': '50',
+    };
+
+    const descriptions = {
+      'net.ipv4.tcp_congestion_control': 'Algoritmo de control de congestión TCP',
+      'net.core.default_qdisc': 'Disciplina de cola por defecto',
+      'net.ipv4.tcp_rmem': 'Buffer de lectura TCP (min/default/max)',
+      'net.ipv4.tcp_wmem': 'Buffer de escritura TCP (min/default/max)',
+      'net.ipv4.udp_rmem_min': 'Buffer mínimo lectura UDP',
+      'net.ipv4.udp_wmem_min': 'Buffer mínimo escritura UDP',
+      'net.core.rmem_default': 'Buffer lectura socket por defecto',
+      'net.core.rmem_max': 'Buffer lectura socket máximo',
+      'net.core.wmem_default': 'Buffer escritura socket por defecto',
+      'net.core.wmem_max': 'Buffer escritura socket máximo',
+      'net.core.somaxconn': 'Máximo de conexiones pendientes',
+      'net.core.netdev_max_backlog': 'Cola de paquetes entrantes',
+      'net.core.optmem_max': 'Memoria auxiliar por socket',
+      'net.ipv4.tcp_max_tw_buckets': 'Máx conexiones TIME_WAIT',
+      'net.ipv4.tcp_tw_reuse': 'Reusar sockets TIME_WAIT',
+      'net.ipv4.tcp_fin_timeout': 'Timeout cierre de conexión (seg)',
+      'net.ipv4.tcp_keepalive_time': 'Tiempo antes de keepalive (seg)',
+      'net.ipv4.tcp_keepalive_intvl': 'Intervalo entre keepalives (seg)',
+      'net.ipv4.tcp_keepalive_probes': 'Intentos de keepalive antes de cerrar',
+      'net.ipv4.tcp_max_syn_backlog': 'Cola máxima de SYN pendientes',
+      'net.ipv4.tcp_syncookies': 'Protección contra SYN flood',
+      'net.ipv4.tcp_slow_start_after_idle': 'Slow start después de idle',
+      'net.ipv4.tcp_mtu_probing': 'Descubrimiento automático de MTU',
+      'net.ipv4.tcp_fastopen': 'TCP Fast Open (cliente+servidor)',
+      'net.ipv4.tcp_window_scaling': 'Escalado de ventana TCP',
+      'net.ipv4.tcp_timestamps': 'Timestamps TCP (RTT preciso)',
+      'net.ipv4.tcp_sack': 'Selective ACK',
+      'fs.file-max': 'Máximo de archivos abiertos del sistema',
+      'fs.inotify.max_user_watches': 'Máximo de watches inotify',
+      'fs.inotify.max_user_instances': 'Máximo de instancias inotify',
+      'vm.swappiness': 'Tendencia a usar swap (menor = menos swap)',
+      'vm.dirty_ratio': '% de RAM con datos sucios antes de flush',
+      'vm.dirty_background_ratio': '% de RAM para flush en background',
+      'vm.vfs_cache_pressure': 'Presión de caché VFS',
+    };
+
+    const categories = {
+      'TCP Congestion': ['net.ipv4.tcp_congestion_control', 'net.core.default_qdisc'],
+      'Buffers de Red': ['net.ipv4.tcp_rmem', 'net.ipv4.tcp_wmem', 'net.ipv4.udp_rmem_min', 'net.ipv4.udp_wmem_min', 'net.core.rmem_default', 'net.core.rmem_max', 'net.core.wmem_default', 'net.core.wmem_max', 'net.core.optmem_max'],
+      'Conexiones': ['net.core.somaxconn', 'net.core.netdev_max_backlog', 'net.ipv4.tcp_max_tw_buckets', 'net.ipv4.tcp_tw_reuse', 'net.ipv4.tcp_max_syn_backlog', 'net.ipv4.tcp_syncookies'],
+      'TCP Keepalive': ['net.ipv4.tcp_keepalive_time', 'net.ipv4.tcp_keepalive_intvl', 'net.ipv4.tcp_keepalive_probes', 'net.ipv4.tcp_fin_timeout'],
+      'TCP Avanzado': ['net.ipv4.tcp_slow_start_after_idle', 'net.ipv4.tcp_mtu_probing', 'net.ipv4.tcp_fastopen', 'net.ipv4.tcp_window_scaling', 'net.ipv4.tcp_timestamps', 'net.ipv4.tcp_sack'],
+      'Sistema de Archivos': ['fs.file-max', 'fs.inotify.max_user_watches', 'fs.inotify.max_user_instances'],
+      'Memoria Virtual': ['vm.swappiness', 'vm.dirty_ratio', 'vm.dirty_background_ratio', 'vm.vfs_cache_pressure'],
+    };
+
+    const sysctl = {};
+    for (const key of sysctlKeys) {
+      const val = run(`sysctl -n ${key}`);
+      const rec = recommended[key] || null;
+      const isOptimal = val && rec ? val.replace(/\s+/g, '\t') === rec.replace(/\s+/g, '\t') : null;
+      sysctl[key] = {
+        value: val || 'N/A',
+        recommended: rec,
+        optimal: isOptimal,
+        description: descriptions[key] || key,
+      };
+    }
+
+    // --- Hardware info ---
+    const totalMem = os.totalmem();
+    const freeMem = os.freemem();
+    const cpus = os.cpus();
+    const uptime = os.uptime();
+    const loadAvg = os.loadavg();
+
+    // Disk info
+    const diskInfo = run("df -B1 / | tail -1 | awk '{print $2,$3,$4,$5}'");
+    const [diskTotal, diskUsed, diskAvail, diskPercent] = diskInfo ? diskInfo.split(' ') : [0, 0, 0, '0%'];
+
+    // HLS cache disk
+    const hlsDiskInfo = run("df -B1 /opt/streambox/hls-cache 2>/dev/null | tail -1 | awk '{print $2,$3,$4,$5}'");
+
+    // Open files
+    const openFiles = run("cat /proc/sys/fs/file-nr | awk '{print $1}'");
+    const maxFiles = run("cat /proc/sys/fs/file-nr | awk '{print $3}'");
+
+    // Ulimit
+    const ulimitN = run("ulimit -n");
+
+    // Kernel version
+    const kernelVersion = run("uname -r");
+
+    // BBR module loaded
+    const bbrLoaded = run("lsmod | grep bbr") ? true : false;
+
+    // Config file exists
+    const configApplied = fs.existsSync('/etc/sysctl.d/99-streambox.conf');
+
+    const optimizedCount = Object.values(sysctl).filter(v => v.optimal === true).length;
+    const totalParams = Object.keys(sysctl).length;
+
+    res.json({
+      sysctl,
+      categories,
+      hardware: {
+        cpu_model: cpus[0]?.model || 'Desconocido',
+        cpu_cores: cpus.length,
+        cpu_speed_mhz: cpus[0]?.speed || 0,
+        ram_total_gb: (totalMem / 1073741824).toFixed(1),
+        ram_free_gb: (freeMem / 1073741824).toFixed(1),
+        ram_used_gb: ((totalMem - freeMem) / 1073741824).toFixed(1),
+        ram_used_percent: ((1 - freeMem / totalMem) * 100).toFixed(0),
+        uptime_hours: (uptime / 3600).toFixed(1),
+        load_avg: loadAvg.map(l => l.toFixed(2)),
+        kernel: kernelVersion,
+      },
+      disk: {
+        total_gb: diskTotal ? (parseInt(diskTotal) / 1073741824).toFixed(1) : '?',
+        used_gb: diskUsed ? (parseInt(diskUsed) / 1073741824).toFixed(1) : '?',
+        avail_gb: diskAvail ? (parseInt(diskAvail) / 1073741824).toFixed(1) : '?',
+        percent: diskPercent || '?',
+      },
+      hls_cache_disk: hlsDiskInfo ? {
+        total_gb: (parseInt(hlsDiskInfo.split(' ')[0]) / 1073741824).toFixed(1),
+        used_gb: (parseInt(hlsDiskInfo.split(' ')[1]) / 1073741824).toFixed(1),
+        avail_gb: (parseInt(hlsDiskInfo.split(' ')[2]) / 1073741824).toFixed(1),
+        percent: hlsDiskInfo.split(' ')[3],
+      } : null,
+      files: {
+        open: openFiles || '?',
+        max: maxFiles || '?',
+        ulimit: ulimitN || '?',
+      },
+      status: {
+        config_applied: configApplied,
+        bbr_loaded: bbrLoaded,
+        optimized_count: optimizedCount,
+        total_params: totalParams,
+        score_percent: Math.round((optimizedCount / totalParams) * 100),
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// =============================================
 // INICIAR SERVIDOR
 // =============================================
 app.listen(PORT, '0.0.0.0', () => {
