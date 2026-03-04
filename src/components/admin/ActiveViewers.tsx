@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { apiGet } from '@/lib/api';
+import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { Users, MapPin, Tv, RefreshCw, Activity, Globe, Monitor } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -62,7 +63,7 @@ const ActiveViewers = () => {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const intervalRef = useRef<ReturnType<typeof setInterval>>();
 
-  const fetchViewers = async () => {
+  const fetchViewers = useCallback(async () => {
     try {
       const result = await apiGet('/api/viewers/active');
       setData(result);
@@ -72,15 +73,34 @@ const ActiveViewers = () => {
       }
     }
     setLoading(false);
-  };
+  }, [autoRefresh, toast]);
 
   useEffect(() => {
     fetchViewers();
+
+    // Realtime: escuchar cambios en active_connections
+    const channel = supabase
+      .channel('active-viewers-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'active_connections' },
+        () => {
+          // Cualquier INSERT/UPDATE/DELETE → refrescar inmediatamente
+          fetchViewers();
+        }
+      )
+      .subscribe();
+
+    // Polling de respaldo cada 5s
     if (autoRefresh) {
-      intervalRef.current = setInterval(fetchViewers, 10000);
+      intervalRef.current = setInterval(fetchViewers, 5000);
     }
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, [autoRefresh]);
+
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      supabase.removeChannel(channel);
+    };
+  }, [autoRefresh, fetchViewers]);
 
   // Agrupar por país
   const countryStats = data?.viewers.reduce((acc, v) => {
