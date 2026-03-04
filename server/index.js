@@ -654,8 +654,11 @@ app.get('/api/validate-stream', async (req, res) => {
 // =============================================
 // child_process, fs, path ya importados arriba
 
-const HLS_DIR = '/tmp/streambox-hls';
-const HLS_CACHE_DIR = '/tmp/streambox-cache';
+// Directorios de caché HLS - SSD por defecto (soporta 100+ canales)
+// El instalador configura /opt/streambox/hls-cache en SSD
+// Fallback a /tmp si no existe (compatibilidad con instalaciones anteriores)
+const HLS_DIR = fs.existsSync('/opt/streambox/hls-cache') ? '/opt/streambox/hls-cache' : '/tmp/streambox-hls';
+const HLS_CACHE_DIR = fs.existsSync('/opt/streambox/hls-proxy-cache') ? '/opt/streambox/hls-proxy-cache' : '/tmp/streambox-cache';
 const activeTranscoders = new Map(); // channelId -> { ffmpeg, clients, lastAccess, type }
 
 // Crear directorios base
@@ -663,27 +666,33 @@ const activeTranscoders = new Map(); // channelId -> { ffmpeg, clients, lastAcce
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 });
 
-// Verificar si estamos corriendo en tmpfs (RAM)
-const isTmpfs = (() => {
+// Detectar tipo de almacenamiento
+const storageInfo = (() => {
   try {
     const { execSync } = require('child_process');
     const output = execSync(`df -T ${HLS_DIR} 2>/dev/null`).toString();
-    const onTmpfs = output.includes('tmpfs');
-    if (onTmpfs) {
-      const parts = output.split('\n')[1]?.split(/\s+/) || [];
-      const sizeKB = parseInt(parts[2]) || 0;
-      const usedKB = parseInt(parts[3]) || 0;
-      const sizeMB = Math.round(sizeKB / 1024);
-      const usedMB = Math.round(usedKB / 1024);
-      console.log(`⚡ HLS en tmpfs (RAM): ${usedMB}MB / ${sizeMB}MB usado`);
+    const isTmpfs = output.includes('tmpfs');
+    const parts = output.split('\n')[1]?.split(/\s+/) || [];
+    const totalGB = Math.round((parseInt(parts[2]) || 0) / 1024 / 1024);
+    const usedGB = Math.round((parseInt(parts[3]) || 0) / 1024 / 1024);
+    const availGB = Math.round((parseInt(parts[4]) || 0) / 1024 / 1024);
+    
+    if (isTmpfs) {
+      const sizeMB = Math.round((parseInt(parts[2]) || 0) / 1024);
+      console.log(`⚡ HLS en RAM (tmpfs): ${sizeMB}MB disponibles`);
+      return { type: 'tmpfs', totalGB, availGB };
     } else {
-      console.log(`💾 HLS en disco normal: ${HLS_DIR} (recomendado: montar tmpfs para mejor rendimiento)`);
+      console.log(`💾 HLS en disco SSD: ${HLS_DIR} (${availGB}GB libres de ${totalGB}GB)`);
+      console.log(`   📊 Capacidad estimada: ~${Math.floor(availGB / 0.5)} canales keep-alive (30min caché)`);
+      return { type: 'ssd', totalGB, availGB };
     }
-    return onTmpfs;
-  } catch { return false; }
+  } catch { 
+    console.log(`💾 HLS en: ${HLS_DIR}`);
+    return { type: 'unknown', totalGB: 0, availGB: 0 }; 
+  }
 })();
 
-// Monitor de uso de RAM para tmpfs (cada 60s)
+// Monitor de uso de disco (cada 60s)
 setInterval(() => {
   try {
     const { execSync } = require('child_process');
@@ -692,14 +701,16 @@ setInterval(() => {
     const used = parts[2] || '?';
     const total = parts[1] || '?';
     const pct = parts[4] || '?';
-    if (parseInt(pct) > 80) {
-      console.warn(`⚠️ tmpfs casi lleno: ${used}/${total} (${pct})`);
-      // Limpieza agresiva: borrar canales sin clientes activos
+    const pctNum = parseInt(pct) || 0;
+    if (pctNum > 85) {
+      console.warn(`⚠️ Disco casi lleno: ${used}/${total} (${pct})`);
+      // Limpieza agresiva: borrar canales sin clientes activos (excepto keep-alive)
       const dirs = fs.readdirSync(HLS_DIR);
       dirs.forEach(dir => {
-        if (!activeTranscoders.has(dir)) {
+        const entry = activeTranscoders.get(dir);
+        if (!entry || (!entry.keepAlive && entry.clients <= 0)) {
           cleanChannelDir(dir);
-          console.log(`🧹 Canal ${dir} limpiado por presión de memoria`);
+          console.log(`🧹 Canal ${dir} limpiado por presión de disco`);
         }
       });
     }

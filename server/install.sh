@@ -389,57 +389,89 @@ else
 fi
 
 # =============================================
-# PASO 4.5: Configurar tmpfs para HLS (RAM Disk)
-# Segmentos HLS en RAM = latencia casi cero
+# PASO 4.5: Configurar almacenamiento HLS
+# SSD por defecto (soporta muchos más canales)
 # =============================================
-log_step "💾 [3.5/8] Configurando tmpfs para HLS en RAM..."
+log_step "💾 [3.5/8] Configurando almacenamiento HLS..."
 
-HLS_TMPFS_DIR="/tmp/streambox-hls"
-HLS_CACHE_DIR="/tmp/streambox-cache"
-TMPFS_SIZE="512M"
+HLS_DIR="/opt/streambox/hls-cache"
+HLS_CACHE_DIR="/opt/streambox/hls-proxy-cache"
 
-# Detectar RAM disponible y ajustar tamaño
+# Detectar tipo de disco
+DISK_TYPE="desconocido"
+ROOT_DISK=$(df / | tail -1 | awk '{print $1}' | sed 's/[0-9]*$//' | sed 's/p$//')
+ROOT_DISK_BASE=$(basename "$ROOT_DISK" 2>/dev/null)
+if [ -n "$ROOT_DISK_BASE" ] && [ -f "/sys/block/${ROOT_DISK_BASE}/queue/rotational" ]; then
+  ROTATIONAL=$(cat "/sys/block/${ROOT_DISK_BASE}/queue/rotational" 2>/dev/null)
+  if [ "$ROTATIONAL" = "0" ]; then
+    # Check if NVMe
+    if echo "$ROOT_DISK_BASE" | grep -q "nvme"; then
+      DISK_TYPE="NVMe SSD"
+    else
+      DISK_TYPE="SSD SATA"
+    fi
+  else
+    DISK_TYPE="HDD"
+  fi
+fi
+
+# Detectar espacio disponible
+DISK_AVAIL_GB=$(df -BG /opt 2>/dev/null | tail -1 | awk '{print $4}' | tr -d 'G')
+DISK_TOTAL_GB=$(df -BG /opt 2>/dev/null | tail -1 | awk '{print $2}' | tr -d 'G')
 TOTAL_RAM_MB=$(free -m | awk '/^Mem:/{print $2}')
-if [ "$TOTAL_RAM_MB" -ge 16384 ]; then
-  TMPFS_SIZE="4G"
-elif [ "$TOTAL_RAM_MB" -ge 8192 ]; then
-  TMPFS_SIZE="2G"
-elif [ "$TOTAL_RAM_MB" -ge 4096 ]; then
-  TMPFS_SIZE="1G"
-elif [ "$TOTAL_RAM_MB" -ge 2048 ]; then
-  TMPFS_SIZE="512M"
-else
-  TMPFS_SIZE="256M"
+
+echo ""
+echo -e "${CYAN}╔══════════════════════════════════════════════════╗"
+echo "║  💾 Información del almacenamiento               ║"
+echo "╠══════════════════════════════════════════════════╣"
+echo -e "║  Tipo de disco:    ${DISK_TYPE}$(printf '%*s' $((25 - ${#DISK_TYPE})) '')║"
+echo -e "║  Espacio total:    ${DISK_TOTAL_GB}GB$(printf '%*s' $((27 - ${#DISK_TOTAL_GB})) '')║"
+echo -e "║  Espacio libre:    ${DISK_AVAIL_GB}GB$(printf '%*s' $((27 - ${#DISK_AVAIL_GB})) '')║"
+echo -e "║  RAM total:        ${TOTAL_RAM_MB}MB$(printf '%*s' $((27 - ${#TOTAL_RAM_MB})) '')║"
+echo "╠══════════════════════════════════════════════════╣"
+echo "║  📊 Recomendación de disco por canales:          ║"
+echo "║                                                  ║"
+echo "║  Canales    Caché   Disco     RAM (FFmpeg)       ║"
+echo "║  ────────   ─────   ────────  ──────────         ║"
+echo "║  10 ch      30min   ~5 GB     ~4 GB              ║"
+echo "║  25 ch      30min   ~12 GB    ~8 GB              ║"
+echo "║  50 ch      30min   ~25 GB    ~12 GB             ║"
+echo "║  100 ch     30min   ~50 GB    ~20 GB             ║"
+echo "║  200 ch     30min   ~100 GB   ~35 GB             ║"
+echo "║                                                  ║"
+echo "║  💡 Tip: Solo canales keep-alive usan caché      ║"
+echo "║     Los demás se conectan bajo demanda (0 disco) ║"
+echo "╚══════════════════════════════════════════════════╝${NC}"
+echo ""
+
+if [ "$DISK_TYPE" = "HDD" ]; then
+  log_warn "Disco HDD detectado. Se recomienda SSD para streaming."
+  log_info "Un HDD puede manejar ~20-30 canales simultáneos."
+  log_info "Para más canales, considere migrar a SSD."
 fi
 
-log_info "RAM detectada: ${TOTAL_RAM_MB}MB → tmpfs: ${TMPFS_SIZE}"
-
-# Crear directorios
-mkdir -p "$HLS_TMPFS_DIR" "$HLS_CACHE_DIR"
-
-# Desmontar si ya existe
-umount "$HLS_TMPFS_DIR" 2>/dev/null || true
-
-# Montar tmpfs en RAM
-mount -t tmpfs -o size=${TMPFS_SIZE},noatime,nodiratime tmpfs "$HLS_TMPFS_DIR"
-if mountpoint -q "$HLS_TMPFS_DIR"; then
-  log_ok "tmpfs montado en $HLS_TMPFS_DIR (${TMPFS_SIZE} en RAM)"
-else
-  log_err "No se pudo montar tmpfs, usando disco normal"
+if [ "${DISK_AVAIL_GB:-0}" -lt 10 ]; then
+  log_warn "¡Poco espacio en disco! (${DISK_AVAIL_GB}GB libres)"
+  log_info "Se recomienda mínimo 20GB libres para streaming."
 fi
 
-# Agregar a fstab para persistir después de reinicio
-if ! grep -q "streambox-hls" /etc/fstab; then
-  echo "# Omnisync - HLS segments in RAM for zero-latency streaming" >> /etc/fstab
-  echo "tmpfs ${HLS_TMPFS_DIR} tmpfs defaults,noatime,nodiratime,size=${TMPFS_SIZE} 0 0" >> /etc/fstab
-  log_ok "tmpfs agregado a /etc/fstab (persistente)"
-else
-  sed -i "s|tmpfs ${HLS_TMPFS_DIR} tmpfs.*|tmpfs ${HLS_TMPFS_DIR} tmpfs defaults,noatime,nodiratime,size=${TMPFS_SIZE} 0 0|" /etc/fstab
-  log_info "Entrada tmpfs actualizada en /etc/fstab"
+# Desmontar tmpfs anterior si existe (migración desde versión anterior)
+if mountpoint -q "/tmp/streambox-hls" 2>/dev/null; then
+  log_info "Desmontando tmpfs anterior (migrando a SSD)..."
+  umount "/tmp/streambox-hls" 2>/dev/null || true
+fi
+# Limpiar entrada tmpfs de fstab si existe
+if grep -q "streambox-hls.*tmpfs" /etc/fstab 2>/dev/null; then
+  sed -i '/streambox-hls.*tmpfs/d' /etc/fstab
+  log_info "Entrada tmpfs removida de /etc/fstab"
 fi
 
-# Dar permisos
-chmod 777 "$HLS_TMPFS_DIR" "$HLS_CACHE_DIR"
+# Crear directorios en disco SSD
+mkdir -p "$HLS_DIR" "$HLS_CACHE_DIR"
+chmod 777 "$HLS_DIR" "$HLS_CACHE_DIR"
+
+log_ok "Almacenamiento HLS en disco SSD: $HLS_DIR"
+log_info "Capacidad estimada: ~$((DISK_AVAIL_GB / 500 * 1000)) canales keep-alive (30min caché)"
 
 # Instalar FFmpeg si no está
 if ! command -v ffmpeg &> /dev/null; then
@@ -449,7 +481,7 @@ fi
 FFMPEG_VERSION=$(ffmpeg -version 2>/dev/null | head -1 | awk '{print $3}')
 log_ok "FFmpeg ${FFMPEG_VERSION} listo"
 
-log_ok "Sistema tmpfs configurado - streams HLS en RAM"
+log_ok "Almacenamiento configurado - streams HLS en SSD"
 
 # =============================================
 # PASO 5: Configurar la API
