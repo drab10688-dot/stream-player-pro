@@ -123,22 +123,22 @@ const AdminDashboard = () => {
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="dashboard"><AdminStats /></TabsContent>
-          <TabsContent value="channels"><ChannelsManager /></TabsContent>
-          <TabsContent value="clients"><ClientsManager /></TabsContent>
-          <TabsContent value="resellers"><ResellersManager /></TabsContent>
-          <TabsContent value="ads"><AdsManager /></TabsContent>
-          <TabsContent value="alerts"><ExpirationAlerts /></TabsContent>
-          <TabsContent value="monitor"><ChannelMonitor /></TabsContent>
-          <TabsContent value="tunnel"><TunnelManager /></TabsContent>
-          <TabsContent value="streams"><StreamMonitor /></TabsContent>
-          <TabsContent value="diagnostics"><StreamDiagnostics /></TabsContent>
-          <TabsContent value="plans"><PlansManager /></TabsContent>
-          <TabsContent value="backups"><BackupManager /></TabsContent>
-          <TabsContent value="vod"><VodManager /></TabsContent>
-          <TabsContent value="series"><SeriesManager /></TabsContent>
-          <TabsContent value="viewers"><ActiveViewers /></TabsContent>
-          <TabsContent value="system"><SystemTuning /></TabsContent>
+          <TabsContent value="dashboard" forceMount className="data-[state=inactive]:hidden"><AdminStats /></TabsContent>
+          <TabsContent value="channels" forceMount className="data-[state=inactive]:hidden"><ChannelsManager /></TabsContent>
+          <TabsContent value="clients" forceMount className="data-[state=inactive]:hidden"><ClientsManager /></TabsContent>
+          <TabsContent value="resellers" forceMount className="data-[state=inactive]:hidden"><ResellersManager /></TabsContent>
+          <TabsContent value="ads" forceMount className="data-[state=inactive]:hidden"><AdsManager /></TabsContent>
+          <TabsContent value="alerts" forceMount className="data-[state=inactive]:hidden"><ExpirationAlerts /></TabsContent>
+          <TabsContent value="monitor" forceMount className="data-[state=inactive]:hidden"><ChannelMonitor /></TabsContent>
+          <TabsContent value="tunnel" forceMount className="data-[state=inactive]:hidden"><TunnelManager /></TabsContent>
+          <TabsContent value="streams" forceMount className="data-[state=inactive]:hidden"><StreamMonitor /></TabsContent>
+          <TabsContent value="diagnostics" forceMount className="data-[state=inactive]:hidden"><StreamDiagnostics /></TabsContent>
+          <TabsContent value="plans" forceMount className="data-[state=inactive]:hidden"><PlansManager /></TabsContent>
+          <TabsContent value="backups" forceMount className="data-[state=inactive]:hidden"><BackupManager /></TabsContent>
+          <TabsContent value="vod" forceMount className="data-[state=inactive]:hidden"><VodManager /></TabsContent>
+          <TabsContent value="series" forceMount className="data-[state=inactive]:hidden"><SeriesManager /></TabsContent>
+          <TabsContent value="viewers" forceMount className="data-[state=inactive]:hidden"><ActiveViewers /></TabsContent>
+          <TabsContent value="system" forceMount className="data-[state=inactive]:hidden"><SystemTuning /></TabsContent>
         </Tabs>
       </main>
     </div>
