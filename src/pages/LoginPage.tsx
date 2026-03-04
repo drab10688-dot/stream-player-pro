@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { motion } from 'framer-motion';
-import { Lock, User, Loader2, Play, Tv } from 'lucide-react';
+import { Lock, User, Loader2, Play, Tv, Download, Check, Smartphone } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -9,6 +9,11 @@ import { useNavigate } from 'react-router-dom';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import omnisyncLogo from '@/assets/omnisync-logo.png';
+
+interface BeforeInstallPromptEvent extends Event {
+  prompt(): Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
+}
 
 const SAVED_CREDS_KEY = 'omnisync_saved_credentials';
 
