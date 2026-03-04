@@ -838,6 +838,7 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir) {
     ffmpeg,
     clients: 1,
     lastAccess: Date.now(),
+    startTime: Date.now(),
     type: 'ffmpeg-adaptive',
     channelDir,
     manifestPath: masterPlaylistPath,
@@ -877,26 +878,41 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir) {
   ffmpeg.on('close', (code) => {
     console.log(`⚠️ [${channelId}] FFmpeg terminó (code: ${code})`);
 
+    const wasKeepAlive = entry.keepAlive;
+
     // If it crashed immediately and no fallback, try single quality
     if (!fallbackTriggered && code !== 0 && entry.retryCount === 0) {
       fallbackTriggered = true;
       console.log(`🔄 [${channelId}] Fallback a calidad única optimizada`);
       activeTranscoders.delete(channelId);
       const fallbackEntry = startSingleQualityTranscoder(channelId, sourceUrl, channelDir);
-      if (fallbackEntry) fallbackEntry.clients = entry.clients;
+      if (fallbackEntry) {
+        fallbackEntry.clients = entry.clients;
+        fallbackEntry.keepAlive = wasKeepAlive; // PRESERVAR keepAlive
+      }
       return;
     }
 
     activeTranscoders.delete(channelId);
-    if (entry.clients > 0 && entry.retryCount < entry.maxRetries) {
+    // Keep-alive channels ALWAYS retry, sin límite de reintentos
+    const shouldRetry = wasKeepAlive || (entry.clients > 0 && entry.retryCount < entry.maxRetries);
+    if (shouldRetry) {
       entry.retryCount++;
-      const delay = Math.min(2000 * entry.retryCount, 15000);
-      console.log(`🔄 [${channelId}] Reiniciando en ${delay}ms (intento ${entry.retryCount}/${entry.maxRetries})`);
+      const delay = wasKeepAlive 
+        ? Math.min(3000 * entry.retryCount, 30000) // keep-alive: más paciencia
+        : Math.min(2000 * entry.retryCount, 15000);
+      const maxLabel = wasKeepAlive ? '∞' : entry.maxRetries;
+      console.log(`🔄 [${channelId}] Reiniciando en ${delay}ms (intento ${entry.retryCount}/${maxLabel})${wasKeepAlive ? ' [KEEP-ALIVE]' : ''}`);
       setTimeout(() => {
         cleanChannelDir(channelId);
         startFFmpegTranscoder(channelId, sourceUrl);
         const newEntry = activeTranscoders.get(channelId);
-        if (newEntry) newEntry.clients = entry.clients;
+        if (newEntry) {
+          newEntry.clients = entry.clients;
+          newEntry.keepAlive = wasKeepAlive; // PRESERVAR keepAlive
+          // Reset retry count si era keep-alive (reintentos infinitos)
+          if (wasKeepAlive) newEntry.retryCount = 0;
+        }
       }, delay);
     } else {
       cleanChannelDir(channelId);
@@ -938,6 +954,7 @@ function startSingleQualityTranscoder(channelId, sourceUrl, channelDir) {
     ffmpeg,
     clients: 1,
     lastAccess: Date.now(),
+    startTime: Date.now(),
     type: 'ffmpeg',
     channelDir,
     manifestPath,
@@ -964,19 +981,27 @@ function startSingleQualityTranscoder(channelId, sourceUrl, channelDir) {
 
   ffmpeg.on('close', (code) => {
     console.log(`⚠️ [${channelId}] FFmpeg terminó (code: ${code})`);
+    const wasKeepAlive = entry.keepAlive;
     activeTranscoders.delete(channelId);
 
-    // Reconectar si hay clientes
-    if (entry.clients > 0 && entry.retryCount < entry.maxRetries) {
+    // Keep-alive channels ALWAYS retry
+    const shouldRetry = wasKeepAlive || (entry.clients > 0 && entry.retryCount < entry.maxRetries);
+    if (shouldRetry) {
       entry.retryCount++;
-      const delay = Math.min(2000 * entry.retryCount, 15000);
-      console.log(`🔄 [${channelId}] Reiniciando FFmpeg en ${delay}ms (intento ${entry.retryCount}/${entry.maxRetries})`);
+      const delay = wasKeepAlive 
+        ? Math.min(3000 * entry.retryCount, 30000)
+        : Math.min(2000 * entry.retryCount, 15000);
+      const maxLabel = wasKeepAlive ? '∞' : entry.maxRetries;
+      console.log(`🔄 [${channelId}] Reiniciando FFmpeg en ${delay}ms (intento ${entry.retryCount}/${maxLabel})${wasKeepAlive ? ' [KEEP-ALIVE]' : ''}`);
       setTimeout(() => {
         cleanChannelDir(channelId);
         startFFmpegTranscoder(channelId, sourceUrl);
-        // Restaurar count de clientes
         const newEntry = activeTranscoders.get(channelId);
-        if (newEntry) newEntry.clients = entry.clients;
+        if (newEntry) {
+          newEntry.clients = entry.clients;
+          newEntry.keepAlive = wasKeepAlive;
+          if (wasKeepAlive) newEntry.retryCount = 0;
+        }
       }, delay);
     } else {
       cleanChannelDir(channelId);
@@ -1063,7 +1088,7 @@ async function initKeepAliveChannels() {
   }
 }
 
-// Health monitor: restart crashed keep-alive channels every 60s
+// Health monitor: restart crashed keep-alive channels every 30s (más rápido)
 setInterval(async () => {
   try {
     const { rows } = await pool.query(
@@ -1074,10 +1099,65 @@ setInterval(async () => {
       if (!entry) {
         console.log(`🔄 [${ch.id}] Keep-alive caído, reiniciando...`);
         startKeepAliveChannel(ch.id, ch.url);
+        await new Promise(r => setTimeout(r, 1000)); // stagger
       }
     }
   } catch {}
-}, 60000);
+}, 30000);
+
+// API: Estado de keep-alive y caché de todos los canales
+app.get('/api/channels/cache-status', authAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT id, name, keep_alive, is_active FROM channels ORDER BY sort_order'
+    );
+    const status = rows.map(ch => {
+      const entry = activeTranscoders.get(ch.id);
+      let cacheSize = 0;
+      let segmentCount = 0;
+      if (entry && entry.channelDir && fs.existsSync(entry.channelDir)) {
+        try {
+          const countFiles = (dir) => {
+            let count = 0, size = 0;
+            fs.readdirSync(dir).forEach(f => {
+              const fp = path.join(dir, f);
+              const stat = fs.statSync(fp);
+              if (stat.isDirectory()) {
+                const sub = countFiles(fp);
+                count += sub.count;
+                size += sub.size;
+              } else if (f.endsWith('.ts')) {
+                count++;
+                size += stat.size;
+              }
+            });
+            return { count, size };
+          };
+          const result = countFiles(entry.channelDir);
+          segmentCount = result.count;
+          cacheSize = result.size;
+        } catch {}
+      }
+      return {
+        id: ch.id,
+        name: ch.name,
+        keep_alive: ch.keep_alive,
+        is_active: ch.is_active,
+        transcoder_active: !!entry,
+        transcoder_ready: entry?.ready || false,
+        transcoder_type: entry?.type || null,
+        clients: entry?.clients || 0,
+        uptime_seconds: entry ? Math.round((Date.now() - (entry.startTime || entry.lastAccess)) / 1000) : 0,
+        cache_segments: segmentCount,
+        cache_size_mb: Math.round(cacheSize / 1024 / 1024 * 10) / 10,
+        adaptive: entry?.adaptive || false,
+      };
+    });
+    res.json(status);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // =============================================
 // PROXY HLS NATIVO (para canales que ya son m3u8)
