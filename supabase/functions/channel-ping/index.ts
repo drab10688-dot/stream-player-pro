@@ -37,9 +37,15 @@ Deno.serve(async (req) => {
     const { data: channels, error } = await query;
     if (error) throw error;
 
-    // Ping each channel URL
-    const results = await Promise.all(
-      (channels || []).map(async (ch) => {
+    // Ping channels with concurrency limit to avoid saturating gateway
+    const CONCURRENCY = 5;
+    const channelList = channels || [];
+    const results: any[] = [];
+
+    for (let i = 0; i < channelList.length; i += CONCURRENCY) {
+      const batch = channelList.slice(i, i + CONCURRENCY);
+      const batchResults = await Promise.all(
+        batch.map(async (ch) => {
         const start = Date.now();
         try {
           const isYouTube = /youtube\.com|youtu\.be/.test(ch.url);
@@ -121,7 +127,9 @@ Deno.serve(async (req) => {
           };
         }
       })
-    );
+      );
+      results.push(...batchResults);
+    }
 
     // Auto-manage: disable failing channels, re-enable recovered ones
     const autoActions = { disabled: [] as string[], reactivated: [] as string[] };
