@@ -432,7 +432,7 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
         controls
         muted={muted}
         preload="auto"
-        crossOrigin="anonymous"
+        {...(detectStreamType(src) !== 'ts' ? { crossOrigin: 'anonymous' as const } : {})}
         onCanPlay={() => { setLoading(false); setRetryInfo(null); }}
         onWaiting={() => setLoading(true)}
         onPlaying={() => { setLoading(false); setRetryInfo(null); isPlayingRef.current = true; }}

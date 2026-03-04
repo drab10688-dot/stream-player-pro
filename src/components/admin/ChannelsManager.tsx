@@ -149,11 +149,18 @@ const ChannelsManager = () => {
 
   const toggleActive = async (ch: Channel) => {
     try {
+      const newActive = !ch.is_active;
+      // When activating, also clear auto_disabled and consecutive_failures
+      const updates: Record<string, any> = { is_active: newActive };
+      if (newActive) {
+        updates.auto_disabled = false;
+        updates.consecutive_failures = 0;
+      }
       if (isLovablePreview()) {
-        const { error } = await supabase.from('channels').update({ is_active: !ch.is_active }).eq('id', ch.id);
+        const { error } = await supabase.from('channels').update(updates).eq('id', ch.id);
         if (error) throw error;
       } else {
-        await apiPut(`/api/channels/${ch.id}`, { is_active: !ch.is_active });
+        await apiPut(`/api/channels/${ch.id}`, updates);
       }
       fetchChannels();
     } catch (err: any) {
