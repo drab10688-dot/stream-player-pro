@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { motion } from 'framer-motion';
-import { Lock, User, Loader2, Play, Tv } from 'lucide-react';
+import { Lock, User, Loader2, Play, Tv, Download, Check, Smartphone } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -10,6 +10,11 @@ import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import omnisyncLogo from '@/assets/omnisync-logo.png';
 
+interface BeforeInstallPromptEvent extends Event {
+  prompt(): Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
+}
+
 const SAVED_CREDS_KEY = 'omnisync_saved_credentials';
 
 const LoginPage = () => {
@@ -17,9 +22,24 @@ const LoginPage = () => {
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [isInstalled, setIsInstalled] = useState(false);
   const { login } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
+
+  // PWA install prompt
+  useEffect(() => {
+    const handler = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e as BeforeInstallPromptEvent);
+    };
+    window.addEventListener('beforeinstallprompt', handler);
+    if (window.matchMedia('(display-mode: standalone)').matches) {
+      setIsInstalled(true);
+    }
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
 
   // Load saved credentials and auto-login
   useEffect(() => {
@@ -174,14 +194,44 @@ const LoginPage = () => {
             transition={{ delay: 0.6 }}
             className="mt-5"
           >
+            {/* Direct install button */}
+            {!isInstalled && deferredPrompt && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={async () => {
+                  await deferredPrompt.prompt();
+                  const { outcome } = await deferredPrompt.userChoice;
+                  if (outcome === 'accepted') {
+                    setIsInstalled(true);
+                    toast({ title: '¡App instalada!', description: 'Búscala en tu pantalla de inicio' });
+                  }
+                  setDeferredPrompt(null);
+                }}
+                tabIndex={0}
+                className="w-full h-12 2xl:h-14 rounded-xl border-primary/30 bg-primary/5 hover:bg-primary/10 text-primary font-medium text-base 2xl:text-lg tv-focusable gap-2"
+              >
+                <Download className="w-5 h-5" />
+                Instalar App
+              </Button>
+            )}
+
+            {isInstalled && (
+              <div className="w-full h-12 2xl:h-14 rounded-xl border border-primary/20 bg-primary/5 flex items-center justify-center gap-2 text-primary">
+                <Check className="w-5 h-5" />
+                <span className="font-medium text-base">App instalada</span>
+              </div>
+            )}
+
+            {/* Smart TV / manual install */}
             <Button
               type="button"
-              variant="outline"
+              variant="ghost"
               onClick={() => navigate('/install')}
               tabIndex={0}
-              className="w-full h-12 2xl:h-14 rounded-xl border-primary/30 bg-primary/5 hover:bg-primary/10 text-primary font-medium text-base 2xl:text-lg tv-focusable gap-2"
+              className="w-full h-10 rounded-xl text-muted-foreground hover:text-primary text-sm tv-focusable gap-2"
             >
-              <Tv className="w-5 h-5" />
+              <Tv className="w-4 h-4" />
               Instalar en Smart TV
             </Button>
           </motion.div>
@@ -190,7 +240,7 @@ const LoginPage = () => {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.7 }}
-            className="flex items-center justify-center gap-2 mt-6"
+            className="flex items-center justify-center gap-2 mt-4"
           >
             <Play className="w-3 h-3 text-primary/50" />
             <p className="text-muted-foreground text-xs tracking-wider uppercase">
