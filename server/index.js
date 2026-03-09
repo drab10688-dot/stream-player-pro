@@ -3176,6 +3176,7 @@ app.get('/api/admin/system-info', async (req, res) => {
         avail_gb: (parseInt(hlsDiskInfo.split(' ')[2]) / 1073741824).toFixed(1),
         percent: hlsDiskInfo.split(' ')[3],
       } : null,
+      network: netBytes,
       files: {
         open: openFiles || '?',
         max: maxFiles || '?',
