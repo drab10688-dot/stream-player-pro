@@ -3124,6 +3124,22 @@ app.get('/api/admin/system-info', async (req, res) => {
     // Kernel version
     const kernelVersion = run("uname -r");
 
+    // Network bandwidth (bytes from /proc/net/dev for main interface)
+    const getNetBytes = () => {
+      try {
+        const iface = run("ip route | grep default | awk '{print $5}'") || 'eth0';
+        const netLine = run(`cat /proc/net/dev | grep '${iface}:'`);
+        if (!netLine) return null;
+        const parts = netLine.split(':')[1].trim().split(/\s+/);
+        return {
+          interface: iface,
+          rx_bytes: parseInt(parts[0]) || 0,
+          tx_bytes: parseInt(parts[8]) || 0,
+        };
+      } catch { return null; }
+    };
+    const netBytes = getNetBytes();
+
     // BBR module loaded
     const bbrLoaded = run("lsmod | grep bbr") ? true : false;
 
@@ -3160,6 +3176,7 @@ app.get('/api/admin/system-info', async (req, res) => {
         avail_gb: (parseInt(hlsDiskInfo.split(' ')[2]) / 1073741824).toFixed(1),
         percent: hlsDiskInfo.split(' ')[3],
       } : null,
+      network: netBytes,
       files: {
         open: openFiles || '?',
         max: maxFiles || '?',
