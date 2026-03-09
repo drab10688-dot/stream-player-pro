@@ -62,21 +62,44 @@ const SystemTuning = () => {
   const [data, setData] = useState<SystemInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [expandedCats, setExpandedCats] = useState<Record<string, boolean>>({});
+  const [bandwidth, setBandwidth] = useState<{ rx_mbps: number; tx_mbps: number } | null>(null);
+  const prevNetRef = useRef<{ rx: number; tx: number; time: number } | null>(null);
+  const bandwidthIntervalRef = useRef<ReturnType<typeof setInterval>>();
   const { toast } = useToast();
 
-  const fetchData = async () => {
-    setLoading(true);
+  const fetchData = async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const res = await apiGet('/api/admin/system-info');
       setData(res);
+
+      // Calculate bandwidth from delta
+      if (res.network) {
+        const now = Date.now();
+        const prev = prevNetRef.current;
+        if (prev) {
+          const dtSec = (now - prev.time) / 1000;
+          if (dtSec > 0) {
+            const rxMbps = ((res.network.rx_bytes - prev.rx) * 8) / (dtSec * 1_000_000);
+            const txMbps = ((res.network.tx_bytes - prev.tx) * 8) / (dtSec * 1_000_000);
+            setBandwidth({ rx_mbps: Math.max(0, rxMbps), tx_mbps: Math.max(0, txMbps) });
+          }
+        }
+        prevNetRef.current = { rx: res.network.rx_bytes, tx: res.network.tx_bytes, time: now };
+      }
     } catch {
-      toast({ title: 'Error', description: 'No se pudo obtener info del sistema. Verifica que el servidor esté actualizado.', variant: 'destructive' });
+      if (!silent) toast({ title: 'Error', description: 'No se pudo obtener info del sistema. Verifica que el servidor esté actualizado.', variant: 'destructive' });
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => {
+    fetchData();
+    // Auto-refresh every 5s for bandwidth
+    bandwidthIntervalRef.current = setInterval(() => fetchData(true), 5000);
+    return () => { if (bandwidthIntervalRef.current) clearInterval(bandwidthIntervalRef.current); };
+  }, []);
 
   const toggleCat = (cat: string) => setExpandedCats(prev => ({ ...prev, [cat]: !prev[cat] }));
 
