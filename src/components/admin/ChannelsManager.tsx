@@ -273,11 +273,28 @@ const ChannelsManager = () => {
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h2 className="font-display font-semibold text-xl text-foreground">Canales ({channels.length})</h2>
-        <div className="flex gap-2">
-          <Button onClick={() => { setShowM3UImport(!showM3UImport); setShowForm(false); }} variant="outline" className="gap-2 border-border text-foreground">
+        <div className="flex gap-2 flex-wrap">
+          {/* Filter: show only running */}
+          {cacheStatus.some(c => c.transcoder_active) && (
+            <Button
+              onClick={() => setFilterRunning(!filterRunning)}
+              variant={filterRunning ? 'default' : 'outline'}
+              className={`gap-2 ${filterRunning ? 'gradient-primary text-primary-foreground' : 'border-border text-foreground'}`}
+              size="sm"
+            >
+              <Activity className="w-4 h-4" />
+              En vivo ({cacheStatus.filter(c => c.transcoder_active).length})
+            </Button>
+          )}
+          {selectedIds.size > 0 && (
+            <Button onClick={handleBatchDelete} variant="destructive" size="sm" className="gap-2">
+              <Trash2 className="w-4 h-4" /> Eliminar ({selectedIds.size})
+            </Button>
+          )}
+          <Button onClick={() => { setShowM3UImport(!showM3UImport); setShowForm(false); }} variant="outline" className="gap-2 border-border text-foreground" size="sm">
             <Upload className="w-4 h-4" /> Importar M3U
           </Button>
-          <Button onClick={() => { setShowForm(true); setShowM3UImport(false); setEditingId(null); setLogoPreview(null); setForm({ name: '', url: '', category: 'General', sort_order: 0, logo_url: '' }); }} className="gradient-primary text-primary-foreground gap-2">
+          <Button onClick={() => { setShowForm(true); setShowM3UImport(false); setEditingId(null); setLogoPreview(null); setForm({ name: '', url: '', category: 'General', sort_order: 0, logo_url: '' }); }} className="gradient-primary text-primary-foreground gap-2" size="sm">
             <Plus className="w-4 h-4" /> Agregar Canal
           </Button>
         </div>
