@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { apiGet } from '@/lib/api';
 import { useToast } from '@/hooks/use-toast';
-import { Cpu, HardDrive, MemoryStick, Network, Shield, CheckCircle2, XCircle, AlertTriangle, RefreshCw, Copy, ChevronDown, ChevronRight, Server, Gauge } from 'lucide-react';
+import { Cpu, HardDrive, MemoryStick, Network, Shield, CheckCircle2, XCircle, AlertTriangle, RefreshCw, Copy, ChevronDown, ChevronRight, Server, Gauge, ArrowDownToLine, ArrowUpFromLine } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
@@ -12,6 +12,12 @@ interface SysctlParam {
   recommended: string | null;
   optimal: boolean | null;
   description: string;
+}
+
+interface NetworkBytes {
+  interface: string;
+  rx_bytes: number;
+  tx_bytes: number;
 }
 
 interface SystemInfo {
@@ -31,6 +37,7 @@ interface SystemInfo {
   };
   disk: { total_gb: string; used_gb: string; avail_gb: string; percent: string };
   hls_cache_disk: { total_gb: string; used_gb: string; avail_gb: string; percent: string } | null;
+  network: NetworkBytes | null;
   files: { open: string; max: string; ulimit: string };
   status: {
     config_applied: boolean;
