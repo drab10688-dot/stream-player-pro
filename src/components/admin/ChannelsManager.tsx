@@ -511,8 +511,8 @@ const ChannelsManager = () => {
                         />
                       </div>
                     )}
-                    <Button variant="ghost" size="sm" onClick={() => toggleActive(ch)} className="text-xs text-muted-foreground">
-                      {ch.is_active ? 'Desactivar' : 'Activar'}
+                    <Button variant="ghost" size="icon" onClick={() => toggleActive(ch)} title={ch.is_active ? 'Desactivar canal' : 'Activar canal'}>
+                      <div className={`w-3 h-3 rounded-full ${ch.is_active ? 'bg-green-500' : 'bg-red-500'}`} />
                     </Button>
                     <Button variant="ghost" size="icon" onClick={() => handleEdit(ch)} className="text-muted-foreground hover:text-primary">
                       <Edit2 className="w-4 h-4" />
