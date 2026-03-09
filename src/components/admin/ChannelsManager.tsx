@@ -150,10 +150,48 @@ const ChannelsManager = () => {
     }
   };
 
+  const handleBatchDelete = async () => {
+    if (selectedIds.size === 0) return;
+    const count = selectedIds.size;
+    if (!confirm(`¿Eliminar ${count} canal(es) seleccionados?`)) return;
+    try {
+      if (isLovablePreview()) {
+        const { error } = await supabase.from('channels').delete().in('id', Array.from(selectedIds));
+        if (error) throw error;
+      } else {
+        await Promise.all(Array.from(selectedIds).map(id => apiDelete(`/api/channels/${id}`)));
+      }
+      toast({ title: `${count} canales eliminados` });
+      setSelectedIds(new Set());
+      fetchChannels();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    const visibleChannels = filterRunning 
+      ? channels.filter(ch => cacheStatus.some(c => c.id === ch.id && c.transcoder_active))
+      : channels;
+    if (selectedIds.size === visibleChannels.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(visibleChannels.map(ch => ch.id)));
+    }
+  };
+
   const toggleActive = async (ch: Channel) => {
     try {
       const newActive = !ch.is_active;
-      // When activating, also clear auto_disabled and consecutive_failures
       const updates: Record<string, any> = { is_active: newActive };
       if (newActive) {
         updates.auto_disabled = false;
