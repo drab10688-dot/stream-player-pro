@@ -144,7 +144,7 @@ const SystemTuning = () => {
           </h2>
           <p className="text-sm text-muted-foreground mt-1">Parámetros del kernel y recursos del servidor</p>
         </div>
-        <Button onClick={fetchData} variant="outline" size="sm">
+        <Button onClick={() => fetchData()} variant="outline" size="sm">
           <RefreshCw className="w-4 h-4 mr-2" /> Actualizar
         </Button>
       </div>
