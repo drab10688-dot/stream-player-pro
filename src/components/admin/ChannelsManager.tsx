@@ -51,6 +51,8 @@ const ChannelsManager = () => {
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
   const [previewChannelId, setPreviewChannelId] = useState<string | null>(null);
   const [cacheStatus, setCacheStatus] = useState<CacheStatus[]>([]);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [filterRunning, setFilterRunning] = useState(false);
   const logoInputRef = useRef<HTMLInputElement>(null);
   const cacheIntervalRef = useRef<ReturnType<typeof setInterval>>();
 
