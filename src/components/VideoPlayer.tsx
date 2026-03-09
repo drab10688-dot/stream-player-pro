@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback } from 'react';
+import { useRef, useEffect, useState, useCallback, memo } from 'react';
 import Hls from 'hls.js';
 import mpegts from 'mpegts.js';
 
@@ -60,10 +60,10 @@ const getQualityColor = (label: string): string => {
   return 'bg-white/70';
 };
 
-const MAX_RETRIES = 12;          // más reintentos antes de rendirse
-const MAX_FULL_RECONNECTS = 3;   // reconexiones completas (destruir y recrear)
+const MAX_RETRIES = 12;
+const MAX_FULL_RECONNECTS = 3;
 
-const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProps) => {
+const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlayerProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const mpegtsRef = useRef<mpegts.Player | null>(null);
@@ -78,10 +78,12 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
   const retryCountRef = useRef(0);
   const fullReconnectCountRef = useRef(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout>>();
-  const isPlayingRef = useRef(false); // tracks if we ever got playback
+  const isPlayingRef = useRef(false);
   const initializerRef = useRef<(() => void) | null>(null);
+  const lastQualityUpdateRef = useRef(0);
+  const lastBufferUpdateRef = useRef(0);
+  const fragCountRef = useRef(0);
 
-  // Auto-hide quality badge after 5s of no interaction
   const resetHideTimer = useCallback(() => {
     setQualityVisible(true);
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
@@ -119,6 +121,7 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
     setRetryInfo(null);
     retryCountRef.current = 0;
     isPlayingRef.current = false;
+    fragCountRef.current = 0;
     cleanup();
 
     const reportError = (msg: string) => {
@@ -128,7 +131,6 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
       onError?.(msg);
     };
 
-    // Full reconnect: destroy everything and re-initialize from scratch
     const fullReconnect = () => {
       if (fullReconnectCountRef.current >= MAX_FULL_RECONNECTS) {
         reportError('No se pudo conectar al stream después de varios intentos.');
@@ -146,7 +148,6 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
 
     const retryStream = () => {
       if (retryCountRef.current >= MAX_RETRIES) {
-        // Try full reconnect instead of giving up
         fullReconnect();
         return;
       }
@@ -195,14 +196,14 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
         }, {
           enableWorker: true,
           enableStashBuffer: true,
-          stashInitialSize: 1024 * 1024,
+          stashInitialSize: 512 * 1024,        // 512KB initial (was 1MB) — faster start
           liveBufferLatencyChasing: true,
-          liveBufferLatencyMaxLatency: 8,
-          liveBufferLatencyMinRemain: 1,
+          liveBufferLatencyMaxLatency: 5,       // tighter latency (was 8)
+          liveBufferLatencyMinRemain: 0.5,      // closer to live (was 1)
           lazyLoad: false,
           autoCleanupSourceBuffer: true,
-          autoCleanupMaxBackwardDuration: 30,
-          autoCleanupMinBackwardDuration: 15,
+          autoCleanupMaxBackwardDuration: 15,   // less back-buffer (was 30)
+          autoCleanupMinBackwardDuration: 8,    // (was 15)
         });
         mpegtsRef.current = player;
         player.attachMediaElement(video);
@@ -213,12 +214,15 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
           retryStream();
         });
 
+        // Throttle STATISTICS_INFO — only update quality every 3s
         player.on(mpegts.Events.STATISTICS_INFO, () => {
+          const now = Date.now();
           if (loading && video.readyState >= 2) {
             setLoading(false);
             setRetryInfo(null);
           }
-          if (video.videoHeight) {
+          if (now - lastQualityUpdateRef.current > 3000 && video.videoHeight) {
+            lastQualityUpdateRef.current = now;
             setQuality({
               label: getQualityLabel(video.videoHeight, undefined),
               current: 0,
@@ -242,35 +246,35 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
       } else if (Hls.isSupported()) {
         const hls = new Hls({
           enableWorker: true,
-          lowLatencyMode: true,           // arranque más rápido
-          abrEwmaDefaultEstimate: 1000000, // asumir 1Mbps para iniciar rápido
+          lowLatencyMode: true,
+          abrEwmaDefaultEstimate: 1000000,
           abrEwmaFastLive: 3,
           abrEwmaSlowLive: 9,
           abrEwmaFastVoD: 3,
           abrEwmaSlowVoD: 9,
           abrBandWidthFactor: 0.8,
           abrBandWidthUpFactor: 0.6,
-          // Buffer: arrancar rápido, luego acumular
-          maxBufferLength: 1800,
-          maxMaxBufferLength: 3600,
-          maxBufferSize: 500 * 1000 * 1000,
-          maxBufferHole: 0.8,              // tolerar huecos más grandes
-          backBufferLength: 120,
-          // Arranque instantáneo
-          liveSyncDurationCount: 2,        // empezar cerca del live edge
+          // Buffer: reasonable limits (was 1800/3600 = extreme memory usage)
+          maxBufferLength: 120,                // 2 min (was 30 min!)
+          maxMaxBufferLength: 300,             // 5 min max (was 60 min!)
+          maxBufferSize: 60 * 1000 * 1000,    // 60MB (was 500MB!)
+          maxBufferHole: 0.5,
+          backBufferLength: 30,               // 30s back (was 120s)
+          // Live sync
+          liveSyncDurationCount: 2,
           liveMaxLatencyDurationCount: 5,
           liveDurationInfinity: true,
-          // Reintentos agresivos
-          fragLoadingMaxRetry: 30,
-          fragLoadingRetryDelay: 1500,
-          fragLoadingMaxRetryTimeout: 64000,
-          manifestLoadingMaxRetry: 25,
-          manifestLoadingRetryDelay: 1500,
-          manifestLoadingMaxRetryTimeout: 64000,
-          levelLoadingMaxRetry: 25,
-          levelLoadingRetryDelay: 1500,
-          levelLoadingMaxRetryTimeout: 64000,
-          startLevel: 0,                   // empezar en la calidad más baja = más rápido
+          // Retries — still aggressive but less extreme
+          fragLoadingMaxRetry: 15,            // (was 30)
+          fragLoadingRetryDelay: 1000,        // faster retry (was 1500)
+          fragLoadingMaxRetryTimeout: 30000,  // (was 64000)
+          manifestLoadingMaxRetry: 10,        // (was 25)
+          manifestLoadingRetryDelay: 1000,
+          manifestLoadingMaxRetryTimeout: 30000,
+          levelLoadingMaxRetry: 10,
+          levelLoadingRetryDelay: 1000,
+          levelLoadingMaxRetryTimeout: 30000,
+          startLevel: 0,
           startFragPrefetch: true,
           testBandwidth: true,
           progressive: true,
@@ -291,13 +295,22 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
           resetHideTimer();
         });
 
+        // Throttle FRAG_LOADED: update buffer/quality every 5th fragment or every 5s
         hls.on(Hls.Events.FRAG_LOADED, () => {
-          // Reset retry counter on successful fragment load
           retryCountRef.current = 0;
-          setRetryInfo(null);
           isPlayingRef.current = true;
-          updateQualityInfo(hls);
-          if (video.buffered.length > 0) {
+          fragCountRef.current++;
+
+          const now = Date.now();
+          if (fragCountRef.current <= 2 || now - lastQualityUpdateRef.current > 5000) {
+            lastQualityUpdateRef.current = now;
+            setRetryInfo(null);
+            updateQualityInfo(hls);
+          }
+
+          // Update buffer display max every 10s
+          if (now - lastBufferUpdateRef.current > 10000 && video.buffered.length > 0) {
+            lastBufferUpdateRef.current = now;
             const buffered = video.buffered.end(video.buffered.length - 1) - video.currentTime;
             setBufferAhead(Math.max(0, Math.round(buffered)));
           }
@@ -315,7 +328,6 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
                 hls.recoverMediaError();
                 break;
               default:
-                // Si nunca llegamos a reproducir, intentar reconexión completa
                 if (!isPlayingRef.current) {
                   console.warn('HLS fatal error before playback, full reconnect...', data.details);
                   fullReconnect();
@@ -338,23 +350,21 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
       attemptPlay(video);
     }
 
+    // Stall check — only when actively playing, every 15s (was 10s)
     const stallCheck = setInterval(() => {
       if (video && !video.paused && video.readyState < 3 && !loading) {
         retryStream();
       }
-    }, 10000);
+    }, 15000);
 
     resetHideTimer();
 
-    // Store cleanup for this initialization
     const localCleanup = () => {
       clearInterval(stallCheck);
       cleanup();
     };
 
-    // We need to return cleanup, but since we're in a callback we store it
     initializerRef.current = localCleanup;
-
     return localCleanup;
   }, [src, cleanup, resetHideTimer, onError]);
 
@@ -437,14 +447,12 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
         onWaiting={() => setLoading(true)}
         onPlaying={() => { setLoading(false); setRetryInfo(null); isPlayingRef.current = true; }}
         onError={() => {
-          // Solo mostrar error si NO hay un HLS/mpegts manejando reintentos
           if (!hlsRef.current && !mpegtsRef.current) {
             const msg = 'No se pudo reproducir este canal. Verifica la URL.';
             setError(msg);
             setLoading(false);
             onError?.(msg);
           }
-          // Si hay HLS/mpegts, dejar que ellos manejen el error
         }}
       />
 
@@ -550,6 +558,8 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
       )}
     </div>
   );
-};
+});
+
+VideoPlayer.displayName = 'VideoPlayer';
 
 export default VideoPlayer;
