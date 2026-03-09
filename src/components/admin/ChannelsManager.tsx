@@ -7,7 +7,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
-import { Plus, Trash2, Edit2, Save, X, Tv, Upload, Link, FileText, Loader2, Zap, ImagePlus, Play, Square, Activity, HardDrive } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, Tv, Upload, Link, FileText, Loader2, Zap, ImagePlus, Play, Square, Activity, HardDrive, CheckSquare, Square as SquareIcon } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
 import { motion, AnimatePresence } from 'framer-motion';
 import VideoPlayer from '@/components/VideoPlayer';
 import { Badge } from '@/components/ui/badge';
@@ -50,6 +51,8 @@ const ChannelsManager = () => {
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
   const [previewChannelId, setPreviewChannelId] = useState<string | null>(null);
   const [cacheStatus, setCacheStatus] = useState<CacheStatus[]>([]);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [filterRunning, setFilterRunning] = useState(false);
   const logoInputRef = useRef<HTMLInputElement>(null);
   const cacheIntervalRef = useRef<ReturnType<typeof setInterval>>();
 
@@ -147,10 +150,48 @@ const ChannelsManager = () => {
     }
   };
 
+  const handleBatchDelete = async () => {
+    if (selectedIds.size === 0) return;
+    const count = selectedIds.size;
+    if (!confirm(`¿Eliminar ${count} canal(es) seleccionados?`)) return;
+    try {
+      if (isLovablePreview()) {
+        const { error } = await supabase.from('channels').delete().in('id', Array.from(selectedIds));
+        if (error) throw error;
+      } else {
+        await Promise.all(Array.from(selectedIds).map(id => apiDelete(`/api/channels/${id}`)));
+      }
+      toast({ title: `${count} canales eliminados` });
+      setSelectedIds(new Set());
+      fetchChannels();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    const visibleChannels = filterRunning 
+      ? channels.filter(ch => cacheStatus.some(c => c.id === ch.id && c.transcoder_active))
+      : channels;
+    if (selectedIds.size === visibleChannels.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(visibleChannels.map(ch => ch.id)));
+    }
+  };
+
   const toggleActive = async (ch: Channel) => {
     try {
       const newActive = !ch.is_active;
-      // When activating, also clear auto_disabled and consecutive_failures
       const updates: Record<string, any> = { is_active: newActive };
       if (newActive) {
         updates.auto_disabled = false;
@@ -232,11 +273,28 @@ const ChannelsManager = () => {
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h2 className="font-display font-semibold text-xl text-foreground">Canales ({channels.length})</h2>
-        <div className="flex gap-2">
-          <Button onClick={() => { setShowM3UImport(!showM3UImport); setShowForm(false); }} variant="outline" className="gap-2 border-border text-foreground">
+        <div className="flex gap-2 flex-wrap">
+          {/* Filter: show only running */}
+          {cacheStatus.some(c => c.transcoder_active) && (
+            <Button
+              onClick={() => setFilterRunning(!filterRunning)}
+              variant={filterRunning ? 'default' : 'outline'}
+              className={`gap-2 ${filterRunning ? 'gradient-primary text-primary-foreground' : 'border-border text-foreground'}`}
+              size="sm"
+            >
+              <Activity className="w-4 h-4" />
+              En vivo ({cacheStatus.filter(c => c.transcoder_active).length})
+            </Button>
+          )}
+          {selectedIds.size > 0 && (
+            <Button onClick={handleBatchDelete} variant="destructive" size="sm" className="gap-2">
+              <Trash2 className="w-4 h-4" /> Eliminar ({selectedIds.size})
+            </Button>
+          )}
+          <Button onClick={() => { setShowM3UImport(!showM3UImport); setShowForm(false); }} variant="outline" className="gap-2 border-border text-foreground" size="sm">
             <Upload className="w-4 h-4" /> Importar M3U
           </Button>
-          <Button onClick={() => { setShowForm(true); setShowM3UImport(false); setEditingId(null); setLogoPreview(null); setForm({ name: '', url: '', category: 'General', sort_order: 0, logo_url: '' }); }} className="gradient-primary text-primary-foreground gap-2">
+          <Button onClick={() => { setShowForm(true); setShowM3UImport(false); setEditingId(null); setLogoPreview(null); setForm({ name: '', url: '', category: 'General', sort_order: 0, logo_url: '' }); }} className="gradient-primary text-primary-foreground gap-2" size="sm">
             <Plus className="w-4 h-4" /> Agregar Canal
           </Button>
         </div>
@@ -372,13 +430,31 @@ const ChannelsManager = () => {
         </div>
       ) : (
         <div className="space-y-2">
-          {channels.map((ch, i) => {
+          {/* Select all checkbox */}
+          {channels.length > 1 && (
+            <div className="flex items-center gap-2 px-2 py-1">
+              <Checkbox
+                checked={selectedIds.size > 0 && selectedIds.size === (filterRunning ? channels.filter(ch => cacheStatus.some(c => c.id === ch.id && c.transcoder_active)).length : channels.length)}
+                onCheckedChange={toggleSelectAll}
+              />
+              <span className="text-xs text-muted-foreground">Seleccionar todos</span>
+            </div>
+          )}
+          {channels
+            .filter(ch => !filterRunning || cacheStatus.some(c => c.id === ch.id && c.transcoder_active))
+            .map((ch, i) => {
             const cache = cacheStatus.find(c => c.id === ch.id);
+            const isSelected = selectedIds.has(ch.id);
             return (
               <motion.div key={ch.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.03 }}
-                className={`glass rounded-xl overflow-hidden ${!ch.is_active ? 'opacity-50' : ''}`}>
+                className={`glass rounded-xl overflow-hidden ${!ch.is_active ? 'opacity-50' : ''} ${isSelected ? 'ring-1 ring-primary' : ''}`}>
                 <div className="p-4 flex items-center justify-between">
                   <div className="flex items-center gap-3 flex-1 min-w-0">
+                    <Checkbox
+                      checked={isSelected}
+                      onCheckedChange={() => toggleSelect(ch.id)}
+                      className="shrink-0"
+                    />
                     <div className="w-10 h-10 rounded-lg bg-secondary flex items-center justify-center shrink-0 overflow-hidden relative">
                       {ch.logo_url ? (
                         <img src={ch.logo_url} alt={ch.name} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
