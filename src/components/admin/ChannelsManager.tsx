@@ -430,13 +430,31 @@ const ChannelsManager = () => {
         </div>
       ) : (
         <div className="space-y-2">
-          {channels.map((ch, i) => {
+          {/* Select all checkbox */}
+          {channels.length > 1 && (
+            <div className="flex items-center gap-2 px-2 py-1">
+              <Checkbox
+                checked={selectedIds.size > 0 && selectedIds.size === (filterRunning ? channels.filter(ch => cacheStatus.some(c => c.id === ch.id && c.transcoder_active)).length : channels.length)}
+                onCheckedChange={toggleSelectAll}
+              />
+              <span className="text-xs text-muted-foreground">Seleccionar todos</span>
+            </div>
+          )}
+          {channels
+            .filter(ch => !filterRunning || cacheStatus.some(c => c.id === ch.id && c.transcoder_active))
+            .map((ch, i) => {
             const cache = cacheStatus.find(c => c.id === ch.id);
+            const isSelected = selectedIds.has(ch.id);
             return (
               <motion.div key={ch.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.03 }}
-                className={`glass rounded-xl overflow-hidden ${!ch.is_active ? 'opacity-50' : ''}`}>
+                className={`glass rounded-xl overflow-hidden ${!ch.is_active ? 'opacity-50' : ''} ${isSelected ? 'ring-1 ring-primary' : ''}`}>
                 <div className="p-4 flex items-center justify-between">
                   <div className="flex items-center gap-3 flex-1 min-w-0">
+                    <Checkbox
+                      checked={isSelected}
+                      onCheckedChange={() => toggleSelect(ch.id)}
+                      className="shrink-0"
+                    />
                     <div className="w-10 h-10 rounded-lg bg-secondary flex items-center justify-center shrink-0 overflow-hidden relative">
                       {ch.logo_url ? (
                         <img src={ch.logo_url} alt={ch.name} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
