@@ -205,6 +205,39 @@ const SystemTuning = () => {
           <Progress value={diskPercent} className="mt-2 h-2" />
           <p className="text-xs text-muted-foreground mt-1">{data.disk.avail_gb} GB libres ({data.disk.percent} uso)</p>
         </motion.div>
+
+        {/* Bandwidth */}
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="glass-strong rounded-xl p-4 border border-border/30">
+          <div className="flex items-center gap-3 mb-3">
+            <Network className="w-5 h-5 text-primary" />
+            <span className="text-sm font-medium text-muted-foreground">Red</span>
+          </div>
+          {bandwidth ? (
+            <>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <ArrowDownToLine className="w-3.5 h-3.5 text-green-400" />
+                    <span className="text-xs text-muted-foreground">Entrada</span>
+                  </div>
+                  <span className="text-sm font-bold text-green-400 font-mono">{bandwidth.rx_mbps.toFixed(1)} Mbps</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <ArrowUpFromLine className="w-3.5 h-3.5 text-blue-400" />
+                    <span className="text-xs text-muted-foreground">Salida</span>
+                  </div>
+                  <span className="text-sm font-bold text-blue-400 font-mono">{bandwidth.tx_mbps.toFixed(1)} Mbps</span>
+                </div>
+              </div>
+              {data.network && (
+                <p className="text-[10px] text-muted-foreground mt-2">Interfaz: {data.network.interface}</p>
+              )}
+            </>
+          ) : (
+            <p className="text-xs text-muted-foreground">Calculando...</p>
+          )}
+        </motion.div>
       </div>
 
       {/* Extra info row */}
