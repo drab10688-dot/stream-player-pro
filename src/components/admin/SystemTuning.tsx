@@ -123,7 +123,7 @@ const SystemTuning = () => {
         <Server className="w-12 h-12 mx-auto mb-4 opacity-50" />
         <p>No se pudo conectar al servidor</p>
         <p className="text-sm mt-1">Este módulo requiere la API local del VPS</p>
-        <Button onClick={fetchData} className="mt-4" variant="outline" size="sm">
+        <Button onClick={() => fetchData()} className="mt-4" variant="outline" size="sm">
           <RefreshCw className="w-4 h-4 mr-2" /> Reintentar
         </Button>
       </div>
