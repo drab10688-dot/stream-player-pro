@@ -150,7 +150,7 @@ const SystemTuning = () => {
       </div>
 
       {/* Score + Hardware Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         {/* Score */}
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="glass-strong rounded-xl p-4 border border-border/30">
           <div className="flex items-center gap-3 mb-3">
