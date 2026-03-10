@@ -248,7 +248,7 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
     });
 
     player.addEventListener('buffering', (e: Event) => {
-      const buffering = (e as shaka.PlayerEvents.BufferingEvent).buffering;
+      const buffering = (e as any).buffering;
       if (buffering) {
         setLoading(true);
         phaseRef.current = 'Buffering...';
