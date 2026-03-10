@@ -270,17 +270,21 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         return { success: false, error: data.error };
       }
 
-      // In Lovable preview, proxy TS/stream URLs through edge function to bypass CORS
+      // Guardar stream_base_url si el servidor la envía (modo hybrid)
+      streamBaseUrl = data.stream_base_url || null;
+
+      // Proxy URLs: in Lovable preview use edge function, in production use restream proxy
+      const isYouTube = (url: string) => /youtube\.com|youtu\.be/.test(url || '');
       const processedChannels = (data.channels || []).map((ch: any) => {
-        if (isLovablePreview() && ch.url && !ch.url.includes('youtube.com') && !ch.url.includes('youtu.be')) {
+        if (!ch.url || isYouTube(ch.url)) return ch;
+        if (isLovablePreview()) {
           const proxyBase = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/video-proxy`;
           return { ...ch, url: `${proxyBase}?url=${encodeURIComponent(ch.url)}` };
         }
-        return ch;
+        // Production: route through server restream proxy to avoid CORS
+        const base = streamBaseUrl || '';
+        return { ...ch, url: `${base}/api/restream/${ch.id}` };
       });
-
-      // Guardar stream_base_url si el servidor la envía (modo hybrid)
-      streamBaseUrl = data.stream_base_url || null;
 
       setClient(data.client);
       setChannels(processedChannels);
