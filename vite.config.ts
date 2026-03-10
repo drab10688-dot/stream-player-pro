@@ -25,11 +25,44 @@ export default defineConfig(({ mode }) => ({
         globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
         runtimeCaching: [
           {
+            // API calls (Supabase / backend)
             urlPattern: /^https:\/\/.*\.supabase\.co\/.*/i,
             handler: "NetworkFirst",
             options: {
               cacheName: "supabase-api",
               expiration: { maxEntries: 50, maxAgeSeconds: 300 },
+              networkTimeoutSeconds: 5,
+            },
+          },
+          {
+            // Channel logos and poster images
+            urlPattern: /\.(png|jpg|jpeg|webp|gif|svg)(\?.*)?$/i,
+            handler: "CacheFirst",
+            options: {
+              cacheName: "image-cache",
+              expiration: { maxEntries: 200, maxAgeSeconds: 7 * 24 * 60 * 60 },
+              cacheableResponse: { statuses: [0, 200] },
+            },
+          },
+          {
+            // Google Fonts / external fonts
+            urlPattern: /^https:\/\/fonts\.(googleapis|gstatic)\.com\/.*/i,
+            handler: "CacheFirst",
+            options: {
+              cacheName: "font-cache",
+              expiration: { maxEntries: 30, maxAgeSeconds: 30 * 24 * 60 * 60 },
+              cacheableResponse: { statuses: [0, 200] },
+            },
+          },
+          {
+            // Local API (VPS Node.js backend) — channels list, auth, etc.
+            urlPattern: /\/api\//i,
+            handler: "NetworkFirst",
+            options: {
+              cacheName: "local-api",
+              expiration: { maxEntries: 50, maxAgeSeconds: 600 },
+              networkTimeoutSeconds: 5,
+              cacheableResponse: { statuses: [0, 200] },
             },
           },
         ],
