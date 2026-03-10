@@ -79,6 +79,7 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
   const [showQualityMenu, setShowQualityMenu] = useState(false);
   const [qualityVisible, setQualityVisible] = useState(true);
   const [bufferAhead, setBufferAhead] = useState(0);
+  const [userSelectedLevel, setUserSelectedLevel] = useState<number | null>(null);
   const [retryInfo, setRetryInfo] = useState<string | null>(null);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const retryCountRef = useRef(0);
