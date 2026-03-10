@@ -494,7 +494,7 @@ mkdir -p "$HLS_DIR" "$HLS_CACHE_DIR"
 chmod 777 "$HLS_DIR" "$HLS_CACHE_DIR"
 
 log_ok "Almacenamiento HLS en disco SSD: $HLS_DIR"
-log_info "Capacidad estimada: ~$((DISK_AVAIL_GB / 500 * 1000)) canales keep-alive (30min caché)"
+log_info "Capacidad estimada: ~$((DISK_AVAIL_GB * 10 / 14)) canales keep-alive (30min caché, ABR 5 calidades)"
 
 # Instalar FFmpeg si no está
 if ! command -v ffmpeg &> /dev/null; then
