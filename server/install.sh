@@ -580,6 +580,9 @@ server {
     server_name _;
     server_tokens off;
 
+    # Sin límite para subida de VOD (videos grandes)
+    client_max_body_size 0;
+
     root /var/www/streambox;
     index index.html;
 
@@ -595,6 +598,8 @@ server {
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection 'upgrade';
         proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Host \$host;
+        proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_cache_bypass \$http_upgrade;
         proxy_set_header X-Real-IP \$remote_addr;
 
@@ -607,10 +612,18 @@ server {
         proxy_buffering off;
     }
 
-    # Seguridad
+    # Seguridad: ocultar headers del origen
     proxy_hide_header X-Powered-By;
     proxy_hide_header Server;
     proxy_hide_header Via;
+    proxy_hide_header X-Real-IP;
+    proxy_hide_header X-Forwarded-For;
+    proxy_hide_header X-Forwarded-Host;
+
+    # Headers de seguridad
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options SAMEORIGIN always;
+    add_header Referrer-Policy no-referrer always;
 
     location ~ /\. {
         deny all;
