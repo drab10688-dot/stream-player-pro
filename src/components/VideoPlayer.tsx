@@ -128,7 +128,9 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
     });
 
     // Playing event as backup for loading state
-    video.addEventListener('playing', () => setLoading(false), { once: true });
+    const onPlaying = () => { setLoading(false); setError(null); };
+    video.addEventListener('playing', onPlaying, { once: true });
+    video.addEventListener('timeupdate', onPlaying, { once: true });
 
   }, [muted, destroy, channelId, onError, isBridge]);
 
