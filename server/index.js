@@ -933,10 +933,11 @@ const HLS_DIR = fs.existsSync('/opt/streambox/hls-cache') ? '/opt/streambox/hls-
 const HLS_CACHE_DIR = fs.existsSync('/opt/streambox/hls-proxy-cache') ? '/opt/streambox/hls-proxy-cache' : '/tmp/streambox-cache';
 const activeTranscoders = new Map(); // channelId -> { ffmpeg, clients, lastAccess, type }
 // Per-channel bandwidth tracking (input = from origin, output = to clients)
-const channelBandwidth = new Map(); // channelId -> { bytesIn, bytesOut, lastReset, bytesInPrev, bytesOutPrev }
+// Uses exponential moving average (EMA) for smooth display
+const channelBandwidth = new Map(); // channelId -> { bytesIn, bytesOut, lastReset, bpsIn, bpsOut }
 function initBandwidthEntry(channelId) {
   if (!channelBandwidth.has(channelId)) {
-    channelBandwidth.set(channelId, { bytesIn: 0, bytesOut: 0, lastReset: Date.now(), bytesInPrev: 0, bytesOutPrev: 0 });
+    channelBandwidth.set(channelId, { bytesIn: 0, bytesOut: 0, lastReset: Date.now(), bpsIn: 0, bpsOut: 0 });
   }
 }
 function trackBandwidth(channelId, bytes) {
@@ -947,13 +948,19 @@ function trackInputBandwidth(channelId, bytes) {
   initBandwidthEntry(channelId);
   channelBandwidth.get(channelId).bytesIn += bytes;
 }
-// Reset bandwidth counters every 5 seconds and calculate rate
+// Calculate bandwidth rate every 3 seconds using EMA (alpha=0.4 for smooth transitions)
+const BW_EMA_ALPHA = 0.4;
 setInterval(() => {
   const now = Date.now();
   channelBandwidth.forEach((bw, channelId) => {
     const elapsed = (now - bw.lastReset) / 1000;
-    bw.bytesOutPrev = elapsed > 0 ? bw.bytesOut / elapsed : 0;
-    bw.bytesInPrev = elapsed > 0 ? bw.bytesIn / elapsed : 0;
+    if (elapsed > 0) {
+      const instantOut = bw.bytesOut / elapsed;
+      const instantIn = bw.bytesIn / elapsed;
+      // EMA: new = alpha * instant + (1-alpha) * previous
+      bw.bpsOut = BW_EMA_ALPHA * instantOut + (1 - BW_EMA_ALPHA) * bw.bpsOut;
+      bw.bpsIn = BW_EMA_ALPHA * instantIn + (1 - BW_EMA_ALPHA) * bw.bpsIn;
+    }
     bw.bytesOut = 0;
     bw.bytesIn = 0;
     bw.lastReset = now;
@@ -962,7 +969,7 @@ setInterval(() => {
   channelBandwidth.forEach((_, channelId) => {
     if (!activeTranscoders.has(channelId)) channelBandwidth.delete(channelId);
   });
-}, 5000);
+}, 3000);
 
 // Crear directorios base
 [HLS_DIR, HLS_CACHE_DIR].forEach(dir => {
@@ -1657,50 +1664,84 @@ function startHLSProxy(channelId, sourceUrl) {
 }
 
 // Active polling for keep-alive HLS proxy channels
-// Periodically fetches manifest + new segments to keep cache warm
+// Fetches manifest DIRECTLY from origin (bypassing cache) to always see new segments
 function startHLSKeepAlivePolling(channelId, sourceUrl) {
   const entry = activeTranscoders.get(channelId);
   if (!entry || entry.type !== 'hls-proxy' || entry.pollTimer) return;
 
-  const seenSegments = new Set(); // Track segments already counted for bandwidth
+  const seenSegments = new Set();
+
+  const fetchManifestDirect = () => {
+    return new Promise((resolve, reject) => {
+      const parsedUrl = new URL(sourceUrl);
+      const httpClient = parsedUrl.protocol === 'https:' ? https : http;
+      const req = httpClient.request(sourceUrl, {
+        method: 'GET',
+        headers: { 'User-Agent': 'StreamBox/1.0' },
+      }, (res) => {
+        let body = '';
+        res.on('data', chunk => { body += chunk.toString(); });
+        res.on('end', () => resolve(body));
+        res.on('error', reject);
+      });
+      req.on('error', reject);
+      req.setTimeout(10000, () => { req.destroy(); reject(new Error('Timeout')); });
+      req.end();
+    });
+  };
 
   const poll = async () => {
     try {
-      // Fetch manifest directly from origin (bypass cache) to get fresh segment list
-      const manifest = await getCachedM3U8(channelId, sourceUrl);
-      
-      // Extract segment URLs from manifest and pre-fetch them
-      const segmentMatches = manifest.match(/\/api\/hls-segment\/[^\s]+/g);
-      if (segmentMatches) {
-        for (const segPath of segmentMatches.slice(-6)) { // Pre-fetch last 6 segments
-          const urlMatch = segPath.match(/url=([^&\s]+)/);
-          if (urlMatch) {
-            const segUrl = decodeURIComponent(urlMatch[1]);
-            try {
-              const segData = await fetchSegment(segUrl);
-              // Only count each unique segment ONCE for input bandwidth
-              if (!seenSegments.has(segUrl)) {
-                seenSegments.add(segUrl);
-                trackInputBandwidth(channelId, segData.length);
-                // Keep set from growing forever — remove old entries
-                if (seenSegments.size > 100) {
-                  const first = seenSegments.values().next().value;
-                  seenSegments.delete(first);
-                }
-              }
-            } catch {}
+      // Fetch manifest DIRECTLY from origin — never from cache
+      const rawManifest = await fetchManifestDirect();
+      const baseUrl = sourceUrl.substring(0, sourceUrl.lastIndexOf('/') + 1);
+
+      // Extract .ts segment URLs from raw manifest
+      const lines = rawManifest.split('\n');
+      const segmentUrls = [];
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed && !trimmed.startsWith('#')) {
+          if (trimmed.match(/\.ts/i)) {
+            const fullUrl = trimmed.startsWith('http') ? trimmed : baseUrl + trimmed;
+            segmentUrls.push(fullUrl);
           }
         }
       }
+
+      // Pre-fetch last 4 segments to keep cache warm
+      for (const segUrl of segmentUrls.slice(-4)) {
+        if (seenSegments.has(segUrl)) continue;
+        try {
+          const segData = await fetchSegment(segUrl);
+          seenSegments.add(segUrl);
+          // Track input bandwidth (fetchSegment also tracks, but only on fresh downloads
+          // which is what we want — it deduplicates via pendingSegments)
+          // We DON'T double-track here; fetchSegment handles it
+        } catch {}
+      }
+
+      // Keep seenSegments from growing forever
+      if (seenSegments.size > 200) {
+        const iter = seenSegments.values();
+        for (let i = 0; i < 100; i++) {
+          const val = iter.next().value;
+          if (val) seenSegments.delete(val);
+        }
+      }
     } catch (err) {
-      console.error(`⚠️ [${channelId}] Keep-alive HLS poll error:`, err.message);
+      // Only log every ~30s to avoid spam
+      if (!entry._lastPollError || Date.now() - entry._lastPollError > 30000) {
+        console.error(`⚠️ [${channelId}] Keep-alive HLS poll error:`, err.message);
+        entry._lastPollError = Date.now();
+      }
     }
   };
 
-  // Poll immediately, then every 2 seconds (matching 2s HLS segment duration)
+  // Poll immediately, then every 2.5 seconds (slightly offset from 2s segment duration)
   poll();
-  entry.pollTimer = setInterval(poll, 2000);
-  console.log(`💚 [${channelId}] Keep-alive HLS polling activo (cada 2s)`);
+  entry.pollTimer = setInterval(poll, 2500);
+  console.log(`💚 [${channelId}] Keep-alive HLS polling activo (cada 2.5s, fetch directo al origen)`);
 }
 
 // Obtener manifiesto m3u8 con caché y reescritura de URLs
@@ -2261,8 +2302,8 @@ app.get('/api/streams/active', authAdmin, async (req, res) => {
       const sourceUrl = rows.length > 0 ? rows[0].url : entry.sourceUrl || 'N/A';
       
       const bw = channelBandwidth.get(channelId);
-      const bandwidth_bps = bw ? bw.bytesOutPrev : 0;
-      const bandwidth_in_bps = bw ? bw.bytesInPrev : 0;
+      const bandwidth_bps = bw ? bw.bpsOut : 0;
+      const bandwidth_in_bps = bw ? bw.bpsIn : 0;
 
       streams.push({
         channel_id: channelId,
@@ -2271,7 +2312,7 @@ app.get('/api/streams/active', authAdmin, async (req, res) => {
         clients: Math.max(0, entry.clients),
         ready: entry.ready !== undefined ? entry.ready : true,
         keep_alive: entry.keepAlive || false,
-        uptime_seconds: Math.floor((Date.now() - entry.lastAccess) / 1000),
+        uptime_seconds: Math.floor((Date.now() - (entry.startTime || entry.lastAccess)) / 1000),
         source_url: sourceUrl.substring(0, 60) + (sourceUrl.length > 60 ? '...' : ''),
         bandwidth_bps: Math.round(bandwidth_bps),
         bandwidth_in_bps: Math.round(bandwidth_in_bps),
