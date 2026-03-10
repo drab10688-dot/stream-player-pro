@@ -51,7 +51,7 @@ const formatBitrate = (bps: number): string => {
   return `${bps} bps`;
 };
 
-const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlayerProps) => {
+const VideoPlayer = memo(({ src, channelId, muted = false, onError, onQualityChange }: VideoPlayerProps) => {
   const videoContainerRef = useRef<HTMLDivElement>(null);
   const videoElementRef = useRef<HTMLVideoElement>(null);
   const playerRef = useRef<Player | null>(null);
