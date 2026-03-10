@@ -485,6 +485,9 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
         className="w-full h-full object-contain"
         playsInline
         controls
+        controlsList="nodownload noplaybackrate"
+        disablePictureInPicture
+        onContextMenu={(e) => e.preventDefault()}
         muted={muted}
         preload="auto"
         {...(detectStreamType(src) !== 'ts' && src.startsWith('/') ? { crossOrigin: 'anonymous' as const } : {})}
