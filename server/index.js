@@ -1746,10 +1746,51 @@ function startHLSKeepAlivePolling(channelId, sourceUrl) {
   const poll = async () => {
     try {
       // Fetch manifest DIRECTLY from origin — never from cache
-      const rawManifest = await fetchManifestDirect();
-      const baseUrl = sourceUrl.substring(0, sourceUrl.lastIndexOf('/') + 1);
+      let rawManifest = await fetchManifestDirect();
+      let baseUrl = sourceUrl.substring(0, sourceUrl.lastIndexOf('/') + 1);
 
-      // Extract .ts segment URLs from raw manifest
+      // If it's a master playlist, follow through to the media playlist
+      if (rawManifest.includes('#EXT-X-STREAM-INF')) {
+        const lines = rawManifest.split('\n');
+        let subUrl = null;
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i].trim();
+          if (line.startsWith('#EXT-X-STREAM-INF')) {
+            // Get next non-comment line as the sub-playlist URL
+            for (let j = i + 1; j < lines.length; j++) {
+              const urlLine = lines[j].trim();
+              if (urlLine && !urlLine.startsWith('#')) {
+                subUrl = urlLine.startsWith('http') ? urlLine : baseUrl + urlLine;
+                break;
+              }
+            }
+            break; // Use first variant
+          }
+        }
+        if (subUrl) {
+          // Fetch the media playlist
+          const subManifest = await new Promise((resolve, reject) => {
+            const parsedUrl = new URL(subUrl);
+            const httpClient = parsedUrl.protocol === 'https:' ? https : http;
+            const req = httpClient.request(subUrl, {
+              method: 'GET',
+              headers: { 'User-Agent': 'StreamBox/1.0' },
+            }, (res) => {
+              let body = '';
+              res.on('data', chunk => { body += chunk.toString(); });
+              res.on('end', () => resolve(body));
+              res.on('error', reject);
+            });
+            req.on('error', reject);
+            req.setTimeout(10000, () => { req.destroy(); reject(new Error('Timeout')); });
+            req.end();
+          });
+          rawManifest = subManifest;
+          baseUrl = subUrl.substring(0, subUrl.lastIndexOf('/') + 1);
+        }
+      }
+
+      // Extract .ts segment URLs from media manifest
       const lines = rawManifest.split('\n');
       const segmentUrls = [];
       for (const line of lines) {
@@ -1769,7 +1810,6 @@ function startHLSKeepAlivePolling(channelId, sourceUrl) {
           const segData = await fetchSegment(segUrl);
           seenSegments.add(segUrl);
           // Always track input bandwidth for THIS channel when we see a new segment
-          // fetchSegment may not match the URL pattern, so we explicitly track here
           if (segData && segData.length) {
             trackInputBandwidth(channelId, segData.length);
           }
