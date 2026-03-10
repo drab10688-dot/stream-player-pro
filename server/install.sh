@@ -748,22 +748,27 @@ pm2 start index.js --name streambox-api --max-restarts 10 --restart-delay 3000 >
 pm2 startup systemd -u root --hp /root > /dev/null 2>&1 || true
 pm2 save > /dev/null 2>&1
 
-# Esperar a que la API esté lista
+# Esperar a que la API esté lista (más tiempo porque FFmpeg puede tardar)
 log_info "Esperando que la API responda..."
-if wait_for_port $API_PORT "API" 15; then
+if wait_for_port $API_PORT "API" 30; then
   log_ok "API corriendo en puerto $API_PORT"
 else
-  log_err "La API no respondió en 15 segundos"
+  log_warn "La API no respondió en 30 segundos"
   log_info "Revisando logs..."
   pm2 logs streambox-api --lines 10 --nostream
   echo ""
-  log_warn "Intentando reiniciar..."
+  log_warn "Intentando reiniciar (matando FFmpeg zombies)..."
+  pkill -f ffmpeg > /dev/null 2>&1 || true
   pm2 restart streambox-api > /dev/null 2>&1
   sleep 5
-  if wait_for_port $API_PORT "API" 10; then
+  if wait_for_port $API_PORT "API" 30; then
     log_ok "API corriendo después de reinicio"
   else
     log_err "API no arranca. Revisa: pm2 logs streambox-api"
+    log_info "Intenta manualmente:"
+    echo "   pkill -f ffmpeg"
+    echo "   pm2 delete streambox-api"
+    echo "   cd /opt/streambox/server && pm2 start index.js --name streambox-api"
     exit 1
   fi
 fi

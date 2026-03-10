@@ -1420,6 +1420,9 @@ function startKeepAliveChannel(channelId, sourceUrl) {
 }
 
 // Iniciar todos los canales keep_alive al arrancar el servidor
+// Limita a MAX_CONCURRENT_FFMPEG procesos simultáneos para no saturar
+const MAX_CONCURRENT_FFMPEG = 3;
+
 async function initKeepAliveChannels() {
   try {
     const { rows } = await pool.query(
@@ -1429,11 +1432,19 @@ async function initKeepAliveChannels() {
       console.log('📡 No hay canales keep-alive configurados');
       return;
     }
-    console.log(`\n💚 Iniciando ${rows.length} canal(es) keep-alive...`);
-    for (const ch of rows) {
-      startKeepAliveChannel(ch.id, ch.url);
-      // Stagger starts to avoid overwhelming the server
-      await new Promise(r => setTimeout(r, 2000));
+    console.log(`\n💚 Iniciando ${rows.length} canal(es) keep-alive (máx ${MAX_CONCURRENT_FFMPEG} simultáneos)...`);
+    
+    // Iniciar en lotes para no saturar CPU/RAM
+    for (let i = 0; i < rows.length; i += MAX_CONCURRENT_FFMPEG) {
+      const batch = rows.slice(i, i + MAX_CONCURRENT_FFMPEG);
+      for (const ch of batch) {
+        startKeepAliveChannel(ch.id, ch.url);
+      }
+      // Esperar 5s entre lotes para que FFmpeg se estabilice
+      if (i + MAX_CONCURRENT_FFMPEG < rows.length) {
+        console.log(`   ⏳ Esperando 5s antes del siguiente lote...`);
+        await new Promise(r => setTimeout(r, 5000));
+      }
     }
     console.log(`✅ ${rows.length} canal(es) keep-alive iniciados\n`);
   } catch (err) {
