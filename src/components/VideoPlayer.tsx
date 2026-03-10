@@ -82,10 +82,15 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
       maxBufferLength: 20,
       maxMaxBufferLength: 60,
       startLevel: -1,
-      fragLoadingMaxRetry: 6,
-      manifestLoadingMaxRetry: 6,
-      levelLoadingMaxRetry: 6,
+      fragLoadingMaxRetry: 10,
+      manifestLoadingMaxRetry: 10,
+      levelLoadingMaxRetry: 10,
       fragLoadingRetryDelay: 1000,
+      manifestLoadingRetryDelay: 1000,
+      levelLoadingRetryDelay: 1000,
+      fragLoadingMaxRetryTimeout: 15000,
+      manifestLoadingMaxRetryTimeout: 15000,
+      levelLoadingMaxRetryTimeout: 15000,
     });
 
     hlsRef.current = hls;
