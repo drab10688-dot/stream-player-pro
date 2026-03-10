@@ -1087,51 +1087,59 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
   const copyManifestPath = path.join(channelDir, 'high', 'stream.m3u8');
   const cacheConfig = isKeepAlive ? CACHE_KEEPALIVE : CACHE_NORMAL;
 
-  // Create subdirectories: copy (original) + low (480p)
-  ['copy', 'low'].forEach(q => {
+  // Create subdirectories for all ABR profiles + copy
+  [...ABR_PROFILES.map(p => p.name), 'copy'].forEach(q => {
     const qDir = path.join(channelDir, q);
     if (!fs.existsSync(qDir)) fs.mkdirSync(qDir, { recursive: true });
   });
 
   const cacheLabel = isKeepAlive ? `${cacheConfig.hls_list_size}seg ≈ ${Math.round(cacheConfig.hls_list_size * cacheConfig.hls_time / 60)}min` : '2min';
-  console.log(`🎬 [${channelId}] FFmpeg Copy+480p (2 calidades: original+480p, caché: ${cacheLabel}): ${sourceUrl}`);
+  console.log(`🎬 [${channelId}] FFmpeg ABR YouTube (5 calidades: 240p/360p/480p/720p/original, caché: ${cacheLabel}): ${sourceUrl}`);
 
-  // Build FFmpeg command: 2 outputs — copy (passthrough) + 480p (light transcode)
+  // Build FFmpeg command: 4 transcoded outputs + 1 copy
   const ffmpegArgs = [
     '-reconnect', '1',
     '-reconnect_streamed', '1',
     '-reconnect_delay_max', '10',
     '-rw_timeout', '10000000',
     '-i', sourceUrl,
+  ];
 
-    // --- Output 0: LOW (480p ~700kbps) — para conexiones lentas ---
+  // Add transcoded outputs (0-3: micro, low, med, high)
+  ABR_PROFILES.forEach((profile, i) => {
+    ffmpegArgs.push(
+      '-map', '0:v:0', '-map', '0:a:0?',
+      `-c:v:${i}`, 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency',
+      `-b:v:${i}`, profile.vBitrate,
+      `-maxrate:v:${i}`, profile.maxrate,
+      `-bufsize:v:${i}`, profile.bufsize,
+      `-vf:${i}`, `scale=${profile.width}:${profile.height}`,
+      `-c:a:${i}`, 'aac', `-b:a:${i}`, profile.aBitrate, `-ac:${i}`, String(profile.audioChannels),
+    );
+  });
+
+  // Output 4: COPY (original passthrough — 0% CPU)
+  ffmpegArgs.push(
     '-map', '0:v:0', '-map', '0:a:0?',
-    '-c:v:0', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency',
-    '-b:v:0', LOW_PROFILE.vBitrate,
-    '-maxrate:v:0', LOW_PROFILE.maxrate,
-    '-bufsize:v:0', LOW_PROFILE.bufsize,
-    '-vf:0', `scale=${LOW_PROFILE.width}:${LOW_PROFILE.height}`,
-    '-c:a:0', 'aac', '-b:a:0', LOW_PROFILE.aBitrate, '-ac:0', String(LOW_PROFILE.audioChannels),
-    '-g', '24', '-keyint_min', '24', '-sc_threshold', '0',
+    '-c:v:4', 'copy',
+    '-c:a:4', 'aac', '-b:a:4', '128k',
+  );
 
-    // --- Output 1: COPY (original passthrough — 0% CPU) ---
-    '-map', '0:v:0', '-map', '0:a:0?',
-    '-c:v:1', 'copy',
-    '-c:a:1', 'aac', '-b:a:1', '128k',
-
-    // --- HLS output ---
+  // Common settings
+  ffmpegArgs.push(
+    '-g', '48', '-keyint_min', '48', '-sc_threshold', '0',
     '-f', 'hls',
     '-hls_time', String(cacheConfig.hls_time),
     '-hls_list_size', String(cacheConfig.hls_list_size),
     '-hls_flags', isKeepAlive ? 'append_list+delete_segments+temp_file' : 'append_list+temp_file',
     '-hls_segment_type', 'mpegts',
     '-hls_allow_cache', '1',
-    '-var_stream_map', 'v:0,a:0,name:low v:1,a:1,name:copy',
+    '-var_stream_map', ABR_PROFILES.map((p, i) => `v:${i},a:${i},name:${p.name}`).join(' ') + ' v:4,a:4,name:copy',
     '-master_pl_name', 'master.m3u8',
     '-hls_segment_filename', path.join(channelDir, '%v', 'seg_%05d.ts'),
     '-y',
     path.join(channelDir, '%v', 'stream.m3u8'),
-  ];
+  );
 
   // Try adaptive first, fallback to single-quality if FFmpeg doesn't support var_stream_map
   let ffmpeg;
