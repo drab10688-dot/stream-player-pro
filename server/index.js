@@ -1337,9 +1337,11 @@ function startHLSProxy(channelId, sourceUrl) {
   const entry = {
     clients: 1,
     lastAccess: Date.now(),
+    startTime: Date.now(),
     type: 'hls-proxy',
     sourceUrl,
     ready: true,
+    cachedSegments: new Set(), // Track cached segment URLs for this channel
   };
   activeTranscoders.set(channelId, entry);
   console.log(`📡 [${channelId}] Proxy HLS iniciado: ${sourceUrl}`);
