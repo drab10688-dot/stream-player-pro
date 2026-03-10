@@ -299,7 +299,9 @@ app.get('/api/stream-proxy', (req, res) => {
             if (match.startsWith('http')) {
               return `/api/stream-proxy?url=${encodeURIComponent(match)}`;
             }
-            // Derivar base URL del targetUrl
+            if (match.startsWith('/')) {
+              return `/api/stream-proxy?url=${encodeURIComponent(`${XTREAM_HOST}:${XTREAM_PORT}${match}`)}`;
+            }
             const baseUrl = targetUrl.substring(0, targetUrl.lastIndexOf('/') + 1);
             return `/api/stream-proxy?url=${encodeURIComponent(baseUrl + match)}`;
           }
