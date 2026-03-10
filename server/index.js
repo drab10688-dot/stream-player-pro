@@ -989,7 +989,7 @@ const storageInfo = (() => {
 // Monitor de uso de disco (cada 60s)
 setInterval(() => {
   try {
-    const { execSync } = require('child_process');
+    // execSync ya importado arriba
     const output = execSync(`df -h ${HLS_DIR} 2>/dev/null`).toString();
     const parts = output.split('\n')[1]?.split(/\s+/) || [];
     const used = parts[2] || '?';
