@@ -434,24 +434,72 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError, onQualityCha
     }
   }, [src, cleanup, initMpegTs, initVideoJs]);
 
+  // Fetch server-side quality options as fallback
+  useEffect(() => {
+    if (!src || !src.includes('/api/restream/')) return;
+    const streamIdMatch = src.match(/\/api\/restream\/(\d+)/);
+    if (!streamIdMatch) return;
+
+    const streamId = streamIdMatch[1];
+    fetch(`/api/restream/${streamId}/qualities`)
+      .then(r => r.ok ? r.json() : [])
+      .then((serverQualities: any[]) => {
+        if (serverQualities.length > 1 && qualityLevels.length <= 1) {
+          setQualityLevels(serverQualities.map((q: any) => ({
+            id: q.id,
+            label: q.label,
+            height: q.height || 0,
+            bandwidth: q.bandwidth || 0,
+            enabled: true,
+          })));
+        }
+      })
+      .catch(() => { /* ignore */ });
+  }, [src]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Quality selection handler
   const selectQuality = useCallback((qualityId: string) => {
     setSelectedQuality(qualityId);
     setShowQualityMenu(false);
-    if (!playerRef.current) return;
-    try {
-      const tech = playerRef.current.tech({ IWillNotUseThisInPlugins: true }) as any;
-      const reps = tech?.vhs?.representations?.() || [];
-      if (qualityId === 'auto') {
-        reps.forEach((r: any) => r.enabled(true));
-      } else {
-        reps.forEach((r: any) => {
-          const id = r.id || String(reps.indexOf(r));
-          r.enabled(id === qualityId);
-        });
+
+    // Try VHS representations first (client-side ABR)
+    if (playerRef.current) {
+      try {
+        const tech = playerRef.current.tech({ IWillNotUseThisInPlugins: true }) as any;
+        const reps = tech?.vhs?.representations?.() || [];
+        if (reps.length > 1) {
+          if (qualityId === 'auto' || qualityId === 'original') {
+            reps.forEach((r: any) => r.enabled(true));
+          } else {
+            reps.forEach((r: any) => {
+              const id = r.id || String(reps.indexOf(r));
+              r.enabled(id === qualityId);
+            });
+          }
+          return;
+        }
+      } catch (e) { /* ignore */ }
+    }
+
+    // Fallback: server-side quality change via URL
+    if (src.includes('/api/restream/') && qualityId !== 'auto') {
+      const streamIdMatch = src.match(/\/api\/restream\/(\d+)/);
+      if (streamIdMatch) {
+        const streamId = streamIdMatch[1];
+        const newUrl = qualityId === 'original'
+          ? `/api/restream/${streamId}/variant/original.m3u8`
+          : `/api/restream/${streamId}/variant/${qualityId}.m3u8`;
+        
+        // Reload player with new URL
+        if (playerRef.current) {
+          try {
+            playerRef.current.src({ src: newUrl, type: 'application/x-mpegURL' });
+            playerRef.current.play()?.catch(() => {});
+          } catch (e) { /* ignore */ }
+        }
       }
-    } catch (e) { console.warn('Quality set error:', e); }
-  }, []);
+    }
+  }, [src]);
 
   // Initialize on src change
   useEffect(() => {
