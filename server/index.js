@@ -1733,8 +1733,8 @@ app.get('/api/restream/:channelId', async (req, res) => {
           let manifest = fs.readFileSync(manifestFile, 'utf8');
 
           if (manifestFile.includes('master.m3u8')) {
-            // Rewrite sub-playlist paths in master playlist
-            manifest = manifest.replace(/(low|med|high)\/stream\.m3u8/g, (match, quality) => {
+            // Rewrite sub-playlist paths in master playlist (all 5 qualities)
+            manifest = manifest.replace(/(micro|ultra|low|med|high)\/stream\.m3u8/g, (match, quality) => {
               return `/api/hls-adaptive/${channelId}/${quality}/stream.m3u8`;
             });
           } else {
