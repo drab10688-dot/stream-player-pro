@@ -1,16 +1,12 @@
 // =============================================
 // XTREAM UI BRIDGE - Conecta el reproductor Omnisync con Xtream UI
 // NO modifica server/index.js — es un servidor independiente
-// Puerto: 8080 (o el que configures)
 // =============================================
 
 const express = require('express');
 const cors = require('cors');
 const http = require('http');
 const https = require('https');
-const path = require('path');
-const fs = require('fs');
-const { spawn, execSync } = require('child_process');
 
 const app = express();
 app.use(cors());
@@ -21,7 +17,23 @@ app.use(express.json());
 // =============================================
 const PORT = process.env.BRIDGE_PORT || 8080;
 const XTREAM_HOST = process.env.XTREAM_HOST || 'http://localhost';
-const XTREAM_PORT = process.env.XTREAM_PORT || '25461'; // Puerto donde Xtream UI sirve streams
+const XTREAM_PORT = process.env.XTREAM_PORT || '25461';
+
+// =============================================
+// SESIONES ACTIVAS (para proxy de streams)
+// =============================================
+const activeSessions = new Map(); // username -> { password, channels, loginAt, lastActivity }
+
+// Limpiar sesiones inactivas cada 10 minutos (solo las que llevan >4h sin actividad)
+setInterval(() => {
+  const fourHoursAgo = Date.now() - 4 * 60 * 60 * 1000;
+  activeSessions.forEach((session, key) => {
+    if (session.lastActivity < fourHoursAgo) {
+      console.log(`🧹 Sesión expirada: ${key}`);
+      activeSessions.delete(key);
+    }
+  });
+}, 10 * 60 * 1000);
 
 // =============================================
 // HELPER: Llamar a la API de Xtream UI
@@ -31,7 +43,7 @@ function callXtreamAPI(params) {
     const url = `${XTREAM_HOST}:${XTREAM_PORT}/player_api.php?${params}`;
     const client = url.startsWith('https') ? https : http;
     
-    client.get(url, { timeout: 10000 }, (res) => {
+    client.get(url, { timeout: 15000 }, (res) => {
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
@@ -48,16 +60,38 @@ function callXtreamAPI(params) {
 }
 
 // =============================================
+// HELPER: Obtener credenciales de sesión activa
+// =============================================
+function getActiveCreds() {
+  // Buscar la sesión más reciente
+  let latest = null;
+  let latestTime = 0;
+  for (const [username, session] of activeSessions) {
+    if (session.lastActivity > latestTime) {
+      latestTime = session.lastActivity;
+      latest = { username, password: session.password };
+    }
+  }
+  if (latest) return latest;
+  
+  // Fallback: credenciales de env
+  if (process.env.XTREAM_USER && process.env.XTREAM_PASS) {
+    return { username: process.env.XTREAM_USER, password: process.env.XTREAM_PASS };
+  }
+  return null;
+}
+
+// =============================================
 // HEALTH CHECK
 // =============================================
 app.get('/api/health', async (req, res) => {
   try {
-    // Verificar que Xtream UI responde
-    const test = await callXtreamAPI('username=test&password=test');
+    await callXtreamAPI('username=test&password=test');
     res.json({ 
       status: 'ok', 
       mode: 'xtream-bridge',
       xtream_ui: 'connected',
+      active_sessions: activeSessions.size,
       port: PORT
     });
   } catch (err) {
@@ -81,24 +115,20 @@ app.post('/api/client/login', async (req, res) => {
       return res.status(400).json({ error: 'Usuario y contraseña requeridos' });
     }
 
-    // 1. Autenticar contra Xtream UI
     const authData = await callXtreamAPI(
       `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`
     );
 
-    // Xtream UI devuelve user_info si las credenciales son válidas
     if (!authData.user_info) {
       return res.status(401).json({ error: 'Credenciales inválidas' });
     }
 
     const userInfo = authData.user_info;
 
-    // Verificar que la cuenta esté activa
     if (userInfo.status !== 'Active') {
       return res.status(403).json({ error: 'Cuenta suspendida' });
     }
 
-    // Verificar expiración
     if (userInfo.exp_date && userInfo.exp_date !== 'Unlimited') {
       const expiry = new Date(parseInt(userInfo.exp_date) * 1000);
       if (expiry < new Date()) {
@@ -106,50 +136,44 @@ app.post('/api/client/login', async (req, res) => {
       }
     }
 
-    // 2. Obtener canales (live streams)
     const liveData = await callXtreamAPI(
       `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&action=get_live_streams`
     );
 
-    // 3. Obtener categorías
     const catData = await callXtreamAPI(
       `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&action=get_live_categories`
     );
 
-    // Mapear categorías por ID
     const catMap = {};
     if (Array.isArray(catData)) {
-      catData.forEach(cat => {
-        catMap[cat.category_id] = cat.category_name;
-      });
+      catData.forEach(cat => { catMap[cat.category_id] = cat.category_name; });
     }
 
-    // 4. Mapear canales al formato de Omnisync
     const channels = (Array.isArray(liveData) ? liveData : []).map((ch, idx) => ({
       id: String(ch.stream_id),
       name: ch.name || 'Sin nombre',
-      // El stream se sirve via proxy local para ocultar IP origen
       url: `/api/restream/${ch.stream_id}`,
       category: catMap[ch.category_id] || 'General',
       logo_url: ch.stream_icon || null,
       sort_order: ch.num || idx,
-      // Guardar datos internos para el proxy
       _xtream_stream_id: ch.stream_id,
       _xtream_ext: ch.container_extension || 'ts',
     }));
 
-    // 5. Calcular fecha de expiración
     let expiryDate = '2099-12-31';
     if (userInfo.exp_date && userInfo.exp_date !== 'Unlimited') {
       expiryDate = new Date(parseInt(userInfo.exp_date) * 1000).toISOString().split('T')[0];
     }
 
-    // 6. Guardar sesión internamente para el proxy de streams
+    // Guardar sesión — se renueva con cada heartbeat
     activeSessions.set(username, {
       password,
       channels: liveData || [],
       loginAt: Date.now(),
+      lastActivity: Date.now(),
     });
+
+    console.log(`✅ Login: ${username} (${channels.length} canales)`);
 
     res.json({
       client: {
@@ -171,100 +195,73 @@ app.post('/api/client/login', async (req, res) => {
 });
 
 // =============================================
-// SESIONES ACTIVAS (para proxy de streams)
-// =============================================
-const activeSessions = new Map(); // username -> { password, channels, loginAt }
-
-// Limpiar sesiones viejas cada 30 minutos
-setInterval(() => {
-  const thirtyMinAgo = Date.now() - 30 * 60 * 1000;
-  activeSessions.forEach((session, key) => {
-    if (session.loginAt < thirtyMinAgo) activeSessions.delete(key);
-  });
-}, 30 * 60 * 1000);
-
-// =============================================
-// HEARTBEAT (mantener sesión activa)
+// HEARTBEAT — Renueva la sesión activa
 // =============================================
 app.post('/api/client/heartbeat', (req, res) => {
+  const { username } = req.body;
+  
+  // Renovar la sesión si existe
+  if (username && activeSessions.has(username)) {
+    const session = activeSessions.get(username);
+    session.lastActivity = Date.now();
+  } else {
+    // Renovar todas las sesiones activas (fallback)
+    activeSessions.forEach(session => {
+      session.lastActivity = Date.now();
+    });
+  }
+  
   res.json({ ok: true });
 });
 
 // =============================================
-// HELPER: Obtener credenciales de sesión activa
-// =============================================
-function getActiveCreds() {
-  for (const [username, session] of activeSessions) {
-    return { username, password: session.password };
-  }
-  // Fallback: credenciales de env para que el proxy funcione sin sesión
-  if (process.env.XTREAM_USER && process.env.XTREAM_PASS) {
-    return { username: process.env.XTREAM_USER, password: process.env.XTREAM_PASS };
-  }
-  return null;
-}
-
-// =============================================
 // PROXY DE STREAMS — Oculta IP de Xtream UI
-// Sirve HLS (m3u8) reescribiendo URLs internas
 // =============================================
 
-// Proxy del manifiesto m3u8 (reescribe URLs para que pasen por nuestro proxy)
 app.get('/api/restream/:streamId', (req, res) => {
   const { streamId } = req.params;
   const creds = getActiveCreds();
 
   if (!creds) {
-    return res.status(403).json({ error: 'No hay sesión activa' });
+    return res.status(403).json({ error: 'No hay sesión activa. Inicia sesión de nuevo.' });
   }
 
-  // Pedir m3u8 a Xtream UI
+  // Renovar actividad de la sesión con cada petición de stream
+  if (activeSessions.has(creds.username)) {
+    activeSessions.get(creds.username).lastActivity = Date.now();
+  }
+
   const streamUrl = `${XTREAM_HOST}:${XTREAM_PORT}/live/${creds.username}/${creds.password}/${streamId}.m3u8`;
-  
   const client = streamUrl.startsWith('https') ? https : http;
   
-  const proxyReq = client.get(streamUrl, { timeout: 15000 }, (proxyRes) => {
+  const proxyReq = client.get(streamUrl, { timeout: 20000 }, (proxyRes) => {
     if (proxyRes.statusCode !== 200) {
-      // Fallback: intentar .ts directo si m3u8 no existe
+      // Fallback: .ts directo
       const tsUrl = `${XTREAM_HOST}:${XTREAM_PORT}/live/${creds.username}/${creds.password}/${streamId}.ts`;
-      const tsReq = client.get(tsUrl, { timeout: 30000 }, (tsRes) => {
+      const tsReq = client.get(tsUrl, { timeout: 60000 }, (tsRes) => {
         res.writeHead(tsRes.statusCode, {
           'Content-Type': 'video/mp2t',
           'Cache-Control': 'no-cache',
           'Access-Control-Allow-Origin': '*',
+          'Connection': 'keep-alive',
         });
         tsRes.pipe(res);
       });
       tsReq.on('error', (err) => {
+        console.error(`TS proxy error [${streamId}]:`, err.message);
         if (!res.headersSent) res.status(502).json({ error: 'Stream no disponible' });
       });
       req.on('close', () => tsReq.destroy());
       return;
     }
 
-    // Leer el m3u8 completo para reescribir URLs
+    // Leer m3u8 y reescribir URLs
     let m3u8Data = '';
     proxyRes.on('data', chunk => m3u8Data += chunk);
     proxyRes.on('end', () => {
-      // Reescribir URLs absolutas/relativas para que pasen por nuestro proxy
-      const rewritten = m3u8Data.replace(
-        /^(?!#)(https?:\/\/[^\s]+|[^\s]+\.ts[^\s]*|[^\s]+\.m3u8[^\s]*)/gm,
-        (match) => {
-          if (match.startsWith('http')) {
-            return `/api/stream-proxy?url=${encodeURIComponent(match)}`;
-          }
-          // Path absoluto (empieza con /) → usar host+port directamente
-          if (match.startsWith('/')) {
-            return `/api/stream-proxy?url=${encodeURIComponent(`${XTREAM_HOST}:${XTREAM_PORT}${match}`)}`;
-          }
-          // Path relativo → construir desde base
-          const base = `${XTREAM_HOST}:${XTREAM_PORT}/live/${creds.username}/${creds.password}/`;
-          return `/api/stream-proxy?url=${encodeURIComponent(base + match)}`;
-        }
-      );
-
+      const rewritten = rewriteM3U8(m3u8Data, creds);
       res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Cache-Control', 'no-cache, no-store');
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.send(rewritten);
     });
@@ -280,23 +277,46 @@ app.get('/api/restream/:streamId', (req, res) => {
   req.on('close', () => proxyReq.destroy());
 });
 
+// Helper: reescribir URLs en m3u8
+function rewriteM3U8(data, creds) {
+  return data.replace(
+    /^(?!#)(https?:\/\/[^\s]+|[^\s]+\.ts[^\s]*|[^\s]+\.m3u8[^\s]*)/gm,
+    (match) => {
+      if (match.startsWith('http')) {
+        return `/api/stream-proxy?url=${encodeURIComponent(match)}`;
+      }
+      if (match.startsWith('/')) {
+        return `/api/stream-proxy?url=${encodeURIComponent(`${XTREAM_HOST}:${XTREAM_PORT}${match}`)}`;
+      }
+      const base = `${XTREAM_HOST}:${XTREAM_PORT}/live/${creds.username}/${creds.password}/`;
+      return `/api/stream-proxy?url=${encodeURIComponent(base + match)}`;
+    }
+  );
+}
+
 // Proxy genérico para segmentos .ts y sub-manifiestos
 app.get('/api/stream-proxy', (req, res) => {
   const targetUrl = req.query.url;
   if (!targetUrl) return res.status(400).json({ error: 'URL requerida' });
 
+  // Renovar sesión con cada segmento
+  const creds = getActiveCreds();
+  if (creds && activeSessions.has(creds.username)) {
+    activeSessions.get(creds.username).lastActivity = Date.now();
+  }
+
   const client = targetUrl.startsWith('https') ? https : http;
   
-  const proxyReq = client.get(targetUrl, { timeout: 15000 }, (proxyRes) => {
+  const proxyReq = client.get(targetUrl, { timeout: 30000 }, (proxyRes) => {
     const contentType = proxyRes.headers['content-type'] || 
       (targetUrl.includes('.m3u8') ? 'application/vnd.apple.mpegurl' : 'video/mp2t');
     
-    // Si es m3u8, reescribir URLs internas también
+    // Si es m3u8, reescribir URLs internas
     if (targetUrl.includes('.m3u8')) {
       let data = '';
       proxyRes.on('data', chunk => data += chunk);
       proxyRes.on('end', () => {
-        const creds = getActiveCreds();
+        const activeCreds = getActiveCreds();
         const rewritten = data.replace(
           /^(?!#)(https?:\/\/[^\s]+|[^\s]+\.ts[^\s]*|[^\s]+\.m3u8[^\s]*)/gm,
           (match) => {
@@ -311,18 +331,19 @@ app.get('/api/stream-proxy', (req, res) => {
           }
         );
         res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Cache-Control', 'no-cache, no-store');
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.send(rewritten);
       });
       return;
     }
 
-    // Segmentos .ts → pipe directo
+    // Segmentos .ts → pipe directo con headers mejorados
     res.writeHead(proxyRes.statusCode, {
       'Content-Type': contentType,
       'Cache-Control': 'no-cache',
       'Access-Control-Allow-Origin': '*',
+      'Connection': 'keep-alive',
     });
     proxyRes.pipe(res);
   });
@@ -339,13 +360,7 @@ app.get('/api/stream-proxy', (req, res) => {
 // VOD — Obtener películas de Xtream UI
 // =============================================
 app.get('/api/vod/public', async (req, res) => {
-  // Buscar credenciales activas
-  let creds = null;
-  for (const [username, session] of activeSessions) {
-    creds = { username, password: session.password };
-    break;
-  }
-
+  const creds = getActiveCreds();
   if (!creds) return res.json([]);
 
   try {
@@ -370,15 +385,10 @@ app.get('/api/vod/public', async (req, res) => {
 });
 
 // =============================================
-// SERIES — Obtener series de Xtream UI  
+// SERIES
 // =============================================
 app.get('/api/vod/series/public', async (req, res) => {
-  let creds = null;
-  for (const [username, session] of activeSessions) {
-    creds = { username, password: session.password };
-    break;
-  }
-
+  const creds = getActiveCreds();
   if (!creds) return res.json([]);
 
   try {
@@ -402,15 +412,10 @@ app.get('/api/vod/series/public', async (req, res) => {
 });
 
 // =============================================
-// CANALES PÚBLICOS (para refresh después del login)
+// CANALES PÚBLICOS
 // =============================================
 app.get('/api/channels/public', async (req, res) => {
-  let creds = null;
-  for (const [username, session] of activeSessions) {
-    creds = { username, password: session.password };
-    break;
-  }
-
+  const creds = getActiveCreds();
   if (!creds) return res.json([]);
 
   try {
@@ -443,16 +448,13 @@ app.get('/api/channels/public', async (req, res) => {
 });
 
 // =============================================
-// ADS (vacío en modo bridge)
+// ADS & ERROR REPORT
 // =============================================
 app.get('/api/ads/public', (req, res) => res.json([]));
 
-// =============================================
-// REPORT ERROR (log solamente)
-// =============================================
 app.post('/api/channel/report-error', (req, res) => {
   const { channel_id, error_message, username } = req.body;
-  console.log(`⚠️ Error reportado por ${username} en canal ${channel_id}: ${error_message}`);
+  console.log(`⚠️ Error canal ${channel_id}: ${error_message} (${username})`);
   res.json({ ok: true });
 });
 
@@ -460,8 +462,7 @@ app.post('/api/channel/report-error', (req, res) => {
 // INICIAR SERVIDOR
 // =============================================
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🎬 Omnisync Player Bridge corriendo en http://0.0.0.0:${PORT}`);
-  console.log(`🔗 Conectado a Xtream UI en ${XTREAM_HOST}:${XTREAM_PORT}`);
-  console.log(`📺 Reproductor: http://TU_IP:${PORT}`);
-  console.log(`🌐 Cloudflare Tunnel: cloudflared tunnel --url http://localhost:${PORT}\n`);
+  console.log(`\n🎬 Omnisync Bridge en http://0.0.0.0:${PORT}`);
+  console.log(`🔗 Xtream UI: ${XTREAM_HOST}:${XTREAM_PORT}`);
+  console.log(`📺 Reproductor: http://TU_IP:${PORT}\n`);
 });

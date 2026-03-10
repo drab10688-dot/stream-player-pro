@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState, useCallback, memo } from 'react';
 import Hls from 'hls.js';
-import { Settings, Wifi } from 'lucide-react';
+import { Settings, Wifi, AlertTriangle, RefreshCw } from 'lucide-react';
 
 interface VideoPlayerProps {
   src: string;
@@ -30,7 +30,7 @@ const getYouTubeId = (url: string): string | null => {
 };
 
 const isHlsStream = (url: string): boolean => {
-  return /\.m3u8(\?|$)/i.test(url) || /\/live\//i.test(url);
+  return /\.m3u8(\?|$)/i.test(url) || /\/live\//i.test(url) || /\/api\/restream\//i.test(url);
 };
 
 const formatBitrate = (bps: number): string => {
@@ -44,23 +44,37 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
   const hlsRef = useRef<Hls | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingTime, setLoadingTime] = useState(0);
   const retryCountRef = useRef(0);
-  const maxRetries = 8;
+  const maxRetries = 10;
+  const loadingTimerRef = useRef<ReturnType<typeof setInterval>>();
 
   // Quality selector state
   const [qualities, setQualities] = useState<QualityLevel[]>([]);
-  const [currentQuality, setCurrentQuality] = useState(-1); // -1 = auto
+  const [currentQuality, setCurrentQuality] = useState(-1);
   const [showQualityMenu, setShowQualityMenu] = useState(false);
   const [currentBandwidth, setCurrentBandwidth] = useState(0);
   const [autoLabel, setAutoLabel] = useState('Auto');
   const qualityMenuRef = useRef<HTMLDivElement>(null);
+
+  // Loading time counter
+  useEffect(() => {
+    if (loading && !error) {
+      setLoadingTime(0);
+      loadingTimerRef.current = setInterval(() => {
+        setLoadingTime(prev => prev + 1);
+      }, 1000);
+    } else {
+      if (loadingTimerRef.current) clearInterval(loadingTimerRef.current);
+    }
+    return () => { if (loadingTimerRef.current) clearInterval(loadingTimerRef.current); };
+  }, [loading, error]);
 
   const cleanup = useCallback(() => {
     if (hlsRef.current) {
       hlsRef.current.destroy();
       hlsRef.current = null;
     }
-    retryCountRef.current = 0;
     setQualities([]);
     setCurrentQuality(-1);
   }, []);
@@ -76,29 +90,31 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
 
     const isHls = isHlsStream(src);
 
-    // Case 1: HLS stream with hls.js support
     if (isHls && Hls.isSupported()) {
       const hls = new Hls({
-        // Stability + low bandwidth config for IPTV
-        maxBufferLength: 30,
-        maxMaxBufferLength: 60,
-        maxBufferSize: 60 * 1000 * 1000,
+        // Stability config for IPTV via proxy
+        maxBufferLength: 15,          // Less buffer = less data usage
+        maxMaxBufferLength: 30,
+        maxBufferSize: 30 * 1000 * 1000,
         maxBufferHole: 0.5,
         lowLatencyMode: false,
-        startLevel: 0, // Start at lowest quality
+        startLevel: 0,                // Start at lowest quality always
         capLevelToPlayerSize: true,
-        abrEwmaDefaultEstimate: 500000, // Start assuming 500kbps
-        abrBandWidthUpFactor: 0.7, // Conservative upgrade (default 0.7)
-        abrBandWidthFactor: 0.95, // Conservative downgrade
-        // Recovery settings
-        manifestLoadingMaxRetry: 8,
-        manifestLoadingRetryDelay: 1000,
-        levelLoadingMaxRetry: 8,
-        levelLoadingRetryDelay: 1000,
-        fragLoadingMaxRetry: 8,
+        abrEwmaDefaultEstimate: 300000, // Assume 300kbps initially
+        abrBandWidthUpFactor: 0.6,     // Very conservative upgrade
+        abrBandWidthFactor: 0.95,
+        // Aggressive recovery for proxy streams
+        manifestLoadingMaxRetry: 10,
+        manifestLoadingRetryDelay: 1500,
+        manifestLoadingMaxRetryTimeout: 30000,
+        levelLoadingMaxRetry: 10,
+        levelLoadingRetryDelay: 1500,
+        levelLoadingMaxRetryTimeout: 30000,
+        fragLoadingMaxRetry: 10,
         fragLoadingRetryDelay: 1000,
+        fragLoadingMaxRetryTimeout: 30000,
         // Stall recovery
-        nudgeMaxRetry: 5,
+        nudgeMaxRetry: 10,
         nudgeOffset: 0.2,
       });
 
@@ -110,8 +126,8 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
 
       hls.on(Hls.Events.MANIFEST_PARSED, (_event, data) => {
         setLoading(false);
+        retryCountRef.current = 0;
 
-        // Extract quality levels
         const levels: QualityLevel[] = data.levels.map((level, idx) => ({
           index: idx,
           height: level.height || 0,
@@ -121,7 +137,6 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
             : `${formatBitrate(level.bitrate)}`,
         }));
 
-        // Sort by bitrate ascending
         levels.sort((a, b) => a.bitrate - b.bitrate);
         setQualities(levels);
 
@@ -132,7 +147,6 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
         });
       });
 
-      // Track current quality and bandwidth
       hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => {
         const level = hls.levels[data.level];
         if (level) {
@@ -142,6 +156,7 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
       });
 
       hls.on(Hls.Events.FRAG_LOADED, (_event, data) => {
+        retryCountRef.current = 0; // Reset retries on successful load
         if (data.frag.stats) {
           const stats = data.frag.stats;
           const duration = (stats.loading.end - stats.loading.start) / 1000;
@@ -161,15 +176,16 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
               if (retryCountRef.current < maxRetries) {
                 retryCountRef.current++;
                 console.log(`HLS: retry ${retryCountRef.current}/${maxRetries}`);
-                // On network errors, try dropping to lowest quality
+                // Drop to lowest quality on network issues
                 if (hls.currentLevel > 0) {
                   hls.currentLevel = 0;
                 }
-                setTimeout(() => hls.startLoad(), 1000 * retryCountRef.current);
+                const delay = Math.min(1000 * retryCountRef.current, 8000);
+                setTimeout(() => hls.startLoad(), delay);
               } else {
-                setError('Error de red: no se pudo cargar el stream.');
+                setError('Error de red. El stream puede estar caído o tu conexión es inestable.');
                 setLoading(false);
-                onError?.('Network error');
+                onError?.('Network error after max retries');
               }
               break;
             case Hls.ErrorTypes.MEDIA_ERROR:
@@ -185,13 +201,9 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
         }
       });
 
-      hls.on(Hls.Events.FRAG_BUFFERED, () => {
-        retryCountRef.current = 0;
-      });
-
       hls.attachMedia(video);
     }
-    // Case 2: Native HLS support (Safari/iOS)
+    // Native HLS (Safari/iOS)
     else if (isHls && video.canPlayType('application/vnd.apple.mpegurl')) {
       video.src = src;
       video.addEventListener('loadedmetadata', () => {
@@ -203,7 +215,7 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
         });
       }, { once: true });
     }
-    // Case 3: Direct URL
+    // Direct URL
     else {
       video.src = src;
       video.muted = muted;
@@ -217,18 +229,15 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
     }
   }, [src, cleanup, onError, muted]);
 
-  // Set quality level
   const setQuality = useCallback((levelIndex: number) => {
     const hls = hlsRef.current;
     if (!hls) return;
 
     if (levelIndex === -1) {
-      // Auto mode
       hls.currentLevel = -1;
       hls.nextLevel = -1;
       setCurrentQuality(-1);
     } else {
-      // Fixed quality
       hls.currentLevel = levelIndex;
       hls.nextLevel = levelIndex;
       setCurrentQuality(levelIndex);
@@ -245,7 +254,7 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
     if (videoRef.current) videoRef.current.muted = muted;
   }, [muted]);
 
-  // Stall detection
+  // Stall detection — restart after 20s of no playback
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -255,16 +264,16 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
     const onStall = () => {
       if (stallTimer) clearTimeout(stallTimer);
       stallTimer = setTimeout(() => {
-        console.warn('Stall detected, restarting stream');
-        // Try dropping quality first before full restart
+        console.warn('Stall detected (20s), restarting stream');
         const hls = hlsRef.current;
         if (hls && hls.currentLevel > 0) {
           hls.currentLevel = 0;
           hls.startLoad();
         } else {
+          retryCountRef.current = 0;
           initStream();
         }
-      }, 15000);
+      }, 20000);
     };
 
     const onPlaying = () => {
@@ -285,6 +294,14 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
       if (stallTimer) clearTimeout(stallTimer);
     };
   }, [initStream]);
+
+  // Loading timeout — show error after 25s
+  useEffect(() => {
+    if (loadingTime >= 25 && loading) {
+      setError('El canal tardó demasiado en responder. Puede estar caído o tu conexión es muy lenta.');
+      setLoading(false);
+    }
+  }, [loadingTime, loading]);
 
   // Close quality menu on outside click
   useEffect(() => {
@@ -326,7 +343,7 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
         muted={muted}
         onCanPlay={() => setLoading(false)}
         onWaiting={() => setLoading(true)}
-        onPlaying={() => setLoading(false)}
+        onPlaying={() => { setLoading(false); setError(null); }}
         onError={() => {
           if (!hlsRef.current) {
             setError('No se pudo reproducir este canal.');
@@ -335,21 +352,16 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
         }}
       />
 
-      {/* Quality selector button */}
+      {/* Quality selector */}
       {qualities.length > 1 && (
         <div ref={qualityMenuRef} className="absolute bottom-16 right-3 z-30">
-          {/* Quality menu */}
           {showQualityMenu && (
             <div className="mb-2 bg-black/90 backdrop-blur-sm rounded-lg border border-white/10 overflow-hidden min-w-[180px]">
-              {/* Bandwidth indicator */}
               <div className="px-3 py-2 border-b border-white/10 flex items-center gap-2">
                 <Wifi className="w-3 h-3 text-primary" />
-                <span className="text-xs text-white/60">
-                  {formatBitrate(currentBandwidth)}
-                </span>
+                <span className="text-xs text-white/60">{formatBitrate(currentBandwidth)}</span>
               </div>
 
-              {/* Auto option */}
               <button
                 onClick={() => setQuality(-1)}
                 className={`w-full px-3 py-2 text-left text-sm flex items-center justify-between hover:bg-white/10 transition-colors ${
@@ -360,7 +372,6 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
                 {currentQuality === -1 && <span className="text-xs text-primary">●</span>}
               </button>
 
-              {/* Quality levels */}
               {[...qualities].reverse().map((q) => (
                 <button
                   key={q.index}
@@ -376,7 +387,6 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
             </div>
           )}
 
-          {/* Toggle button */}
           <button
             onClick={() => setShowQualityMenu(!showQualityMenu)}
             className="flex items-center gap-1.5 px-2.5 py-1.5 bg-black/70 hover:bg-black/90 rounded-md text-white text-xs font-medium transition-colors opacity-0 group-hover:opacity-100"
@@ -392,21 +402,35 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
         </div>
       )}
 
-      {loading && (
+      {/* Loading overlay with diagnostics */}
+      {loading && !error && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/80 pointer-events-none">
-          <div className="w-10 h-10 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+          <div className="flex flex-col items-center gap-3">
+            <div className="w-10 h-10 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+            {loadingTime >= 3 && (
+              <div className="text-center">
+                <p className="text-white/60 text-xs">Conectando... {loadingTime}s</p>
+                {loadingTime >= 8 && (
+                  <p className="text-white/40 text-[10px] mt-1">La conexión está lenta</p>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
+      {/* Error overlay */}
       {error && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/80">
           <div className="text-center max-w-sm px-4">
+            <AlertTriangle className="w-8 h-8 text-destructive mx-auto mb-3" />
             <p className="text-destructive font-semibold mb-2">Error de reproducción</p>
             <p className="text-muted-foreground text-sm mb-4">{error}</p>
             <button
               onClick={() => { retryCountRef.current = 0; initStream(); }}
-              className="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors"
+              className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors"
             >
+              <RefreshCw className="w-4 h-4" />
               Reintentar
             </button>
           </div>
