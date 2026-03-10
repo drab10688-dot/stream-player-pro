@@ -1768,9 +1768,11 @@ function startHLSKeepAlivePolling(channelId, sourceUrl) {
         try {
           const segData = await fetchSegment(segUrl);
           seenSegments.add(segUrl);
-          // Track input bandwidth (fetchSegment also tracks, but only on fresh downloads
-          // which is what we want — it deduplicates via pendingSegments)
-          // We DON'T double-track here; fetchSegment handles it
+          // Always track input bandwidth for THIS channel when we see a new segment
+          // fetchSegment may not match the URL pattern, so we explicitly track here
+          if (segData && segData.length) {
+            trackInputBandwidth(channelId, segData.length);
+          }
         } catch {}
       }
 
@@ -2622,6 +2624,107 @@ app.get('/api/streams/active', authAdmin, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// =============================================
+// RUTA: INICIAR STREAM MANUALMENTE (como Xtream UI)
+// =============================================
+app.post('/api/streams/start/:channelId', authAdmin, async (req, res) => {
+  try {
+    const channelId = req.params.channelId;
+    
+    // Check if already running
+    if (activeTranscoders.has(channelId)) {
+      return res.json({ success: true, message: 'Canal ya está activo' });
+    }
+    
+    const { rows } = await pool.query('SELECT url, name FROM channels WHERE id = $1 AND is_active = true', [channelId]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Canal no encontrado o inactivo' });
+    
+    const sourceUrl = rows[0].url;
+    const isHLS = /\.m3u8?(\?|$)/i.test(sourceUrl);
+    
+    if (isHLS) {
+      // Start HLS proxy
+      const entry = startHLSProxy(channelId, sourceUrl);
+      entry.clients = 1; // Mark as having a virtual client
+      startHLSKeepAlivePolling(channelId, sourceUrl);
+    } else {
+      // Start FFmpeg transcoder
+      startFFmpegTranscoder(channelId, sourceUrl);
+    }
+    
+    console.log(`▶️ [${channelId}] Stream iniciado manualmente: ${rows[0].name}`);
+    res.json({ success: true, message: `Stream iniciado: ${rows[0].name}` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// =============================================
+// RUTA: DETENER STREAM MANUALMENTE
+// =============================================
+app.post('/api/streams/stop/:channelId', authAdmin, async (req, res) => {
+  try {
+    const channelId = req.params.channelId;
+    const entry = activeTranscoders.get(channelId);
+    
+    if (!entry) {
+      return res.status(404).json({ error: 'Stream no está activo' });
+    }
+    
+    // Stop polling
+    if (entry.pollTimer) {
+      clearInterval(entry.pollTimer);
+      entry.pollTimer = null;
+    }
+    
+    // Kill FFmpeg if running
+    if (entry.ffmpeg) {
+      entry.ffmpeg.kill('SIGTERM');
+    }
+    
+    activeTranscoders.delete(channelId);
+    channelBandwidth.delete(channelId);
+    cleanChannelDir(channelId);
+    
+    const { rows } = await pool.query('SELECT name FROM channels WHERE id = $1', [channelId]);
+    const name = rows.length > 0 ? rows[0].name : channelId;
+    
+    console.log(`⏹️ [${channelId}] Stream detenido manualmente: ${name}`);
+    res.json({ success: true, message: `Stream detenido: ${name}` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// =============================================
+// RUTA: LISTAR TODOS LOS CANALES CON ESTADO DE STREAM
+// =============================================
+app.get('/api/streams/all-channels', authAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT id, name, url, category, is_active, keep_alive FROM channels ORDER BY sort_order ASC, name ASC');
+    
+    const channels = rows.map(ch => {
+      const entry = activeTranscoders.get(ch.id);
+      const bw = channelBandwidth.get(ch.id);
+      return {
+        ...ch,
+        is_streaming: !!entry,
+        stream_type: entry ? entry.type : null,
+        stream_ready: entry ? (entry.ready !== undefined ? entry.ready : true) : false,
+        stream_clients: entry ? Math.max(0, entry.clients) : 0,
+        bandwidth_in_bps: bw ? Math.round(bw.bpsIn) : 0,
+        bandwidth_bps: bw ? Math.round(bw.bpsOut) : 0,
+        uptime_seconds: entry ? Math.floor((Date.now() - (entry.startTime || entry.lastAccess)) / 1000) : 0,
+      };
+    });
+    
+    res.json({ channels });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 // =============================================
 // RUTA: ESPECTADORES ACTIVOS (quién ve qué, desde dónde)
