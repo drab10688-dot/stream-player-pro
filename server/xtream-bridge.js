@@ -191,35 +191,76 @@ app.post('/api/client/heartbeat', (req, res) => {
 });
 
 // =============================================
-// PROXY DE STREAMS — Oculta IP de Xtream UI
+// HELPER: Obtener credenciales de sesión activa
 // =============================================
+function getActiveCreds() {
+  for (const [username, session] of activeSessions) {
+    return { username, password: session.password };
+  }
+  return null;
+}
+
+// =============================================
+// PROXY DE STREAMS — Oculta IP de Xtream UI
+// Sirve HLS (m3u8) reescribiendo URLs internas
+// =============================================
+
+// Proxy del manifiesto m3u8 (reescribe URLs para que pasen por nuestro proxy)
 app.get('/api/restream/:streamId', (req, res) => {
   const { streamId } = req.params;
-  
-  // Buscar credenciales en sesiones activas
-  let creds = null;
-  for (const [username, session] of activeSessions) {
-    creds = { username, password: session.password };
-    break; // Usar la primera sesión disponible
-  }
+  const creds = getActiveCreds();
 
   if (!creds) {
     return res.status(403).json({ error: 'No hay sesión activa' });
   }
 
-  // Construir URL de Xtream UI para el stream
-  const streamUrl = `${XTREAM_HOST}:${XTREAM_PORT}/live/${creds.username}/${creds.password}/${streamId}.ts`;
+  // Pedir m3u8 a Xtream UI
+  const streamUrl = `${XTREAM_HOST}:${XTREAM_PORT}/live/${creds.username}/${creds.password}/${streamId}.m3u8`;
   
   const client = streamUrl.startsWith('https') ? https : http;
   
-  const proxyReq = client.get(streamUrl, { timeout: 30000 }, (proxyRes) => {
-    // Copiar headers relevantes
-    res.writeHead(proxyRes.statusCode, {
-      'Content-Type': proxyRes.headers['content-type'] || 'video/mp2t',
-      'Cache-Control': 'no-cache',
-      'Access-Control-Allow-Origin': '*',
+  const proxyReq = client.get(streamUrl, { timeout: 15000 }, (proxyRes) => {
+    if (proxyRes.statusCode !== 200) {
+      // Fallback: intentar .ts directo si m3u8 no existe
+      const tsUrl = `${XTREAM_HOST}:${XTREAM_PORT}/live/${creds.username}/${creds.password}/${streamId}.ts`;
+      const tsReq = client.get(tsUrl, { timeout: 30000 }, (tsRes) => {
+        res.writeHead(tsRes.statusCode, {
+          'Content-Type': 'video/mp2t',
+          'Cache-Control': 'no-cache',
+          'Access-Control-Allow-Origin': '*',
+        });
+        tsRes.pipe(res);
+      });
+      tsReq.on('error', (err) => {
+        if (!res.headersSent) res.status(502).json({ error: 'Stream no disponible' });
+      });
+      req.on('close', () => tsReq.destroy());
+      return;
+    }
+
+    // Leer el m3u8 completo para reescribir URLs
+    let m3u8Data = '';
+    proxyRes.on('data', chunk => m3u8Data += chunk);
+    proxyRes.on('end', () => {
+      // Reescribir URLs absolutas/relativas para que pasen por nuestro proxy
+      const rewritten = m3u8Data.replace(
+        /^(?!#)(https?:\/\/[^\s]+|[^\s]+\.ts[^\s]*|[^\s]+\.m3u8[^\s]*)/gm,
+        (match) => {
+          if (match.startsWith('http')) {
+            // URL absoluta → proxear
+            return `/api/stream-proxy?url=${encodeURIComponent(match)}`;
+          }
+          // URL relativa → construir absoluta y proxear
+          const base = `${XTREAM_HOST}:${XTREAM_PORT}/live/${creds.username}/${creds.password}/`;
+          return `/api/stream-proxy?url=${encodeURIComponent(base + match)}`;
+        }
+      );
+
+      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.send(rewritten);
     });
-    proxyRes.pipe(res);
   });
 
   proxyReq.on('error', (err) => {
@@ -227,6 +268,59 @@ app.get('/api/restream/:streamId', (req, res) => {
     if (!res.headersSent) {
       res.status(502).json({ error: 'Error al conectar con el stream' });
     }
+  });
+
+  req.on('close', () => proxyReq.destroy());
+});
+
+// Proxy genérico para segmentos .ts y sub-manifiestos
+app.get('/api/stream-proxy', (req, res) => {
+  const targetUrl = req.query.url;
+  if (!targetUrl) return res.status(400).json({ error: 'URL requerida' });
+
+  const client = targetUrl.startsWith('https') ? https : http;
+  
+  const proxyReq = client.get(targetUrl, { timeout: 15000 }, (proxyRes) => {
+    const contentType = proxyRes.headers['content-type'] || 
+      (targetUrl.includes('.m3u8') ? 'application/vnd.apple.mpegurl' : 'video/mp2t');
+    
+    // Si es m3u8, reescribir URLs internas también
+    if (targetUrl.includes('.m3u8')) {
+      let data = '';
+      proxyRes.on('data', chunk => data += chunk);
+      proxyRes.on('end', () => {
+        const creds = getActiveCreds();
+        const rewritten = data.replace(
+          /^(?!#)(https?:\/\/[^\s]+|[^\s]+\.ts[^\s]*|[^\s]+\.m3u8[^\s]*)/gm,
+          (match) => {
+            if (match.startsWith('http')) {
+              return `/api/stream-proxy?url=${encodeURIComponent(match)}`;
+            }
+            // Derivar base URL del targetUrl
+            const baseUrl = targetUrl.substring(0, targetUrl.lastIndexOf('/') + 1);
+            return `/api/stream-proxy?url=${encodeURIComponent(baseUrl + match)}`;
+          }
+        );
+        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.send(rewritten);
+      });
+      return;
+    }
+
+    // Segmentos .ts → pipe directo
+    res.writeHead(proxyRes.statusCode, {
+      'Content-Type': contentType,
+      'Cache-Control': 'no-cache',
+      'Access-Control-Allow-Origin': '*',
+    });
+    proxyRes.pipe(res);
+  });
+
+  proxyReq.on('error', (err) => {
+    console.error('Stream proxy error:', err.message);
+    if (!res.headersSent) res.status(502).json({ error: 'Error de proxy' });
   });
 
   req.on('close', () => proxyReq.destroy());
