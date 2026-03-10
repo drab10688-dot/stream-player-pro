@@ -433,6 +433,25 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
     }
   }, [src, cleanup, initMpegTs, initVideoJs]);
 
+  // Quality selection handler
+  const selectQuality = useCallback((qualityId: string) => {
+    setSelectedQuality(qualityId);
+    setShowQualityMenu(false);
+    if (!playerRef.current) return;
+    try {
+      const tech = playerRef.current.tech({ IWillNotUseThisInPlugins: true }) as any;
+      const reps = tech?.vhs?.representations?.() || [];
+      if (qualityId === 'auto') {
+        reps.forEach((r: any) => r.enabled(true));
+      } else {
+        reps.forEach((r: any) => {
+          const id = r.id || String(reps.indexOf(r));
+          r.enabled(id === qualityId);
+        });
+      }
+    } catch (e) { console.warn('Quality set error:', e); }
+  }, []);
+
   // Initialize on src change
   useEffect(() => {
     initStream();
