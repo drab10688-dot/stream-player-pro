@@ -932,21 +932,30 @@ app.get('/api/validate-stream', async (req, res) => {
 const HLS_DIR = fs.existsSync('/opt/streambox/hls-cache') ? '/opt/streambox/hls-cache' : '/tmp/streambox-hls';
 const HLS_CACHE_DIR = fs.existsSync('/opt/streambox/hls-proxy-cache') ? '/opt/streambox/hls-proxy-cache' : '/tmp/streambox-cache';
 const activeTranscoders = new Map(); // channelId -> { ffmpeg, clients, lastAccess, type }
-// Per-channel bandwidth tracking
-const channelBandwidth = new Map(); // channelId -> { bytesOut: number, lastReset: number, bytesOutPrev: number }
-function trackBandwidth(channelId, bytes) {
+// Per-channel bandwidth tracking (input = from origin, output = to clients)
+const channelBandwidth = new Map(); // channelId -> { bytesIn, bytesOut, lastReset, bytesInPrev, bytesOutPrev }
+function initBandwidthEntry(channelId) {
   if (!channelBandwidth.has(channelId)) {
-    channelBandwidth.set(channelId, { bytesOut: 0, lastReset: Date.now(), bytesOutPrev: 0 });
+    channelBandwidth.set(channelId, { bytesIn: 0, bytesOut: 0, lastReset: Date.now(), bytesInPrev: 0, bytesOutPrev: 0 });
   }
+}
+function trackBandwidth(channelId, bytes) {
+  initBandwidthEntry(channelId);
   channelBandwidth.get(channelId).bytesOut += bytes;
+}
+function trackInputBandwidth(channelId, bytes) {
+  initBandwidthEntry(channelId);
+  channelBandwidth.get(channelId).bytesIn += bytes;
 }
 // Reset bandwidth counters every 5 seconds and calculate rate
 setInterval(() => {
   const now = Date.now();
   channelBandwidth.forEach((bw, channelId) => {
     const elapsed = (now - bw.lastReset) / 1000;
-    bw.bytesOutPrev = elapsed > 0 ? bw.bytesOut / elapsed : 0; // bytes per second
+    bw.bytesOutPrev = elapsed > 0 ? bw.bytesOut / elapsed : 0;
+    bw.bytesInPrev = elapsed > 0 ? bw.bytesIn / elapsed : 0;
     bw.bytesOut = 0;
+    bw.bytesIn = 0;
     bw.lastReset = now;
   });
   // Clean up channels no longer active
@@ -1200,6 +1209,20 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
   ffmpeg.stderr.on('data', (data) => {
     const msg = data.toString();
 
+    // Track input bandwidth from FFmpeg's reported bitrate
+    const bitrateMatch = msg.match(/bitrate=\s*([\d.]+)kbits\/s/);
+    if (bitrateMatch) {
+      const kbps = parseFloat(bitrateMatch[1]);
+      if (kbps > 0) {
+        // FFmpeg reports cumulative bitrate; use it as current input rate estimate
+        initBandwidthEntry(channelId);
+        const bw = channelBandwidth.get(channelId);
+        // Set bytesIn to match the reported bitrate for the current interval
+        const elapsed = (Date.now() - bw.lastReset) / 1000;
+        bw.bytesIn = (kbps * 1024 / 8) * elapsed; // Convert kbps to bytes for elapsed period
+      }
+    }
+
     // If var_stream_map fails, fallback to single quality optimized for slow internet
     if (!fallbackTriggered && ((msg.includes('var_stream_map') && msg.includes('Error')) || 
         msg.includes('Option var_stream_map not found'))) {
@@ -1315,6 +1338,17 @@ function startSingleQualityTranscoder(channelId, sourceUrl, channelDir, isKeepAl
   // Monitorear salida de FFmpeg
   ffmpeg.stderr.on('data', (data) => {
     const msg = data.toString();
+    // Track input bandwidth from FFmpeg's reported bitrate
+    const bitrateMatch = msg.match(/bitrate=\s*([\d.]+)kbits\/s/);
+    if (bitrateMatch) {
+      const kbps = parseFloat(bitrateMatch[1]);
+      if (kbps > 0) {
+        initBandwidthEntry(channelId);
+        const bw = channelBandwidth.get(channelId);
+        const elapsed = (Date.now() - bw.lastReset) / 1000;
+        bw.bytesIn = (kbps * 1024 / 8) * elapsed;
+      }
+    }
     // Detectar cuando el primer segmento está listo
     if (!entry.ready && (msg.includes('Opening') || msg.includes('muxing'))) {
       entry.ready = true;
@@ -1611,7 +1645,10 @@ function startHLSKeepAlivePolling(channelId, sourceUrl) {
           const urlMatch = segPath.match(/url=([^&\s]+)/);
           if (urlMatch) {
             const segUrl = decodeURIComponent(urlMatch[1]);
-            try { await fetchSegment(segUrl); } catch {}
+            try {
+              const segData = await fetchSegment(segUrl);
+              trackInputBandwidth(channelId, segData.length);
+            } catch {}
           }
         }
       }
@@ -2160,6 +2197,7 @@ app.get('/api/streams/active', authAdmin, async (req, res) => {
       
       const bw = channelBandwidth.get(channelId);
       const bandwidth_bps = bw ? bw.bytesOutPrev : 0;
+      const bandwidth_in_bps = bw ? bw.bytesInPrev : 0;
 
       streams.push({
         channel_id: channelId,
@@ -2171,6 +2209,7 @@ app.get('/api/streams/active', authAdmin, async (req, res) => {
         uptime_seconds: Math.floor((Date.now() - entry.lastAccess) / 1000),
         source_url: sourceUrl.substring(0, 60) + (sourceUrl.length > 60 ? '...' : ''),
         bandwidth_bps: Math.round(bandwidth_bps),
+        bandwidth_in_bps: Math.round(bandwidth_in_bps),
       });
     }
     

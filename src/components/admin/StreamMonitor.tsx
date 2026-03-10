@@ -11,9 +11,11 @@ interface ActiveStream {
   type: 'ffmpeg' | 'hls-proxy';
   clients: number;
   ready: boolean;
+  keep_alive: boolean;
   uptime_seconds: number;
   source_url: string;
   bandwidth_bps: number;
+  bandwidth_in_bps: number;
 }
 
 interface StreamsData {
@@ -100,7 +102,7 @@ const StreamMonitor = () => {
 
       {/* Summary Cards */}
       {data && (
-        <div className="grid grid-cols-4 gap-3">
+        <div className="grid grid-cols-5 gap-3">
           <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="glass rounded-xl p-4 text-center">
             <Server className="w-6 h-6 text-primary mx-auto mb-1" />
             <p className="text-2xl font-bold text-foreground">{data.origin_connections}</p>
@@ -119,9 +121,16 @@ const StreamMonitor = () => {
           <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }} className="glass rounded-xl p-4 text-center">
             <ArrowDown className="w-6 h-6 text-orange-400 mx-auto mb-1" />
             <p className="text-2xl font-bold text-foreground">
+              {formatBandwidth(data.streams.reduce((sum, s) => sum + (s.bandwidth_in_bps || 0), 0))}
+            </p>
+            <p className="text-xs text-muted-foreground">Entrada (Origen)</p>
+          </motion.div>
+          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="glass rounded-xl p-4 text-center">
+            <ArrowDown className="w-6 h-6 text-cyan-400 mx-auto mb-1 rotate-180" />
+            <p className="text-2xl font-bold text-foreground">
               {formatBandwidth(data.streams.reduce((sum, s) => sum + (s.bandwidth_bps || 0), 0))}
             </p>
-            <p className="text-xs text-muted-foreground">Salida Total</p>
+            <p className="text-xs text-muted-foreground">Salida (Clientes)</p>
           </motion.div>
         </div>
       )}
@@ -177,10 +186,19 @@ const StreamMonitor = () => {
                     }`}>
                       {stream.type === 'ffmpeg' ? 'TS→HLS' : 'HLS Proxy'}
                     </span>
+                    {stream.keep_alive && (
+                      <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-mono bg-green-500/20 text-green-300 ml-1">KA</span>
+                    )}
+                  </div>
+                  <div className="text-center min-w-[60px]">
+                    <p className={`text-xs font-bold font-mono ${getBandwidthColor(stream.bandwidth_in_bps || 0)}`}>
+                      ↓ {formatBandwidth(stream.bandwidth_in_bps || 0)}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">entrada</p>
                   </div>
                   <div className="text-center min-w-[60px]">
                     <p className={`text-xs font-bold font-mono ${getBandwidthColor(stream.bandwidth_bps || 0)}`}>
-                      {formatBandwidth(stream.bandwidth_bps || 0)}
+                      ↑ {formatBandwidth(stream.bandwidth_bps || 0)}
                     </p>
                     <p className="text-[10px] text-muted-foreground">salida</p>
                   </div>
