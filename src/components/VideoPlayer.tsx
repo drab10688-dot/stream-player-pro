@@ -203,7 +203,14 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
 
   // ── Loading timeout ──
   useEffect(() => {
-    if (loadingSec >= 35 && loading) {
+    if (loadingSec >= 60 && loading) {
+      // Double-check video isn't actually playing
+      const video = videoRef.current;
+      if (video && video.currentTime > 0 && !video.paused) {
+        setLoading(false);
+        setError(null);
+        return;
+      }
       setError('El canal tardó demasiado en responder.');
       setLoading(false);
     }
