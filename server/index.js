@@ -3212,7 +3212,7 @@ console.log('📺 Series system habilitado: /api/vod/series, /api/vod/seasons, /
 // =============================================
 app.get('/api/admin/system-info', async (req, res) => {
   try {
-    const { execSync } = require('child_process');
+    // execSync ya importado arriba
     const os = require('os');
 
     // Helper para ejecutar comandos seguros
