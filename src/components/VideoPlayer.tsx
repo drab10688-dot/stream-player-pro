@@ -2,9 +2,17 @@ import { useRef, useEffect, useState, useCallback, memo } from 'react';
 import videojs from 'video.js';
 import 'video.js/dist/video-js.css';
 import mpegts from 'mpegts.js';
-import { Settings, Wifi, AlertTriangle, RefreshCw } from 'lucide-react';
+import { Settings, Wifi, AlertTriangle, RefreshCw, ChevronUp } from 'lucide-react';
 
 import type Player from 'video.js/dist/types/player';
+
+interface QualityLevel {
+  id: string;
+  label: string;
+  height: number;
+  bandwidth: number;
+  enabled: boolean;
+}
 
 interface VideoPlayerProps {
   src: string;
@@ -53,6 +61,10 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
   const [loadingTime, setLoadingTime] = useState(0);
   const [engineType, setEngineType] = useState<'videojs' | 'mpegts' | null>(null);
   const [currentBandwidth, setCurrentBandwidth] = useState(0);
+  const [qualityLevels, setQualityLevels] = useState<QualityLevel[]>([]);
+  const [selectedQuality, setSelectedQuality] = useState<string>('auto');
+  const [showQualityMenu, setShowQualityMenu] = useState(false);
+  const qualityPollRef = useRef<ReturnType<typeof setInterval>>();
 
   const retryCountRef = useRef(0);
   const maxRetries = 12;
@@ -103,7 +115,14 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
       playerRef.current = null;
     }
 
+    if (qualityPollRef.current) {
+      clearInterval(qualityPollRef.current);
+      qualityPollRef.current = undefined;
+    }
+
     setEngineType(null);
+    setQualityLevels([]);
+    setSelectedQuality('auto');
   }, []);
 
   // ── mpegts.js engine (for raw .ts streams — VLC-like TS handling) ──
@@ -267,6 +286,31 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
       setLoading(false);
       setError(null);
       retryCountRef.current = 0;
+
+      // Poll quality levels from VHS
+      if (qualityPollRef.current) clearInterval(qualityPollRef.current);
+      const pollQualities = () => {
+        try {
+          const tech = player.tech({ IWillNotUseThisInPlugins: true }) as any;
+          const reps = tech?.vhs?.representations?.() || [];
+          if (reps.length > 1) {
+            const levels: QualityLevel[] = reps.map((r: any, i: number) => ({
+              id: r.id || String(i),
+              label: r.height ? `${r.height}p` : `${Math.round((r.bandwidth || 0) / 1000)}k`,
+              height: r.height || 0,
+              bandwidth: r.bandwidth || 0,
+              enabled: r.enabled?.() !== false,
+            }));
+            levels.sort((a, b) => b.height - a.height || b.bandwidth - a.bandwidth);
+            setQualityLevels(levels);
+            if (qualityPollRef.current) { clearInterval(qualityPollRef.current); qualityPollRef.current = undefined; }
+          }
+        } catch (e) { /* ignore */ }
+      };
+      pollQualities();
+      qualityPollRef.current = setInterval(pollQualities, 2000);
+      // Stop polling after 15s max
+      setTimeout(() => { if (qualityPollRef.current) { clearInterval(qualityPollRef.current); qualityPollRef.current = undefined; } }, 15000);
     });
 
     player.on('waiting', () => {
@@ -389,6 +433,25 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
     }
   }, [src, cleanup, initMpegTs, initVideoJs]);
 
+  // Quality selection handler
+  const selectQuality = useCallback((qualityId: string) => {
+    setSelectedQuality(qualityId);
+    setShowQualityMenu(false);
+    if (!playerRef.current) return;
+    try {
+      const tech = playerRef.current.tech({ IWillNotUseThisInPlugins: true }) as any;
+      const reps = tech?.vhs?.representations?.() || [];
+      if (qualityId === 'auto') {
+        reps.forEach((r: any) => r.enabled(true));
+      } else {
+        reps.forEach((r: any) => {
+          const id = r.id || String(reps.indexOf(r));
+          r.enabled(id === qualityId);
+        });
+      }
+    } catch (e) { console.warn('Quality set error:', e); }
+  }, []);
+
   // Initialize on src change
   useEffect(() => {
     initStream();
@@ -431,10 +494,11 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
         data-vjs-player
       />
 
-      {/* Engine indicator */}
+      {/* Engine indicator + Quality selector */}
       {engineType && !loading && !error && (
-        <div className="absolute top-3 left-3 z-10 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-          <span className="px-2 py-1 bg-black/70 rounded text-[10px] text-white/50 font-mono uppercase">
+        <div className="absolute top-3 left-3 right-3 z-10 flex items-start justify-between opacity-0 group-hover:opacity-100 transition-opacity">
+          {/* Engine badge */}
+          <span className="px-2 py-1 bg-black/70 rounded text-[10px] text-white/50 font-mono uppercase pointer-events-none">
             {engineType === 'mpegts' ? '📡 MPEG-TS' : '🎬 VJS-HLS'}
             {currentBandwidth > 0 && (
               <span className="ml-2">
@@ -443,6 +507,61 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
               </span>
             )}
           </span>
+
+          {/* Quality selector */}
+          {qualityLevels.length > 1 && engineType === 'videojs' && (
+            <div className="relative">
+              <button
+                onClick={() => setShowQualityMenu(prev => !prev)}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-black/80 hover:bg-black/90 rounded-lg text-xs text-white/80 hover:text-white transition-colors backdrop-blur-sm border border-white/10"
+              >
+                <Settings className="w-3.5 h-3.5" />
+                <span className="font-medium">
+                  {selectedQuality === 'auto'
+                    ? 'Auto'
+                    : qualityLevels.find(q => q.id === selectedQuality)?.label || 'Auto'}
+                </span>
+                {selectedQuality !== 'auto' && (
+                  <span className="text-[9px] text-primary font-bold ml-0.5">FIJO</span>
+                )}
+                <ChevronUp className={`w-3 h-3 transition-transform ${showQualityMenu ? '' : 'rotate-180'}`} />
+              </button>
+
+              {showQualityMenu && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowQualityMenu(false)} />
+                  <div className="absolute right-0 top-full mt-1 z-50 bg-black/95 backdrop-blur-xl rounded-xl border border-white/10 shadow-2xl overflow-hidden min-w-[180px]">
+                    <div className="px-3 py-2 border-b border-white/10">
+                      <span className="text-[10px] text-white/40 font-semibold uppercase tracking-wider">Calidad de video</span>
+                    </div>
+                    <div className="py-1">
+                      <button
+                        onClick={() => selectQuality('auto')}
+                        className={`w-full flex items-center justify-between px-3 py-2 text-sm transition-colors ${
+                          selectedQuality === 'auto' ? 'text-primary bg-primary/10' : 'text-white/80 hover:bg-white/10'
+                        }`}
+                      >
+                        <span className="font-medium">Auto</span>
+                        <span className="text-[10px] text-white/40">ABR</span>
+                      </button>
+                      {qualityLevels.map((level) => (
+                        <button
+                          key={level.id}
+                          onClick={() => selectQuality(level.id)}
+                          className={`w-full flex items-center justify-between px-3 py-2 text-sm transition-colors ${
+                            selectedQuality === level.id ? 'text-primary bg-primary/10' : 'text-white/80 hover:bg-white/10'
+                          }`}
+                        >
+                          <span className="font-medium">{level.label}</span>
+                          <span className="text-[10px] text-white/40 font-mono">{formatBitrate(level.bandwidth)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
       )}
 
