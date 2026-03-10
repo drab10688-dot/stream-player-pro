@@ -180,11 +180,11 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError, onQualityCha
 
       // Build quality levels
       if (data.levels.length > 0) {
-        const levels: QualityLevel[] = data.levels.map((level, i) => ({
+        const levels: QualityLevel[] = data.levels.map((level: any, i: number) => ({
           id: String(i),
-          label: level.height ? `${level.height}p` : `${Math.round((level.bandwidth || 0) / 1000)}k`,
+          label: level.height ? `${level.height}p` : `${Math.round((level.bitrate || level.bandwidth || 0) / 1000)}k`,
           height: level.height || 0,
-          bandwidth: level.bandwidth || 0,
+          bandwidth: level.bitrate || level.bandwidth || 0,
         }));
         levels.sort((a, b) => b.height - a.height || b.bandwidth - a.bandwidth);
         setQualityLevels(levels);
