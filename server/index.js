@@ -1775,63 +1775,68 @@ const fetchM3U8Raw = (targetUrl) => {
 };
 
 // Obtener manifiesto m3u8 con caché y reescritura de URLs
-// Si el origen devuelve un master playlist (EXT-X-STREAM-INF), lo aplana
-// siguiendo el primer sub-manifiesto para evitar expiración de sesión
+// SIEMPRE aplana master playlists → devuelve media playlist directamente
 const getCachedM3U8 = async (channelId, targetUrl) => {
   const cacheKey = `m3u8_${channelId}`;
   const cached = streamCache.get(cacheKey);
-  if (cached && Date.now() - cached.timestamp < 3000) return cached.data;
+  if (cached && Date.now() - cached.timestamp < 2500) return cached.data;
 
-  const { body, baseUrl, statusCode } = await fetchM3U8Raw(targetUrl);
+  let { body, baseUrl, statusCode } = await fetchM3U8Raw(targetUrl);
   
   if (statusCode >= 400) {
     throw new Error(`Origin returned ${statusCode}`);
   }
 
-  // Check if this is a master playlist (contains EXT-X-STREAM-INF)
-  if (body.includes('#EXT-X-STREAM-INF')) {
-    // Extract the first variant URL
+  // Detect master playlist and flatten it (follow first variant)
+  const isMaster = body.includes('#EXT-X-STREAM-INF');
+  console.log(`📋 [${channelId}] Manifest type: ${isMaster ? 'MASTER' : 'MEDIA'} (${body.split('\n').length} lines)`);
+
+  if (isMaster) {
+    // Extract ALL variant URLs sorted by bandwidth (pick highest)
     const lines = body.split('\n');
-    let variantUrl = null;
+    let bestVariant = null;
+    let bestBandwidth = -1;
     for (let i = 0; i < lines.length; i++) {
-      if (lines[i].startsWith('#EXT-X-STREAM-INF')) {
+      const line = lines[i].trim();
+      if (line.startsWith('#EXT-X-STREAM-INF')) {
+        const bwMatch = line.match(/BANDWIDTH=(\d+)/);
+        const bw = bwMatch ? parseInt(bwMatch[1]) : 0;
         // Next non-empty, non-comment line is the URL
         for (let j = i + 1; j < lines.length; j++) {
-          const line = lines[j].trim();
-          if (line && !line.startsWith('#')) {
-            variantUrl = line.startsWith('http') ? line : baseUrl + line;
+          const urlLine = lines[j].trim();
+          if (urlLine && !urlLine.startsWith('#')) {
+            if (bw > bestBandwidth) {
+              bestBandwidth = bw;
+              bestVariant = urlLine.startsWith('http') ? urlLine : baseUrl + urlLine;
+            }
             break;
           }
         }
-        break;
       }
     }
 
-    if (variantUrl) {
-      console.log(`🔗 [${channelId}] Master playlist detectado, siguiendo variante: ${variantUrl.substring(0, 80)}...`);
-      // Fetch the actual media playlist
-      const sub = await fetchM3U8Raw(variantUrl);
+    if (bestVariant) {
+      console.log(`🔗 [${channelId}] Aplanando master → variante ${bestBandwidth}bps: ${bestVariant.substring(0, 80)}...`);
+      const sub = await fetchM3U8Raw(bestVariant);
       if (sub.statusCode >= 400) {
-        throw new Error(`Sub-manifest returned ${sub.statusCode}`);
+        console.error(`❌ [${channelId}] Sub-manifest returned ${sub.statusCode}, falling back to master rewrite`);
+      } else {
+        // Use the sub-manifest's body and baseUrl
+        body = sub.body;
+        baseUrl = sub.baseUrl;
       }
-      // Rewrite only .ts segment URLs
-      const rewritten = sub.body.replace(/^(?!#)(.+\.ts.*)$/gm, (match) => {
-        const fullUrl = match.startsWith('http') ? match : sub.baseUrl + match;
-        return `/api/hls-segment/${channelId}?url=${encodeURIComponent(fullUrl)}`;
-      });
-      streamCache.set(cacheKey, { data: rewritten, timestamp: Date.now() });
-      return rewritten;
+    } else {
+      console.warn(`⚠️ [${channelId}] Master playlist pero no se encontró variante`);
     }
   }
 
-  // Regular media playlist — rewrite .ts and .m3u8 URLs
+  // Rewrite .ts segment URLs to go through our proxy
   const rewritten = body.replace(/^(?!#)(.+\.ts.*)$/gm, (match) => {
-    const fullUrl = match.startsWith('http') ? match : baseUrl + match;
+    const trimmed = match.trim();
+    const fullUrl = trimmed.startsWith('http') ? trimmed : baseUrl + trimmed;
     return `/api/hls-segment/${channelId}?url=${encodeURIComponent(fullUrl)}`;
-  }).replace(/^(?!#)(.+\.m3u8.*)$/gm, (match) => {
-    const fullUrl = match.startsWith('http') ? match : baseUrl + match;
-    return `/api/hls-manifest/${channelId}?url=${encodeURIComponent(fullUrl)}`;
   });
+
   streamCache.set(cacheKey, { data: rewritten, timestamp: Date.now() });
   return rewritten;
 };
