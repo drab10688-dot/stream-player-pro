@@ -1338,6 +1338,17 @@ function startSingleQualityTranscoder(channelId, sourceUrl, channelDir, isKeepAl
   // Monitorear salida de FFmpeg
   ffmpeg.stderr.on('data', (data) => {
     const msg = data.toString();
+    // Track input bandwidth from FFmpeg's reported bitrate
+    const bitrateMatch = msg.match(/bitrate=\s*([\d.]+)kbits\/s/);
+    if (bitrateMatch) {
+      const kbps = parseFloat(bitrateMatch[1]);
+      if (kbps > 0) {
+        initBandwidthEntry(channelId);
+        const bw = channelBandwidth.get(channelId);
+        const elapsed = (Date.now() - bw.lastReset) / 1000;
+        bw.bytesIn = (kbps * 1024 / 8) * elapsed;
+      }
+    }
     // Detectar cuando el primer segmento está listo
     if (!entry.ready && (msg.includes('Opening') || msg.includes('muxing'))) {
       entry.ready = true;
