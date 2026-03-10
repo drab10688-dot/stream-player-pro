@@ -247,30 +247,31 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
         attemptPlay(video);
       }
     } else if (streamType === 'hls') {
-      if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        video.src = src;
-        attemptPlay(video);
-      } else if (Hls.isSupported()) {
+      // ALWAYS use hls.js when supported — native HLS (Safari) ignores ABR config
+      // and starts at highest quality, causing buffering on slow connections
+      if (Hls.isSupported()) {
         const hls = new Hls({
           enableWorker: true,
           lowLatencyMode: true,
-          // === DirecTV Go style ABR ===
-          abrEwmaDefaultEstimate: 200000,       // Assume 200kbps — forces 240p first
-          abrEwmaFastLive: 1.5,
-          abrEwmaSlowLive: 4,
-          abrEwmaFastVoD: 1.5,
-          abrEwmaSlowVoD: 4,
-          abrBandWidthFactor: 0.65,
-          abrBandWidthUpFactor: 0.45,
+          // === START AT LOWEST QUALITY — critical for slow internet ===
+          startLevel: 0,                         // Force start at level 0 (240p)
+          abrEwmaDefaultEstimate: 150000,        // Assume 150kbps — ultra conservative start
+          abrEwmaFastLive: 2.0,                  // Slower fast average (was 1.5) — less jumpy
+          abrEwmaSlowLive: 6,                    // Slower slow average (was 4) — more stable
+          abrEwmaFastVoD: 2.0,
+          abrEwmaSlowVoD: 6,
+          abrBandWidthFactor: 0.7,               // Switch DOWN if bw*0.7 < current (was 0.65)
+          abrBandWidthUpFactor: 0.35,            // Switch UP only if bw*0.35 > next (was 0.45) — very conservative upward
+          capLevelToPlayerSize: true,             // Don't request 1080p for a 360px player
           // === INSTANT PLAYBACK: minimal initial buffer ===
-          maxBufferLength: 4,                    // 4s buffer (2 segments) — play ASAP
-          maxMaxBufferLength: 15,                // 15s max buffer
-          maxBufferSize: 8 * 1000 * 1000,        // 8MB
-          maxBufferHole: 0.5,                    // Tolerate bigger holes for faster start
-          backBufferLength: 2,                   // 2s back-buffer only
-          // === Live sync: minimal latency ===
-          liveSyncDurationCount: 1,              // 1 segment behind live (2s)
-          liveMaxLatencyDurationCount: 3,
+          maxBufferLength: 6,                    // 6s buffer (3 segments) — safer for slow net
+          maxMaxBufferLength: 20,                // 20s max buffer
+          maxBufferSize: 10 * 1000 * 1000,       // 10MB
+          maxBufferHole: 0.5,
+          backBufferLength: 3,                   // 3s back-buffer
+          // === Live sync ===
+          liveSyncDurationCount: 2,              // 2 segments behind live (4s) — safer
+          liveMaxLatencyDurationCount: 4,
           liveDurationInfinity: true,
           // === Fast retries ===
           fragLoadingMaxRetry: 20,
@@ -282,7 +283,6 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
           levelLoadingMaxRetry: 15,
           levelLoadingRetryDelay: 500,
           levelLoadingMaxRetryTimeout: 10000,
-          startLevel: 0,                         // Always start at lowest (240p)
           startFragPrefetch: true,
           testBandwidth: true,
           progressive: true,
@@ -351,6 +351,10 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
         hls.on(Hls.Events.BUFFER_EOS, () => {
           if (!video.ended) retryStream();
         });
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        // Fallback: native HLS (Safari without hls.js support)
+        video.src = src;
+        attemptPlay(video);
       } else {
         reportError('Tu navegador no soporta HLS');
       }
