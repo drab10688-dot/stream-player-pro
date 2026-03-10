@@ -40,20 +40,26 @@ const detectStreamType = (url: string): 'hls' | 'ts' | 'youtube' | 'native' => {
 
 const getQualityLabel = (height: number | undefined, bandwidth: number | undefined): string => {
   if (height) {
+    if (height <= 240) return '240p';
+    if (height <= 360) return '360p';
     if (height <= 480) return '480p';
     if (height <= 720) return '720p';
     if (height <= 1080) return '1080p';
     return `${height}p`;
   }
   if (bandwidth) {
+    if (bandwidth < 300000) return '240p';
+    if (bandwidth < 500000) return '360p';
     if (bandwidth < 1000000) return '480p';
-    if (bandwidth < 2500000) return '720p';
+    if (bandwidth < 2000000) return '720p';
     return 'HD';
   }
   return 'Auto';
 };
 
 const getQualityColor = (label: string): string => {
+  if (label === '240p') return 'bg-red-500/90';
+  if (label === '360p') return 'bg-orange-500/90';
   if (label === '480p') return 'bg-yellow-500/90';
   if (label === '720p') return 'bg-blue-500/90';
   if (label === '1080p' || label === 'HD') return 'bg-green-500/90';
@@ -248,7 +254,7 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
           enableWorker: true,
           lowLatencyMode: true,
           // ABR: aggressive downshift for slow connections (DirecTV Go style)
-          abrEwmaDefaultEstimate: 500000,       // Start assuming 500kbps (was 1Mbps) — forces lowest quality first
+          abrEwmaDefaultEstimate: 300000,       // Start assuming 300kbps — forces 240p first (HEVC needs less)
           abrEwmaFastLive: 2,                    // React faster to bandwidth drops (was 3)
           abrEwmaSlowLive: 6,                    // Shorter averaging window (was 9)
           abrEwmaFastVoD: 2,
