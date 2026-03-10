@@ -10,7 +10,7 @@ const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 const crypto = require('crypto');
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
 
 const app = express();
 app.use(cors());
@@ -963,7 +963,7 @@ setInterval(() => {
 // Detectar tipo de almacenamiento
 const storageInfo = (() => {
   try {
-    const { execSync } = require('child_process');
+    // execSync ya importado arriba
     const output = execSync(`df -T ${HLS_DIR} 2>/dev/null`).toString();
     const isTmpfs = output.includes('tmpfs');
     const parts = output.split('\n')[1]?.split(/\s+/) || [];
@@ -989,7 +989,7 @@ const storageInfo = (() => {
 // Monitor de uso de disco (cada 60s)
 setInterval(() => {
   try {
-    const { execSync } = require('child_process');
+    // execSync ya importado arriba
     const output = execSync(`df -h ${HLS_DIR} 2>/dev/null`).toString();
     const parts = output.split('\n')[1]?.split(/\s+/) || [];
     const used = parts[2] || '?';
@@ -1048,7 +1048,7 @@ function cleanChannelDir(channelId) {
 // Audio: 32kbps mono en calidades bajas para ahorrar bandwidth
 // =============================================
 // Auto-detectar soporte H.265
-const { execSync } = require('child_process');
+// execSync ya importado arriba
 let USE_HEVC = true;
 try {
   const encoders = execSync('ffmpeg -encoders 2>/dev/null', { encoding: 'utf8' });
@@ -2218,7 +2218,7 @@ app.get('/api/clients/expiring', authAdmin, async (req, res) => {
 // =============================================
 // CLOUDFLARE TUNNEL - Gestión desde admin panel
 // =============================================
-const { execSync } = require('child_process');
+// execSync ya importado arriba
 
 let tunnelProcess = null;
 let tunnelUrl = null;
@@ -3212,7 +3212,7 @@ console.log('📺 Series system habilitado: /api/vod/series, /api/vod/seasons, /
 // =============================================
 app.get('/api/admin/system-info', async (req, res) => {
   try {
-    const { execSync } = require('child_process');
+    // execSync ya importado arriba
     const os = require('os');
 
     // Helper para ejecutar comandos seguros
