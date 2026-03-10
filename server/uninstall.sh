@@ -115,7 +115,10 @@ echo -e "${GREEN}  ✓ Entrada tmpfs eliminada de fstab${NC}"
 echo -e "${YELLOW}[7/7] Limpieza final...${NC}"
 rm -f /var/log/streambox*.log 2>/dev/null || true
 rm -f /var/log/omnisync*.log 2>/dev/null || true
-echo -e "${GREEN}  ✓ Logs eliminados${NC}"
+rm -f /etc/sysctl.d/99-streambox.conf 2>/dev/null || true
+rm -f /etc/security/limits.d/streambox.conf 2>/dev/null || true
+sysctl --system > /dev/null 2>&1 || true
+echo -e "${GREEN}  ✓ Logs y config del kernel eliminados${NC}"
 
 echo ""
 echo -e "${GREEN}╔══════════════════════════════════════════╗"
