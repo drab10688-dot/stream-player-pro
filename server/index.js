@@ -1790,16 +1790,15 @@ function startHLSKeepAlivePolling(channelId, sourceUrl) {
         }
       }
 
-      // Extract .ts segment URLs from media manifest
+      // Extract segment URLs from media manifest (.ts, .m3u, .m3u8, .aac, .mp4, .fmp4, or any non-comment line)
       const lines = rawManifest.split('\n');
       const segmentUrls = [];
       for (const line of lines) {
         const trimmed = line.trim();
         if (trimmed && !trimmed.startsWith('#')) {
-          if (trimmed.match(/\.ts/i)) {
-            const fullUrl = trimmed.startsWith('http') ? trimmed : baseUrl + trimmed;
-            segmentUrls.push(fullUrl);
-          }
+          // Accept any non-comment, non-empty line as a segment (covers .ts, .m3u8 sub-segments, .aac, etc.)
+          const fullUrl = trimmed.startsWith('http') ? trimmed : baseUrl + trimmed;
+          segmentUrls.push(fullUrl);
         }
       }
 
