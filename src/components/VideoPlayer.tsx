@@ -59,10 +59,13 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
 
     player.addEventListener('error', (event: Event) => {
       const detail = (event as any).detail || {};
-      console.error('Shaka error:', detail.code, detail.message);
-      setError(`Error del stream: ${detail.message || 'No se pudo cargar el canal'}`);
-      setLoading(false);
-      onError?.(detail.message || 'Stream error');
+      console.warn('Shaka error:', detail.code, detail.message);
+      // Solo mostrar error si el video no está reproduciendo
+      if (video.paused || video.ended || video.readyState < 2) {
+        setError(`Error del stream: ${detail.message || 'No se pudo cargar el canal'}`);
+        setLoading(false);
+        onError?.(detail.message || 'Stream error');
+      }
     });
 
     player.addEventListener('buffering', (e: Event) => {
