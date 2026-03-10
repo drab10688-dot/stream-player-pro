@@ -963,7 +963,7 @@ setInterval(() => {
 // Detectar tipo de almacenamiento
 const storageInfo = (() => {
   try {
-    const { execSync } = require('child_process');
+    // execSync ya importado arriba
     const output = execSync(`df -T ${HLS_DIR} 2>/dev/null`).toString();
     const isTmpfs = output.includes('tmpfs');
     const parts = output.split('\n')[1]?.split(/\s+/) || [];
