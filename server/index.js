@@ -1620,7 +1620,10 @@ function startHLSKeepAlivePolling(channelId, sourceUrl) {
           const urlMatch = segPath.match(/url=([^&\s]+)/);
           if (urlMatch) {
             const segUrl = decodeURIComponent(urlMatch[1]);
-            try { await fetchSegment(segUrl); } catch {}
+            try {
+              const segData = await fetchSegment(segUrl);
+              trackInputBandwidth(channelId, segData.length);
+            } catch {}
           }
         }
       }
