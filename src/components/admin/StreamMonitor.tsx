@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { apiGet } from '@/lib/api';
 import { useToast } from '@/hooks/use-toast';
-import { Radio, Wifi, Server, Users, RefreshCw, Activity } from 'lucide-react';
+import { Radio, Wifi, Server, Users, RefreshCw, Activity, ArrowDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { motion } from 'framer-motion';
 
