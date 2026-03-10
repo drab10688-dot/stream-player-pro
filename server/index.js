@@ -1162,7 +1162,6 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
     '-hls_list_size', String(cacheConfig.hls_list_size),
     '-hls_flags', isKeepAlive ? 'append_list+delete_segments+temp_file' : 'append_list+temp_file',
     '-hls_segment_type', 'mpegts',
-    '-hls_segment_type', 'mpegts',
     '-hls_allow_cache', '1',
     '-var_stream_map', 'v:0,a:0,name:micro v:1,a:1,name:ultra v:2,a:2,name:low v:3,a:3,name:med v:4,a:4,name:high',
     '-master_pl_name', 'master.m3u8',
