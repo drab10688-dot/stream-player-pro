@@ -2634,7 +2634,10 @@ app.post('/api/streams/start/:channelId', authAdmin, async (req, res) => {
     
     // Check if already running
     if (activeTranscoders.has(channelId)) {
-      return res.json({ success: true, message: 'Canal ya está activo' });
+      // Mark as keepAlive so it doesn't auto-stop
+      const existing = activeTranscoders.get(channelId);
+      existing.keepAlive = true;
+      return res.json({ success: true, message: 'Canal ya está activo (marcado como persistente)' });
     }
     
     const { rows } = await pool.query('SELECT url, name FROM channels WHERE id = $1 AND is_active = true', [channelId]);
@@ -2644,16 +2647,16 @@ app.post('/api/streams/start/:channelId', authAdmin, async (req, res) => {
     const isHLS = /\.m3u8?(\?|$)/i.test(sourceUrl);
     
     if (isHLS) {
-      // Start HLS proxy
       const entry = startHLSProxy(channelId, sourceUrl);
-      entry.clients = 1; // Mark as having a virtual client
+      entry.keepAlive = true; // Persistent — won't auto-stop like Xtream UI
+      entry.clients = 0;
       startHLSKeepAlivePolling(channelId, sourceUrl);
     } else {
-      // Start FFmpeg transcoder
-      startFFmpegTranscoder(channelId, sourceUrl);
+      const entry = startFFmpegTranscoder(channelId, sourceUrl);
+      entry.keepAlive = true; // Persistent — won't auto-stop like Xtream UI
     }
     
-    console.log(`▶️ [${channelId}] Stream iniciado manualmente: ${rows[0].name}`);
+    console.log(`▶️ [${channelId}] Stream iniciado manualmente (persistente): ${rows[0].name}`);
     res.json({ success: true, message: `Stream iniciado: ${rows[0].name}` });
   } catch (err) {
     res.status(500).json({ error: err.message });
