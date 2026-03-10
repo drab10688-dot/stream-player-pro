@@ -61,6 +61,10 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
   const [loadingTime, setLoadingTime] = useState(0);
   const [engineType, setEngineType] = useState<'videojs' | 'mpegts' | null>(null);
   const [currentBandwidth, setCurrentBandwidth] = useState(0);
+  const [qualityLevels, setQualityLevels] = useState<QualityLevel[]>([]);
+  const [selectedQuality, setSelectedQuality] = useState<string>('auto');
+  const [showQualityMenu, setShowQualityMenu] = useState(false);
+  const qualityPollRef = useRef<ReturnType<typeof setInterval>>();
 
   const retryCountRef = useRef(0);
   const maxRetries = 12;
