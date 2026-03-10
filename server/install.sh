@@ -583,7 +583,7 @@ server {
         try_files \$uri \$uri/ /index.html;
     }
 
-    # API proxy
+    # API proxy (todas las rutas /api/)
     location /api/ {
         proxy_pass http://127.0.0.1:${API_PORT};
         proxy_http_version 1.1;
@@ -595,13 +595,64 @@ server {
         proxy_cache_bypass \$http_upgrade;
         proxy_set_header X-Real-IP \$remote_addr;
 
-        # Timeout para restreaming
-        proxy_connect_timeout 300;
-        proxy_send_timeout 300;
-        proxy_read_timeout 300;
+        # Timeout para restreaming y uploads VOD grandes
+        proxy_connect_timeout 1800;
+        proxy_send_timeout 1800;
+        proxy_read_timeout 1800;
 
         # Sin buffering para streams
         proxy_buffering off;
+    }
+
+    # =============================================
+    # Xtream Codes API — Compatible con TiviMate, Smarters, etc.
+    # =============================================
+    location = /player_api.php {
+        proxy_pass http://127.0.0.1:${API_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Host \$host;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_buffering off;
+    }
+
+    location = /get.php {
+        proxy_pass http://127.0.0.1:${API_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Host \$host;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_buffering off;
+    }
+
+    location = /xmltv.php {
+        proxy_pass http://127.0.0.1:${API_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Host \$host;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_buffering off;
+    }
+
+    location /live/ {
+        proxy_pass http://127.0.0.1:${API_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Host \$host;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_buffering off;
+        proxy_read_timeout 300;
+    }
+
+    # Archivos estáticos: logos y posters VOD
+    location /uploads/ {
+        proxy_pass http://127.0.0.1:${API_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_cache_bypass \$http_upgrade;
     }
 
     # Seguridad: ocultar headers del origen
