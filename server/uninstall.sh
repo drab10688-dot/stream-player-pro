@@ -104,6 +104,7 @@ if mountpoint -q /tmp/streambox-hls 2>/dev/null; then
   echo -e "${GREEN}  ✓ tmpfs desmontado${NC}"
 fi
 rm -rf /tmp/streambox-hls /tmp/streambox-cache 2>/dev/null || true
+rm -rf /opt/streambox/hls-cache /opt/streambox/hls-proxy-cache 2>/dev/null || true
 # Eliminar entrada de fstab
 sed -i '/streambox-hls/d' /etc/fstab 2>/dev/null || true
 echo -e "${GREEN}  ✓ Entrada tmpfs eliminada de fstab${NC}"
