@@ -2065,15 +2065,76 @@ app.get('/api/hls-segment/:channelId', async (req, res) => {
 });
 
 // Proxy de sub-manifiestos HLS (multi-bitrate)
+// Si el sub-manifiesto expira (404), re-fetcha el master para obtener URL fresca
 app.get('/api/hls-manifest/:channelId', async (req, res) => {
   try {
     const hlsUrl = req.query.url;
+    const channelId = req.params.channelId;
     if (!hlsUrl) return res.status(400).send('Missing url');
-    const manifest = await getCachedM3U8(req.params.channelId + '_sub', hlsUrl);
+
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
     res.setHeader('Cache-Control', 'no-cache');
-    res.send(manifest);
+
+    // Try fetching the sub-manifest directly
+    try {
+      const result = await fetchM3U8Raw(hlsUrl);
+      if (result.statusCode < 400) {
+        // Success — rewrite .ts URLs and serve
+        const rewritten = result.body.replace(/^(?!#)(.+\.ts.*)$/gm, (match) => {
+          const fullUrl = match.startsWith('http') ? match : result.baseUrl + match;
+          return `/api/hls-segment/${channelId}?url=${encodeURIComponent(fullUrl)}`;
+        });
+        return res.send(rewritten);
+      }
+    } catch (e) {
+      console.warn(`⚠️ [${channelId}] Sub-manifest expirado, refrescando master...`);
+    }
+
+    // Sub-manifest failed (expired session) — re-fetch master to get fresh URL
+    const { rows: channels } = await pool.query(
+      'SELECT url FROM channels WHERE id = $1 AND is_active = true', [channelId]
+    );
+    if (channels.length === 0) return res.status(404).send('Channel not found');
+
+    const masterUrl = channels[0].url;
+    const master = await fetchM3U8Raw(masterUrl);
+    if (master.statusCode >= 400) return res.status(502).send('Master fetch failed');
+
+    // Extract first variant URL from fresh master
+    const lines = master.body.split('\n');
+    let freshVariantUrl = null;
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].startsWith('#EXT-X-STREAM-INF')) {
+        for (let j = i + 1; j < lines.length; j++) {
+          const line = lines[j].trim();
+          if (line && !line.startsWith('#')) {
+            freshVariantUrl = line.startsWith('http') ? line : master.baseUrl + line;
+            break;
+          }
+        }
+        break;
+      }
+    }
+
+    if (!freshVariantUrl) {
+      // Not a master playlist — serve master body directly with rewritten URLs
+      const rewritten = master.body.replace(/^(?!#)(.+\.ts.*)$/gm, (match) => {
+        const fullUrl = match.startsWith('http') ? match : master.baseUrl + match;
+        return `/api/hls-segment/${channelId}?url=${encodeURIComponent(fullUrl)}`;
+      });
+      return res.send(rewritten);
+    }
+
+    console.log(`🔄 [${channelId}] Sesión refrescada, nueva variante: ${freshVariantUrl.substring(0, 80)}...`);
+    const sub = await fetchM3U8Raw(freshVariantUrl);
+    if (sub.statusCode >= 400) return res.status(502).send('Fresh sub-manifest failed');
+
+    const rewritten = sub.body.replace(/^(?!#)(.+\.ts.*)$/gm, (match) => {
+      const fullUrl = match.startsWith('http') ? match : sub.baseUrl + match;
+      return `/api/hls-segment/${channelId}?url=${encodeURIComponent(fullUrl)}`;
+    });
+    res.send(rewritten);
   } catch (err) {
     console.error('HLS sub-manifest error:', err.message);
     res.status(502).send('Manifest fetch failed');
