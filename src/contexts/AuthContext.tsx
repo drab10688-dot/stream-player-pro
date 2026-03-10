@@ -114,7 +114,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           await fetch('/api/client/heartbeat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ client_id: client.id, device_id: getDeviceId(), channel_id: currentChannelIdRef.current }),
+            body: JSON.stringify({ client_id: client.id, device_id: getDeviceId(), channel_id: currentChannelIdRef.current, username: client.username }),
           });
         }
       } catch (err) {
