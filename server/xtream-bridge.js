@@ -21,7 +21,7 @@ app.use(express.json());
 // =============================================
 const PORT = process.env.BRIDGE_PORT || 8080;
 const XTREAM_HOST = process.env.XTREAM_HOST || 'http://localhost';
-const XTREAM_PORT = process.env.XTREAM_PORT || '80'; // Puerto donde Xtream UI sirve streams
+const XTREAM_PORT = process.env.XTREAM_PORT || '25461'; // Puerto donde Xtream UI sirve streams
 
 // =============================================
 // HELPER: Llamar a la API de Xtream UI
