@@ -37,6 +37,7 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
   // ── Cleanup ──
   const destroy = useCallback(() => {
     if (retryTimer.current) clearTimeout(retryTimer.current);
+    if (stallTimer.current) clearInterval(stallTimer.current);
     if (hlsRef.current) {
       try { hlsRef.current.destroy(); } catch {}
       hlsRef.current = null;
@@ -45,6 +46,8 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
       videoRef.current.removeAttribute('src');
       videoRef.current.load();
     }
+    stallCountRef.current = 0;
+    lastTimeRef.current = 0;
   }, []);
 
   // ── Start playback ──
