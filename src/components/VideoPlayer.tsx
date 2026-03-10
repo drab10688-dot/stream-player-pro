@@ -1,5 +1,6 @@
 import { useRef, useEffect, useState, useCallback, memo } from 'react';
 import Hls from 'hls.js';
+import mpegts from 'mpegts.js';
 import { Settings, Wifi, AlertTriangle, RefreshCw } from 'lucide-react';
 
 interface VideoPlayerProps {
@@ -29,8 +30,14 @@ const getYouTubeId = (url: string): string | null => {
   return null;
 };
 
-const isHlsStream = (url: string): boolean => {
-  return /\.m3u8(\?|$)/i.test(url) || /\/live\//i.test(url) || /\/api\/restream\//i.test(url);
+type StreamType = 'hls' | 'ts' | 'direct';
+
+const detectStreamType = (url: string): StreamType => {
+  if (/\.m3u8(\?|$)/i.test(url)) return 'hls';
+  if (/\.ts(\?|$)/i.test(url)) return 'ts';
+  if (/\/api\/restream\//i.test(url)) return 'hls'; // try HLS first, fallback to TS
+  if (/\/live\//i.test(url)) return 'hls';
+  return 'direct';
 };
 
 const formatBitrate = (bps: number): string => {
@@ -42,9 +49,11 @@ const formatBitrate = (bps: number): string => {
 const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlayerProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
+  const mpegtsRef = useRef<mpegts.Player | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingTime, setLoadingTime] = useState(0);
+  const [playerType, setPlayerType] = useState<'hls' | 'mpegts' | 'native' | null>(null);
   const retryCountRef = useRef(0);
   const maxRetries = 10;
   const loadingTimerRef = useRef<ReturnType<typeof setInterval>>();
@@ -75,9 +84,92 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
       hlsRef.current.destroy();
       hlsRef.current = null;
     }
+    if (mpegtsRef.current) {
+      mpegtsRef.current.pause();
+      mpegtsRef.current.unload();
+      mpegtsRef.current.detachMediaElement();
+      mpegtsRef.current.destroy();
+      mpegtsRef.current = null;
+    }
     setQualities([]);
     setCurrentQuality(-1);
+    setPlayerType(null);
   }, []);
+
+  // Try MPEG-TS player (for raw .ts streams from Xtream UI)
+  const initMpegTs = useCallback((streamUrl: string) => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    if (!mpegts.isSupported()) {
+      setError('Tu navegador no soporta reproducción MPEG-TS.');
+      setLoading(false);
+      return;
+    }
+
+    console.log('📺 Usando mpegts.js para stream TS:', streamUrl);
+    setPlayerType('mpegts');
+
+    const player = mpegts.createPlayer({
+      type: 'mpegts',
+      isLive: true,
+      url: streamUrl,
+    }, {
+      enableWorker: true,
+      liveBufferLatencyChasing: true,
+      liveBufferLatencyMaxLatency: 5,
+      liveBufferLatencyMinRemain: 1,
+      lazyLoadMaxDuration: 30,
+      autoCleanupSourceBuffer: true,
+      autoCleanupMaxBackwardDuration: 10,
+      autoCleanupMinBackwardDuration: 5,
+    });
+
+    mpegtsRef.current = player;
+    player.attachMediaElement(video);
+    player.load();
+
+    player.on(mpegts.Events.ERROR, (errorType: string, errorDetail: string, errorInfo: any) => {
+      console.warn('mpegts.js error:', errorType, errorDetail, errorInfo);
+      
+      if (retryCountRef.current < maxRetries) {
+        retryCountRef.current++;
+        console.log(`mpegts.js: retry ${retryCountRef.current}/${maxRetries}`);
+        const delay = Math.min(1000 * retryCountRef.current, 8000);
+        setTimeout(() => {
+          player.unload();
+          player.load();
+          video.play().catch(() => {});
+        }, delay);
+      } else {
+        setError('Error de reproducción MPEG-TS. El canal puede estar caído.');
+        setLoading(false);
+        onError?.('MPEG-TS error after max retries');
+      }
+    });
+
+    player.on(mpegts.Events.LOADING_COMPLETE, () => {
+      console.log('mpegts.js: loading complete');
+    });
+
+    player.on(mpegts.Events.STATISTICS_INFO, (stats: any) => {
+      if (stats.speed) {
+        setCurrentBandwidth(stats.speed * 1000);
+      }
+    });
+
+    video.muted = muted;
+    video.play().then(() => {
+      setLoading(false);
+      retryCountRef.current = 0;
+    }).catch(() => {
+      video.muted = true;
+      video.play().then(() => {
+        setLoading(false);
+        retryCountRef.current = 0;
+      }).catch(() => {});
+    });
+  }, [muted, onError]);
 
   const initStream = useCallback(() => {
     const video = videoRef.current;
@@ -88,43 +180,61 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
     setLoading(true);
     cleanup();
 
-    const isHls = isHlsStream(src);
+    const streamType = detectStreamType(src);
 
-    if (isHls && Hls.isSupported()) {
+    // For restream URLs: try HLS first, if it fails within 8s, fallback to mpegts.js
+    if (streamType === 'hls' && Hls.isSupported()) {
+      console.log('📺 Intentando HLS:', src);
+      setPlayerType('hls');
+
       const hls = new Hls({
-        // Stability config for IPTV via proxy
-        maxBufferLength: 15,          // Less buffer = less data usage
+        maxBufferLength: 15,
         maxMaxBufferLength: 30,
         maxBufferSize: 30 * 1000 * 1000,
         maxBufferHole: 0.5,
         lowLatencyMode: false,
-        startLevel: 0,                // Start at lowest quality always
+        startLevel: 0,
         capLevelToPlayerSize: true,
-        abrEwmaDefaultEstimate: 300000, // Assume 300kbps initially
-        abrBandWidthUpFactor: 0.6,     // Very conservative upgrade
+        abrEwmaDefaultEstimate: 300000,
+        abrBandWidthUpFactor: 0.6,
         abrBandWidthFactor: 0.95,
-        // Aggressive recovery for proxy streams
-        manifestLoadingMaxRetry: 10,
-        manifestLoadingRetryDelay: 1500,
-        manifestLoadingMaxRetryTimeout: 30000,
-        levelLoadingMaxRetry: 10,
+        manifestLoadingMaxRetry: 3,       // Fewer retries — fallback to TS faster
+        manifestLoadingRetryDelay: 1000,
+        manifestLoadingMaxRetryTimeout: 8000,
+        levelLoadingMaxRetry: 5,
         levelLoadingRetryDelay: 1500,
-        levelLoadingMaxRetryTimeout: 30000,
-        fragLoadingMaxRetry: 10,
+        levelLoadingMaxRetryTimeout: 15000,
+        fragLoadingMaxRetry: 8,
         fragLoadingRetryDelay: 1000,
-        fragLoadingMaxRetryTimeout: 30000,
-        // Stall recovery
+        fragLoadingMaxRetryTimeout: 20000,
         nudgeMaxRetry: 10,
         nudgeOffset: 0.2,
       });
 
       hlsRef.current = hls;
+      let hlsFailed = false;
+
+      // If HLS doesn't get manifest in 8s, try TS
+      const hlsTimeout = setTimeout(() => {
+        if (!hlsFailed && loading) {
+          console.log('⚠️ HLS timeout, switching to mpegts.js');
+          hlsFailed = true;
+          hls.destroy();
+          hlsRef.current = null;
+          // Convert restream URL to .ts endpoint
+          const tsUrl = src.replace(/\.m3u8(\?|$)/i, '.ts$1');
+          initMpegTs(tsUrl);
+        }
+      }, 8000);
 
       hls.on(Hls.Events.MEDIA_ATTACHED, () => {
         hls.loadSource(src);
       });
 
       hls.on(Hls.Events.MANIFEST_PARSED, (_event, data) => {
+        clearTimeout(hlsTimeout);
+        if (hlsFailed) return;
+        
         setLoading(false);
         retryCountRef.current = 0;
 
@@ -156,7 +266,7 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
       });
 
       hls.on(Hls.Events.FRAG_LOADED, (_event, data) => {
-        retryCountRef.current = 0; // Reset retries on successful load
+        retryCountRef.current = 0;
         if (data.frag.stats) {
           const stats = data.frag.stats;
           const duration = (stats.loading.end - stats.loading.start) / 1000;
@@ -171,40 +281,43 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
         console.warn('HLS error:', data.type, data.details, data.fatal);
 
         if (data.fatal) {
-          switch (data.type) {
-            case Hls.ErrorTypes.NETWORK_ERROR:
-              if (retryCountRef.current < maxRetries) {
-                retryCountRef.current++;
-                console.log(`HLS: retry ${retryCountRef.current}/${maxRetries}`);
-                // Drop to lowest quality on network issues
-                if (hls.currentLevel > 0) {
-                  hls.currentLevel = 0;
-                }
-                const delay = Math.min(1000 * retryCountRef.current, 8000);
-                setTimeout(() => hls.startLoad(), delay);
-              } else {
-                setError('Error de red. El stream puede estar caído o tu conexión es inestable.');
-                setLoading(false);
-                onError?.('Network error after max retries');
-              }
-              break;
-            case Hls.ErrorTypes.MEDIA_ERROR:
-              console.log('HLS: recovering from media error');
-              hls.recoverMediaError();
-              break;
-            default:
-              setError('No se pudo reproducir este canal.');
-              setLoading(false);
-              onError?.('Fatal error');
-              break;
+          clearTimeout(hlsTimeout);
+          
+          // On manifest/network fatal errors → fallback to mpegts.js
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR && !hlsFailed) {
+            console.log('🔄 HLS network error, fallback to mpegts.js');
+            hlsFailed = true;
+            hls.destroy();
+            hlsRef.current = null;
+            // For restream URLs, just use the same URL — bridge will return TS
+            initMpegTs(src);
+            return;
+          }
+          
+          if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+            console.log('HLS: recovering from media error');
+            hls.recoverMediaError();
+            return;
+          }
+          
+          if (!hlsFailed) {
+            hlsFailed = true;
+            hls.destroy();
+            hlsRef.current = null;
+            initMpegTs(src);
           }
         }
       });
 
       hls.attachMedia(video);
     }
+    // TS stream directly
+    else if (streamType === 'ts') {
+      initMpegTs(src);
+    }
     // Native HLS (Safari/iOS)
-    else if (isHls && video.canPlayType('application/vnd.apple.mpegurl')) {
+    else if (streamType === 'hls' && video.canPlayType('application/vnd.apple.mpegurl')) {
+      setPlayerType('native');
       video.src = src;
       video.addEventListener('loadedmetadata', () => {
         setLoading(false);
@@ -215,19 +328,36 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
         });
       }, { once: true });
     }
-    // Direct URL
+    // Direct URL — try native first, then mpegts
     else {
+      setPlayerType('native');
       video.src = src;
       video.muted = muted;
+      
+      const directTimeout = setTimeout(() => {
+        if (loading) {
+          console.log('⚠️ Direct playback timeout, trying mpegts.js');
+          video.src = '';
+          initMpegTs(src);
+        }
+      }, 10000);
+      
       video.addEventListener('loadeddata', () => {
+        clearTimeout(directTimeout);
         setLoading(false);
         video.play().catch(() => {
           video.muted = true;
           video.play().catch(() => {});
         });
       }, { once: true });
+      
+      video.addEventListener('error', () => {
+        clearTimeout(directTimeout);
+        console.log('⚠️ Direct playback failed, trying mpegts.js');
+        initMpegTs(src);
+      }, { once: true });
     }
-  }, [src, cleanup, onError, muted]);
+  }, [src, cleanup, onError, muted, initMpegTs]);
 
   const setQuality = useCallback((levelIndex: number) => {
     const hls = hlsRef.current;
@@ -265,10 +395,15 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
       if (stallTimer) clearTimeout(stallTimer);
       stallTimer = setTimeout(() => {
         console.warn('Stall detected (20s), restarting stream');
-        const hls = hlsRef.current;
-        if (hls && hls.currentLevel > 0) {
-          hls.currentLevel = 0;
-          hls.startLoad();
+        if (mpegtsRef.current) {
+          mpegtsRef.current.unload();
+          mpegtsRef.current.load();
+          video.play().catch(() => {});
+        } else if (hlsRef.current) {
+          if (hlsRef.current.currentLevel > 0) {
+            hlsRef.current.currentLevel = 0;
+          }
+          hlsRef.current.startLoad();
         } else {
           retryCountRef.current = 0;
           initStream();
@@ -295,9 +430,9 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
     };
   }, [initStream]);
 
-  // Loading timeout — show error after 25s
+  // Loading timeout — show error after 30s
   useEffect(() => {
-    if (loadingTime >= 25 && loading) {
+    if (loadingTime >= 30 && loading) {
       setError('El canal tardó demasiado en responder. Puede estar caído o tu conexión es muy lenta.');
       setLoading(false);
     }
@@ -345,15 +480,15 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
         onWaiting={() => setLoading(true)}
         onPlaying={() => { setLoading(false); setError(null); }}
         onError={() => {
-          if (!hlsRef.current) {
+          if (!hlsRef.current && !mpegtsRef.current) {
             setError('No se pudo reproducir este canal.');
             setLoading(false);
           }
         }}
       />
 
-      {/* Quality selector */}
-      {qualities.length > 1 && (
+      {/* Quality selector (only for HLS) */}
+      {qualities.length > 1 && playerType === 'hls' && (
         <div ref={qualityMenuRef} className="absolute bottom-16 right-3 z-30">
           {showQualityMenu && (
             <div className="mb-2 bg-black/90 backdrop-blur-sm rounded-lg border border-white/10 overflow-hidden min-w-[180px]">
@@ -402,6 +537,15 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
         </div>
       )}
 
+      {/* Player type indicator */}
+      {playerType && !loading && !error && (
+        <div className="absolute top-3 left-3 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
+          <span className="px-2 py-1 bg-black/70 rounded text-[10px] text-white/50 font-mono uppercase">
+            {playerType === 'mpegts' ? '📡 MPEG-TS' : playerType === 'hls' ? '🎬 HLS' : '📹 Nativo'}
+          </span>
+        </div>
+      )}
+
       {/* Loading overlay with diagnostics */}
       {loading && !error && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/80 pointer-events-none">
@@ -410,8 +554,14 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
             {loadingTime >= 3 && (
               <div className="text-center">
                 <p className="text-white/60 text-xs">Conectando... {loadingTime}s</p>
+                {loadingTime >= 5 && playerType === 'hls' && (
+                  <p className="text-white/40 text-[10px] mt-1">Probando formato HLS...</p>
+                )}
                 {loadingTime >= 8 && (
-                  <p className="text-white/40 text-[10px] mt-1">La conexión está lenta</p>
+                  <p className="text-white/40 text-[10px] mt-1">Cambiando a MPEG-TS...</p>
+                )}
+                {loadingTime >= 15 && (
+                  <p className="text-white/40 text-[10px] mt-1">La conexión está muy lenta</p>
                 )}
               </div>
             )}
