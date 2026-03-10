@@ -1148,12 +1148,12 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
     '-bufsize:v:3', QUALITY_PROFILES[3].bufsize,
     '-vf:3', `scale=${QUALITY_PROFILES[3].width}:${QUALITY_PROFILES[3].height}`,
     '-c:a:3', 'aac', '-b:a:3', QUALITY_PROFILES[3].aBitrate, '-ac:3', String(QUALITY_PROFILES[3].audioChannels),
-    '-g', '24', '-keyint_min', '24',
+    '-g', '24', '-keyint_min', '24', '-sc_threshold', '0',
 
     // --- Output 4: HIGH (original resolution, re-encode to H.264 for browser compat) ---
     '-map', '0:v:0', '-map', '0:a:0?',
     '-c:v:4', 'libx264', '-preset', 'veryfast', '-crf', '18',
-    '-g', '24', '-keyint_min', '24',
+    '-g', '24', '-keyint_min', '24', '-sc_threshold', '0',
     '-c:a:4', 'aac', '-b:a:4', '128k',
 
     // --- HLS output ---
@@ -1201,8 +1201,8 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
     const msg = data.toString();
 
     // If var_stream_map fails, fallback to single quality optimized for slow internet
-    if (!fallbackTriggered && (msg.includes('var_stream_map') && msg.includes('Error')) || 
-        (msg.includes('Option var_stream_map not found'))) {
+    if (!fallbackTriggered && ((msg.includes('var_stream_map') && msg.includes('Error')) || 
+        msg.includes('Option var_stream_map not found'))) {
       fallbackTriggered = true;
       console.log(`⚠️ [${channelId}] var_stream_map no soportado, usando calidad única optimizada`);
       ffmpeg.kill('SIGTERM');
@@ -1620,10 +1620,10 @@ function startHLSKeepAlivePolling(channelId, sourceUrl) {
     }
   };
 
-  // Poll immediately, then every 4 seconds (matching typical HLS segment duration)
+  // Poll immediately, then every 2 seconds (matching 2s HLS segment duration)
   poll();
-  entry.pollTimer = setInterval(poll, 4000);
-  console.log(`💚 [${channelId}] Keep-alive HLS polling activo (cada 4s)`);
+  entry.pollTimer = setInterval(poll, 2000);
+  console.log(`💚 [${channelId}] Keep-alive HLS polling activo (cada 2s)`);
 }
 
 // Obtener manifiesto m3u8 con caché y reescritura de URLs
@@ -1808,7 +1808,7 @@ app.get('/api/restream/:channelId', async (req, res) => {
   }
 });
 
-// Servir sub-playlists adaptativas (low/med/high)
+// Servir sub-playlists adaptativas (micro/ultra/low/med/high)
 app.get('/api/hls-adaptive/:channelId/:quality/stream.m3u8', (req, res) => {
   const { channelId, quality } = req.params;
   const filePath = path.join(HLS_DIR, channelId, quality, 'stream.m3u8');
