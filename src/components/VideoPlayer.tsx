@@ -1,6 +1,5 @@
 import { useRef, useEffect, useState, useCallback, memo } from 'react';
-import Hls from 'hls.js';
-import mpegts from 'mpegts.js';
+import shaka from 'shaka-player';
 
 interface VideoPlayerProps {
   src: string;
@@ -11,8 +10,8 @@ interface VideoPlayerProps {
 
 interface QualityInfo {
   label: string;
-  current: number;
-  levels: number;
+  currentIdx: number;
+  levels: shaka.extern.TrackList;
   bandwidth: number;
   auto: boolean;
 }
@@ -20,8 +19,9 @@ interface QualityInfo {
 interface LoadingDiag {
   phase: string;
   elapsed: number;
-  detail?: string;
 }
+
+// ── Helpers ──────────────────────────────────────────
 
 const getYouTubeId = (url: string): string | null => {
   const patterns = [
@@ -29,9 +29,9 @@ const getYouTubeId = (url: string): string | null => {
     /youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/,
     /youtube\.com\/live\/([a-zA-Z0-9_-]{11})/,
   ];
-  for (const pattern of patterns) {
-    const match = url.match(pattern);
-    if (match) return match[1];
+  for (const p of patterns) {
+    const m = url.match(p);
+    if (m) return m[1];
   }
   return null;
 };
@@ -44,23 +44,13 @@ const detectStreamType = (url: string): 'hls' | 'ts' | 'youtube' | 'native' => {
   return 'native';
 };
 
-const getQualityLabel = (height: number | undefined, bandwidth: number | undefined): string => {
-  if (height) {
-    if (height <= 240) return '240p';
-    if (height <= 360) return '360p';
-    if (height <= 480) return '480p';
-    if (height <= 720) return '720p';
-    if (height <= 1080) return '1080p';
-    return `${height}p`;
-  }
-  if (bandwidth) {
-    if (bandwidth < 300000) return '240p';
-    if (bandwidth < 500000) return '360p';
-    if (bandwidth < 1000000) return '480p';
-    if (bandwidth < 2000000) return '720p';
-    return 'HD';
-  }
-  return 'Auto';
+const getQualityLabel = (height: number): string => {
+  if (height <= 240) return '240p';
+  if (height <= 360) return '360p';
+  if (height <= 480) return '480p';
+  if (height <= 720) return '720p';
+  if (height <= 1080) return '1080p';
+  return `${height}p`;
 };
 
 const getQualityColor = (label: string): string => {
@@ -72,71 +62,44 @@ const getQualityColor = (label: string): string => {
   return 'bg-white/70';
 };
 
-const MAX_RETRIES = 12;
-const MAX_FULL_RECONNECTS = 3;
-const LOADING_TIMEOUT_MS = 20000; // 20s max loading before showing diagnostics
+const MAX_RETRIES = 5;
+const LOADING_TIMEOUT_MS = 25000;
+
+// ── Component ────────────────────────────────────────
 
 const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlayerProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const hlsRef = useRef<Hls | null>(null);
-  const mpegtsRef = useRef<mpegts.Player | null>(null);
+  const playerRef = useRef<shaka.Player | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [quality, setQuality] = useState<QualityInfo | null>(null);
   const [showQualityMenu, setShowQualityMenu] = useState(false);
   const [qualityVisible, setQualityVisible] = useState(true);
-  const [bufferAhead, setBufferAhead] = useState(0);
-  const [userSelectedLevel, setUserSelectedLevel] = useState<number | null>(null);
   const [retryInfo, setRetryInfo] = useState<string | null>(null);
   const [loadingDiag, setLoadingDiag] = useState<LoadingDiag | null>(null);
+
   const hideTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const retryCountRef = useRef(0);
-  const fullReconnectCountRef = useRef(0);
-  const retryTimerRef = useRef<ReturnType<typeof setTimeout>>();
-  const isPlayingRef = useRef(false);
-  const initializerRef = useRef<(() => void) | null>(null);
-  const lastQualityUpdateRef = useRef(0);
-  const lastBufferUpdateRef = useRef(0);
-  const fragCountRef = useRef(0);
-  const loadStartRef = useRef(0);
   const diagIntervalRef = useRef<ReturnType<typeof setInterval>>();
+  const loadStartRef = useRef(0);
   const phaseRef = useRef('init');
 
+  // ── Quality visibility timer ──
   const resetHideTimer = useCallback(() => {
     setQualityVisible(true);
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     hideTimerRef.current = setTimeout(() => setQualityVisible(false), 5000);
   }, []);
 
-  const cleanup = useCallback(() => {
-    if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
-    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-    if (diagIntervalRef.current) clearInterval(diagIntervalRef.current);
-    if (hlsRef.current) {
-      hlsRef.current.destroy();
-      hlsRef.current = null;
-    }
-    if (mpegtsRef.current) {
-      try {
-        mpegtsRef.current.pause();
-        mpegtsRef.current.unload();
-        mpegtsRef.current.detachMediaElement();
-        mpegtsRef.current.destroy();
-      } catch { /* ignore */ }
-      mpegtsRef.current = null;
-    }
-  }, []);
-
-  // Diagnostics timer: updates elapsed time and phase while loading
+  // ── Diagnostics timer ──
   const startDiagTimer = useCallback(() => {
     loadStartRef.current = Date.now();
     phaseRef.current = 'Conectando...';
     setLoadingDiag({ phase: 'Conectando...', elapsed: 0 });
-
     if (diagIntervalRef.current) clearInterval(diagIntervalRef.current);
     diagIntervalRef.current = setInterval(() => {
       const elapsed = Math.round((Date.now() - loadStartRef.current) / 1000);
-      setLoadingDiag(prev => prev ? { ...prev, elapsed, phase: phaseRef.current } : null);
+      setLoadingDiag({ phase: phaseRef.current, elapsed });
     }, 1000);
   }, []);
 
@@ -145,7 +108,40 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
     setLoadingDiag(null);
   }, []);
 
-  const initStream = useCallback(() => {
+  // ── Update quality info from Shaka ──
+  const updateQuality = useCallback((player: shaka.Player) => {
+    const tracks = player.getVariantTracks();
+    if (!tracks.length) return;
+
+    const active = tracks.find(t => t.active);
+    if (!active) return;
+
+    const stats = player.getStats();
+    const activeIdx = tracks.indexOf(active);
+
+    setQuality({
+      label: active.height ? getQualityLabel(active.height) : 'Auto',
+      currentIdx: activeIdx,
+      levels: tracks,
+      bandwidth: Math.round((stats.estimatedBandwidth || 0) / 1000),
+      auto: player.getConfiguration().abr?.enabled ?? true,
+    });
+  }, []);
+
+  // ── Cleanup ──
+  const cleanup = useCallback(async () => {
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    if (diagIntervalRef.current) clearInterval(diagIntervalRef.current);
+    if (playerRef.current) {
+      try {
+        await playerRef.current.destroy();
+      } catch { /* ignore */ }
+      playerRef.current = null;
+    }
+  }, []);
+
+  // ── Init stream ──
+  const initStream = useCallback(async () => {
     const video = videoRef.current;
     if (!video || !src) return;
 
@@ -157,362 +153,236 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
     setQuality(null);
     setRetryInfo(null);
     retryCountRef.current = 0;
-    isPlayingRef.current = false;
-    fragCountRef.current = 0;
-    cleanup();
+    await cleanup();
     startDiagTimer();
 
-    const reportError = (msg: string) => {
-      setError(msg);
+    // Install polyfills once
+    shaka.polyfill.installAll();
+
+    if (!shaka.Player.isBrowserSupported()) {
+      setError('Tu navegador no es compatible con el reproductor.');
       setLoading(false);
-      setRetryInfo(null);
       stopDiagTimer();
-      onError?.(msg);
-    };
-
-    const fullReconnect = () => {
-      if (fullReconnectCountRef.current >= MAX_FULL_RECONNECTS) {
-        reportError('No se pudo conectar al stream después de varios intentos.');
-        return;
-      }
-      fullReconnectCountRef.current++;
-      const delay = 3000 * fullReconnectCountRef.current;
-      phaseRef.current = `Reconexión ${fullReconnectCountRef.current}/${MAX_FULL_RECONNECTS}`;
-      setRetryInfo(`Reconectando (${fullReconnectCountRef.current}/${MAX_FULL_RECONNECTS})...`);
-      retryTimerRef.current = setTimeout(() => {
-        retryCountRef.current = 0;
-        cleanup();
-        initStream();
-      }, delay);
-    };
-
-    const retryStream = () => {
-      if (retryCountRef.current >= MAX_RETRIES) {
-        fullReconnect();
-        return;
-      }
-      retryCountRef.current++;
-      const delay = Math.min(2000 * retryCountRef.current, 10000);
-      phaseRef.current = `Reintento ${retryCountRef.current}/${MAX_RETRIES}`;
-      setRetryInfo(`Reintentando (${retryCountRef.current}/${MAX_RETRIES})...`);
-      retryTimerRef.current = setTimeout(() => {
-        if (mpegtsRef.current) {
-          try {
-            mpegtsRef.current.unload();
-            mpegtsRef.current.load();
-          } catch { /* ignore */ }
-        } else if (hlsRef.current) {
-          hlsRef.current.startLoad();
-        }
-      }, delay);
-    };
-
-    const attemptPlay = async (v: HTMLVideoElement) => {
-      phaseRef.current = 'Iniciando reproducción...';
-      try {
-        v.muted = false;
-        await v.play();
-        setLoading(false);
-        setRetryInfo(null);
-        isPlayingRef.current = true;
-        stopDiagTimer();
-      } catch {
-        v.muted = true;
-        try {
-          await v.play();
-          setLoading(false);
-          setRetryInfo(null);
-          isPlayingRef.current = true;
-          stopDiagTimer();
-          setTimeout(() => { v.muted = false; }, 500);
-        } catch {
-          setLoading(false);
-          stopDiagTimer();
-        }
-      }
-    };
-
-    if (streamType === 'ts') {
-      phaseRef.current = 'Cargando stream TS...';
-      if (mpegts.isSupported()) {
-        const player = mpegts.createPlayer({
-          type: 'mpegts',
-          isLive: true,
-          url: src,
-        }, {
-          enableWorker: true,
-          enableStashBuffer: true,
-          stashInitialSize: 512 * 1024,
-          liveBufferLatencyChasing: true,
-          liveBufferLatencyMaxLatency: 5,
-          liveBufferLatencyMinRemain: 0.5,
-          lazyLoad: false,
-          autoCleanupSourceBuffer: true,
-          autoCleanupMaxBackwardDuration: 15,
-          autoCleanupMinBackwardDuration: 8,
-        });
-        mpegtsRef.current = player;
-        player.attachMediaElement(video);
-        player.load();
-
-        player.on(mpegts.Events.ERROR, (errorType: string, errorDetail: string) => {
-          console.error('mpegts error:', errorType, errorDetail);
-          phaseRef.current = `Error TS: ${errorDetail}`;
-          retryStream();
-        });
-
-        player.on(mpegts.Events.STATISTICS_INFO, () => {
-          const now = Date.now();
-          if (loading && video.readyState >= 2) {
-            setLoading(false);
-            setRetryInfo(null);
-            stopDiagTimer();
-          }
-          if (now - lastQualityUpdateRef.current > 3000 && video.videoHeight) {
-            lastQualityUpdateRef.current = now;
-            setQuality({
-              label: getQualityLabel(video.videoHeight, undefined),
-              current: 0,
-              levels: 1,
-              bandwidth: 0,
-              auto: false,
-            });
-            resetHideTimer();
-          }
-        });
-
-        attemptPlay(video);
-      } else {
-        video.src = src;
-        attemptPlay(video);
-      }
-    } else if (streamType === 'hls') {
-      phaseRef.current = 'Cargando manifiesto HLS...';
-      if (Hls.isSupported()) {
-        const hls = new Hls({
-          enableWorker: true,
-          lowLatencyMode: true,
-          startLevel: 0,
-          abrEwmaDefaultEstimate: 150000,
-          abrEwmaFastLive: 2.0,
-          abrEwmaSlowLive: 6,
-          abrEwmaFastVoD: 2.0,
-          abrEwmaSlowVoD: 6,
-          abrBandWidthFactor: 0.7,
-          abrBandWidthUpFactor: 0.35,
-          capLevelToPlayerSize: true,
-          maxBufferLength: 6,
-          maxMaxBufferLength: 20,
-          maxBufferSize: 10 * 1000 * 1000,
-          maxBufferHole: 0.5,
-          backBufferLength: 3,
-          liveSyncDurationCount: 2,
-          liveMaxLatencyDurationCount: 4,
-          liveDurationInfinity: true,
-          fragLoadingMaxRetry: 20,
-          fragLoadingRetryDelay: 500,
-          fragLoadingMaxRetryTimeout: 10000,
-          manifestLoadingMaxRetry: 15,
-          manifestLoadingRetryDelay: 500,
-          manifestLoadingMaxRetryTimeout: 10000,
-          levelLoadingMaxRetry: 15,
-          levelLoadingRetryDelay: 500,
-          levelLoadingMaxRetryTimeout: 10000,
-          startFragPrefetch: true,
-          testBandwidth: true,
-          progressive: true,
-          maxFragLookUpTolerance: 0.2,
-        });
-        hlsRef.current = hls;
-        hls.loadSource(src);
-        hls.attachMedia(video);
-
-        hls.on(Hls.Events.MANIFEST_PARSED, (_e, data) => {
-          phaseRef.current = `Manifiesto OK (${data.levels?.length || 0} calidades)`;
-          setLoading(false);
-          setRetryInfo(null);
-          attemptPlay(video);
-          updateQualityInfo(hls);
-        });
-
-        hls.on(Hls.Events.MANIFEST_LOADING, () => {
-          phaseRef.current = 'Descargando manifiesto...';
-        });
-
-        hls.on(Hls.Events.LEVEL_LOADING, () => {
-          phaseRef.current = 'Cargando nivel de calidad...';
-        });
-
-        hls.on(Hls.Events.FRAG_LOADING, () => {
-          phaseRef.current = 'Descargando segmento...';
-        });
-
-        hls.on(Hls.Events.LEVEL_SWITCHED, () => {
-          updateQualityInfo(hls);
-          resetHideTimer();
-        });
-
-        hls.on(Hls.Events.FRAG_LOADED, () => {
-          retryCountRef.current = 0;
-          isPlayingRef.current = true;
-          fragCountRef.current++;
-          stopDiagTimer();
-
-          const now = Date.now();
-          if (fragCountRef.current <= 2 || now - lastQualityUpdateRef.current > 5000) {
-            lastQualityUpdateRef.current = now;
-            setRetryInfo(null);
-            updateQualityInfo(hls);
-          }
-
-          if (now - lastBufferUpdateRef.current > 10000 && video.buffered.length > 0) {
-            lastBufferUpdateRef.current = now;
-            const buffered = video.buffered.end(video.buffered.length - 1) - video.currentTime;
-            setBufferAhead(Math.max(0, Math.round(buffered)));
-          }
-        });
-
-        hls.on(Hls.Events.ERROR, (_, data) => {
-          if (data.fatal) {
-            switch (data.type) {
-              case Hls.ErrorTypes.NETWORK_ERROR:
-                console.warn('HLS network error, retrying...', data.details);
-                phaseRef.current = `Error de red: ${data.details}`;
-                retryStream();
-                break;
-              case Hls.ErrorTypes.MEDIA_ERROR:
-                console.warn('HLS media error, recovering...', data.details);
-                phaseRef.current = `Error de media: ${data.details}`;
-                hls.recoverMediaError();
-                break;
-              default:
-                if (!isPlayingRef.current) {
-                  console.warn('HLS fatal error before playback, full reconnect...', data.details);
-                  phaseRef.current = `Error fatal: ${data.details}`;
-                  fullReconnect();
-                } else {
-                  reportError(`Error HLS: ${data.details || 'Error fatal del stream'}`);
-                }
-                break;
-            }
-          }
-        });
-
-        hls.on(Hls.Events.BUFFER_EOS, () => {
-          if (!video.ended) retryStream();
-        });
-      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        video.src = src;
-        attemptPlay(video);
-      } else {
-        reportError('Tu navegador no soporta HLS');
-      }
-    } else {
-      video.src = src;
-      attemptPlay(video);
+      onError?.('Browser not supported');
+      return;
     }
 
-    // Loading timeout: if stuck loading for too long, show actionable info
+    const player = new shaka.Player();
+    await player.attach(video);
+    playerRef.current = player;
+
+    // ── Shaka configuration — optimized for slow connections (1-2 Mbps) ──
+    player.configure({
+      streaming: {
+        bufferingGoal: 6,                     // 6s buffer before playback
+        rebufferingGoal: 2,                    // Only need 2s to resume after stall
+        bufferBehind: 10,                      // Keep 10s behind
+        retryParameters: {
+          maxAttempts: 8,
+          baseDelay: 500,
+          backoffFactor: 1.5,
+          fuzzFactor: 0.3,
+          timeout: 15000,
+        },
+        failureCallback: (err: shaka.extern.Error) => {
+          console.warn('Shaka streaming failure:', err);
+        },
+        lowLatencyMode: false,                 // Stability over latency
+        autoLowLatencyMode: false,
+        stallEnabled: true,                    // Detect and recover from stalls
+        stallThreshold: 1,
+        stallSkip: 0.2,
+      },
+      abr: {
+        enabled: true,
+        defaultBandwidthEstimate: 150_000,     // Start conservative: 150kbps
+        switchInterval: 4,                     // Don't switch quality more than every 4s
+        bandwidthUpgradeTarget: 0.8,           // Need 80% of next level's bandwidth to upgrade
+        bandwidthDowngradeTarget: 0.6,         // Downgrade if bandwidth drops below 60%
+        restrictToElementSize: true,           // Don't load 1080p for a 360px player
+        restrictToScreenSize: true,
+      },
+      manifest: {
+        retryParameters: {
+          maxAttempts: 10,
+          baseDelay: 500,
+          backoffFactor: 1.5,
+          fuzzFactor: 0.3,
+          timeout: 20000,
+        },
+        availabilityWindowOverride: 120,
+        defaultPresentationDelay: 4,
+      },
+    });
+
+    // ── Event listeners ──
+    player.addEventListener('error', (event: Event) => {
+      const shakaError = event as any;
+      const detail = shakaError.detail || {};
+      console.error('Shaka error:', detail.code, detail.message);
+
+      if (retryCountRef.current < MAX_RETRIES) {
+        retryCountRef.current++;
+        phaseRef.current = `Reintento ${retryCountRef.current}/${MAX_RETRIES}`;
+        setRetryInfo(`Reintentando (${retryCountRef.current}/${MAX_RETRIES})...`);
+        setTimeout(async () => {
+          try {
+            await player.load(src);
+          } catch { /* handled by error event */ }
+        }, 2000 * retryCountRef.current);
+      } else {
+        setError(`Error del stream: ${detail.message || 'No se pudo cargar el canal'}`);
+        setLoading(false);
+        stopDiagTimer();
+        onError?.(detail.message || 'Stream error');
+      }
+    });
+
+    player.addEventListener('adaptation', () => {
+      updateQuality(player);
+      resetHideTimer();
+    });
+
+    player.addEventListener('loading', () => {
+      phaseRef.current = 'Descargando manifiesto...';
+    });
+
+    player.addEventListener('buffering', (e: Event) => {
+      const buffering = (e as any).buffering;
+      if (buffering) {
+        setLoading(true);
+        phaseRef.current = 'Buffering...';
+      } else {
+        setLoading(false);
+        setRetryInfo(null);
+        stopDiagTimer();
+        retryCountRef.current = 0;
+      }
+    });
+
+    // ── Load source ──
+    phaseRef.current = 'Cargando manifiesto...';
+    try {
+      // For TS streams, try native or fallback
+      if (streamType === 'ts') {
+        // Shaka doesn't handle raw .ts — use native <video> fallback
+        video.src = src;
+        phaseRef.current = 'Reproduciendo stream TS...';
+      } else {
+        // HLS / native — Shaka handles these
+        await player.load(src);
+        phaseRef.current = 'Manifiesto cargado, iniciando...';
+      }
+
+      updateQuality(player);
+    } catch (err) {
+      console.error('Shaka load error:', err);
+      if (retryCountRef.current < MAX_RETRIES) {
+        retryCountRef.current++;
+        phaseRef.current = `Error de carga, reintento ${retryCountRef.current}...`;
+        setRetryInfo(`Reintentando (${retryCountRef.current}/${MAX_RETRIES})...`);
+        setTimeout(() => initStream(), 3000);
+        return;
+      }
+      const msg = 'No se pudo cargar el stream. Verifica que el canal esté activo.';
+      setError(msg);
+      setLoading(false);
+      stopDiagTimer();
+      onError?.(msg);
+      return;
+    }
+
+    // ── Attempt autoplay ──
+    phaseRef.current = 'Iniciando reproducción...';
+    try {
+      video.muted = false;
+      await video.play();
+    } catch {
+      video.muted = true;
+      try {
+        await video.play();
+        setTimeout(() => { video.muted = false; }, 500);
+      } catch {
+        // User will need to click play
+      }
+    }
+    setLoading(false);
+    setRetryInfo(null);
+    stopDiagTimer();
+    resetHideTimer();
+
+    // ── Loading timeout ──
     const loadingTimeout = setTimeout(() => {
-      if (loading && !isPlayingRef.current && !error) {
+      if (loading && !error) {
         phaseRef.current = 'Tiempo de espera agotado';
-        reportError(
-          `El stream no respondió en ${LOADING_TIMEOUT_MS / 1000}s. ` +
-          'Posibles causas: canal caído, servidor de origen lento, o tu conexión es insuficiente.'
-        );
+        setError('El stream no respondió en 25s. El canal puede estar caído o tu conexión es muy lenta.');
+        setLoading(false);
+        stopDiagTimer();
+        onError?.('Loading timeout');
       }
     }, LOADING_TIMEOUT_MS);
 
-    // Stall check every 15s
-    let lastCheckTime = 0;
-    let blackScreenCount = 0;
+    // ── Periodic quality update ──
+    const qualityInterval = setInterval(() => {
+      if (playerRef.current) {
+        updateQuality(playerRef.current);
+      }
+    }, 5000);
+
+    // ── Stall detection ──
+    let lastTime = 0;
     const stallCheck = setInterval(() => {
-      if (!video) return;
-      
-      if (!video.paused && video.readyState < 3 && !loading) {
-        retryStream();
-        return;
-      }
-      
-      if (!video.paused && video.currentTime > 3 && video.videoWidth === 0 && video.videoHeight === 0) {
-        blackScreenCount++;
-        if (blackScreenCount >= 2) {
-          console.warn('Black screen detected — no video frames after', Math.round(video.currentTime), 's. Reconnecting...');
-          blackScreenCount = 0;
-          fullReconnect();
-          return;
+      if (!video.paused && video.currentTime > 0) {
+        if (lastTime > 0 && Math.abs(video.currentTime - lastTime) < 0.1) {
+          console.warn('Stream frozen, reloading...');
+          player.load(src).catch(() => {});
         }
-      } else {
-        blackScreenCount = 0;
-      }
-      
-      if (!video.paused && isPlayingRef.current && video.currentTime > 0) {
-        if (lastCheckTime > 0 && Math.abs(video.currentTime - lastCheckTime) < 0.1) {
-          console.warn('Frozen stream detected — time not advancing. Retrying...');
-          retryStream();
-        }
-        lastCheckTime = video.currentTime;
+        lastTime = video.currentTime;
       }
     }, 15000);
 
-    resetHideTimer();
-
-    const localCleanup = () => {
-      clearInterval(stallCheck);
-      clearTimeout(loadingTimeout);
-      cleanup();
-    };
-
-    initializerRef.current = localCleanup;
-    return localCleanup;
-  }, [src, cleanup, resetHideTimer, onError, startDiagTimer, stopDiagTimer]);
-
-  useEffect(() => {
-    fullReconnectCountRef.current = 0;
-    const localCleanup = initStream();
     return () => {
-      localCleanup?.();
+      clearTimeout(loadingTimeout);
+      clearInterval(qualityInterval);
+      clearInterval(stallCheck);
+    };
+  }, [src, cleanup, resetHideTimer, onError, startDiagTimer, stopDiagTimer, updateQuality]);
+
+  // ── Mount / src change ──
+  useEffect(() => {
+    let cleanupFn: (() => void) | undefined;
+    const init = async () => {
+      cleanupFn = await initStream() || undefined;
+    };
+    init();
+    return () => {
+      cleanupFn?.();
+      cleanup();
     };
   }, [src]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const updateQualityInfo = (hls: Hls) => {
-    const currentLevel = hls.currentLevel;
-    const levels = hls.levels;
-    if (!levels || levels.length === 0) return;
+  // ── Muted prop sync ──
+  useEffect(() => {
+    if (videoRef.current) videoRef.current.muted = muted;
+  }, [muted]);
 
-    const level = levels[currentLevel] || levels[0];
-    const bw = hls.bandwidthEstimate || 0;
+  // ── Switch quality ──
+  const switchQuality = useCallback((trackOrAuto: 'auto' | shaka.extern.Track) => {
+    const player = playerRef.current;
+    if (!player) return;
 
-    setQuality({
-      label: getQualityLabel(level?.height, level?.bitrate),
-      current: currentLevel,
-      levels: levels.length,
-      bandwidth: Math.round(bw / 1000),
-      auto: hls.autoLevelEnabled,
-    });
-  };
-
-  const switchQuality = (levelIndex: number) => {
-    const hls = hlsRef.current;
-    if (!hls) return;
-    if (levelIndex === -1) {
-      hls.currentLevel = -1;
-      setUserSelectedLevel(null);
+    if (trackOrAuto === 'auto') {
+      player.configure('abr.enabled', true);
     } else {
-      hls.currentLevel = levelIndex;
-      setUserSelectedLevel(levelIndex);
+      player.configure('abr.enabled', false);
+      player.selectVariantTrack(trackOrAuto, true);
     }
     setShowQualityMenu(false);
     resetHideTimer();
-  };
+    setTimeout(() => updateQuality(player), 500);
+  }, [resetHideTimer, updateQuality]);
 
-  useEffect(() => {
-    if (videoRef.current) {
-      videoRef.current.muted = muted;
-    }
-  }, [muted]);
-
-  // YouTube render
+  // ── YouTube embed ──
   const youtubeId = getYouTubeId(src);
   if (youtubeId) {
     return (
@@ -530,6 +400,12 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
     );
   }
 
+  // ── Deduplicate quality levels (unique heights) ──
+  const uniqueTracks = quality?.levels
+    ? [...new Map(quality.levels.map(t => [t.height, t])).values()]
+        .sort((a, b) => (a.height ?? 0) - (b.height ?? 0))
+    : [];
+
   return (
     <div
       className="relative w-full h-full bg-black group"
@@ -546,17 +422,14 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
         onContextMenu={(e) => e.preventDefault()}
         muted={muted}
         preload="auto"
-        {...(detectStreamType(src) !== 'ts' && src.startsWith('/') ? { crossOrigin: 'anonymous' as const } : {})}
         onCanPlay={() => { setLoading(false); setRetryInfo(null); stopDiagTimer(); }}
         onWaiting={() => setLoading(true)}
-        onPlaying={() => { setLoading(false); setRetryInfo(null); isPlayingRef.current = true; stopDiagTimer(); }}
+        onPlaying={() => { setLoading(false); setRetryInfo(null); stopDiagTimer(); }}
         onError={() => {
-          if (!hlsRef.current && !mpegtsRef.current) {
-            const msg = 'No se pudo reproducir este canal. Verifica la URL.';
-            setError(msg);
+          if (!playerRef.current) {
+            setError('No se pudo reproducir este canal.');
             setLoading(false);
             stopDiagTimer();
-            onError?.(msg);
           }
         }}
       />
@@ -573,23 +446,26 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
           >
             <span className="inline-block w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
             {quality.label}
-            {quality.auto && quality.levels > 1 && (
+            {quality.auto && uniqueTracks.length > 1 && (
               <span className="text-[10px] opacity-80">AUTO</span>
             )}
-            {!quality.auto && userSelectedLevel !== null && (
+            {!quality.auto && (
               <span className="text-[10px] opacity-80">FIJO</span>
             )}
-            <svg className={`w-3 h-3 transition-transform ${showQualityMenu ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+            <svg className={`w-3 h-3 transition-transform ${showQualityMenu ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
           </button>
 
-          {/* Quality Selector Menu */}
-          {showQualityMenu && hlsRef.current && hlsRef.current.levels.length > 1 && (
+          {/* Quality Menu */}
+          {showQualityMenu && uniqueTracks.length > 1 && (
             <div className="absolute top-full right-0 mt-1.5 bg-black/95 backdrop-blur-md rounded-xl shadow-2xl border border-white/15 overflow-hidden min-w-[180px] animate-in fade-in slide-in-from-top-2 duration-200">
               <div className="px-3 py-2 border-b border-white/10">
                 <p className="text-[10px] text-white/40 uppercase tracking-wider font-semibold">Calidad de Video</p>
               </div>
+              {/* Auto */}
               <button
-                onClick={() => switchQuality(-1)}
+                onClick={() => switchQuality('auto')}
                 className={`w-full text-left px-3 py-2.5 text-sm font-medium flex items-center justify-between hover:bg-white/10 transition-colors ${
                   quality.auto ? 'text-primary bg-primary/10' : 'text-white/80'
                 }`}
@@ -604,14 +480,15 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
                 {quality.auto && <span className="text-primary text-lg">●</span>}
               </button>
               <div className="h-px bg-white/10" />
-              {hlsRef.current.levels.map((level, idx) => {
-                const label = getQualityLabel(level.height, level.bitrate);
-                const bitrateMbps = (level.bitrate / 1000000).toFixed(1);
-                const isActive = !quality.auto && quality.current === idx;
+              {/* Quality levels */}
+              {uniqueTracks.map((track) => {
+                const label = track.height ? getQualityLabel(track.height) : 'Original';
+                const isActive = !quality.auto && quality.levels.find(t => t.active)?.height === track.height;
+                const bitrateMbps = track.bandwidth ? (track.bandwidth / 1_000_000).toFixed(1) : '?';
                 return (
                   <button
-                    key={idx}
-                    onClick={() => switchQuality(idx)}
+                    key={`${track.height}-${track.bandwidth}`}
+                    onClick={() => switchQuality(track)}
                     className={`w-full text-left px-3 py-2.5 text-sm font-medium flex items-center justify-between hover:bg-white/10 transition-colors ${
                       isActive ? 'text-primary bg-primary/10' : 'text-white/80'
                     }`}
@@ -638,7 +515,7 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
         </div>
       )}
 
-      {/* Loading / Retry indicator with diagnostics */}
+      {/* Loading with diagnostics */}
       {loading && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/80 pointer-events-none">
           <div className="text-center max-w-xs">
@@ -646,7 +523,6 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
             <p className="text-muted-foreground text-sm">
               {retryInfo || 'Cargando stream...'}
             </p>
-            {/* Diagnostic info — shows after 3s of loading */}
             {loadingDiag && loadingDiag.elapsed >= 3 && (
               <div className="mt-3 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-[11px] text-white/50 space-y-1">
                 <div className="flex justify-between">
@@ -660,8 +536,8 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
                   <span className="text-white/60 text-right max-w-[140px] truncate">{loadingDiag.phase}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span>🔗 Tipo</span>
-                  <span className="text-white/60">{detectStreamType(src).toUpperCase()}</span>
+                  <span>🎬 Motor</span>
+                  <span className="text-white/60">Shaka Player</span>
                 </div>
                 {loadingDiag.elapsed > 10 && (
                   <p className="text-yellow-400/80 text-[10px] mt-1 pt-1 border-t border-white/5">
@@ -673,6 +549,8 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
           </div>
         </div>
       )}
+
+      {/* Error overlay */}
       {error && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/80">
           <div className="text-center max-w-sm px-4">
@@ -681,7 +559,6 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
             <button
               onClick={() => {
                 setError(null);
-                fullReconnectCountRef.current = 0;
                 retryCountRef.current = 0;
                 initStream();
               }}
