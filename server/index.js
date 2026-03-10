@@ -789,6 +789,28 @@ app.get('/api/validate-stream', async (req, res) => {
 const HLS_DIR = fs.existsSync('/opt/streambox/hls-cache') ? '/opt/streambox/hls-cache' : '/tmp/streambox-hls';
 const HLS_CACHE_DIR = fs.existsSync('/opt/streambox/hls-proxy-cache') ? '/opt/streambox/hls-proxy-cache' : '/tmp/streambox-cache';
 const activeTranscoders = new Map(); // channelId -> { ffmpeg, clients, lastAccess, type }
+// Per-channel bandwidth tracking
+const channelBandwidth = new Map(); // channelId -> { bytesOut: number, lastReset: number, bytesOutPrev: number }
+function trackBandwidth(channelId, bytes) {
+  if (!channelBandwidth.has(channelId)) {
+    channelBandwidth.set(channelId, { bytesOut: 0, lastReset: Date.now(), bytesOutPrev: 0 });
+  }
+  channelBandwidth.get(channelId).bytesOut += bytes;
+}
+// Reset bandwidth counters every 5 seconds and calculate rate
+setInterval(() => {
+  const now = Date.now();
+  channelBandwidth.forEach((bw, channelId) => {
+    const elapsed = (now - bw.lastReset) / 1000;
+    bw.bytesOutPrev = elapsed > 0 ? bw.bytesOut / elapsed : 0; // bytes per second
+    bw.bytesOut = 0;
+    bw.lastReset = now;
+  });
+  // Clean up channels no longer active
+  channelBandwidth.forEach((_, channelId) => {
+    if (!activeTranscoders.has(channelId)) channelBandwidth.delete(channelId);
+  });
+}, 5000);
 
 // Crear directorios base
 [HLS_DIR, HLS_CACHE_DIR].forEach(dir => {
@@ -1571,10 +1593,8 @@ app.get('/api/hls-local/:channelId/:qualityOrFile/:filename?', (req, res) => {
   const { channelId, qualityOrFile, filename } = req.params;
   let filePath;
   if (filename) {
-    // /api/hls-local/:channelId/:quality/:filename
     filePath = path.join(HLS_DIR, channelId, qualityOrFile, filename);
   } else {
-    // /api/hls-local/:channelId/:filename (legacy single quality)
     filePath = path.join(HLS_DIR, channelId, qualityOrFile);
   }
   if (!fs.existsSync(filePath)) {
@@ -1583,7 +1603,9 @@ app.get('/api/hls-local/:channelId/:qualityOrFile/:filename?', (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Content-Type', 'video/mp2t');
   res.setHeader('Cache-Control', 'public, max-age=10');
-  fs.createReadStream(filePath).pipe(res);
+  const stream = fs.createReadStream(filePath);
+  stream.on('data', (chunk) => trackBandwidth(channelId, chunk.length));
+  stream.pipe(res);
 });
 
 // Proxy de segmentos HLS remotos (para canales que ya son HLS)
@@ -1592,6 +1614,7 @@ app.get('/api/hls-segment/:channelId', async (req, res) => {
     const segmentUrl = req.query.url;
     if (!segmentUrl) return res.status(400).send('Missing url');
     const data = await fetchSegment(segmentUrl);
+    trackBandwidth(req.params.channelId, data.length);
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Content-Type', 'video/mp2t');
     res.setHeader('Cache-Control', 'public, max-age=10');
@@ -1897,6 +1920,9 @@ app.get('/api/streams/active', authAdmin, async (req, res) => {
       const channelName = rows.length > 0 ? rows[0].name : 'Desconocido';
       const sourceUrl = rows.length > 0 ? rows[0].url : entry.sourceUrl || 'N/A';
       
+      const bw = channelBandwidth.get(channelId);
+      const bandwidth_bps = bw ? bw.bytesOutPrev : 0;
+
       streams.push({
         channel_id: channelId,
         channel_name: channelName,
@@ -1906,6 +1932,7 @@ app.get('/api/streams/active', authAdmin, async (req, res) => {
         keep_alive: entry.keepAlive || false,
         uptime_seconds: Math.floor((Date.now() - entry.lastAccess) / 1000),
         source_url: sourceUrl.substring(0, 60) + (sourceUrl.length > 60 ? '...' : ''),
+        bandwidth_bps: Math.round(bandwidth_bps),
       });
     }
     

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { apiGet } from '@/lib/api';
 import { useToast } from '@/hooks/use-toast';
-import { Radio, Wifi, Server, Users, RefreshCw, Activity } from 'lucide-react';
+import { Radio, Wifi, Server, Users, RefreshCw, Activity, ArrowDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { motion } from 'framer-motion';
 
@@ -13,6 +13,7 @@ interface ActiveStream {
   ready: boolean;
   uptime_seconds: number;
   source_url: string;
+  bandwidth_bps: number;
 }
 
 interface StreamsData {
@@ -28,6 +29,22 @@ const formatUptime = (seconds: number) => {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   return `${h}h ${m}m`;
+};
+
+const formatBandwidth = (bytesPerSec: number) => {
+  const mbps = (bytesPerSec * 8) / (1024 * 1024);
+  if (mbps >= 1) return `${mbps.toFixed(1)} Mbps`;
+  const kbps = (bytesPerSec * 8) / 1024;
+  if (kbps >= 1) return `${kbps.toFixed(0)} Kbps`;
+  return '0 Kbps';
+};
+
+const getBandwidthColor = (bytesPerSec: number) => {
+  const mbps = (bytesPerSec * 8) / (1024 * 1024);
+  if (mbps >= 10) return 'text-red-400';
+  if (mbps >= 5) return 'text-orange-400';
+  if (mbps >= 1) return 'text-yellow-300';
+  return 'text-emerald-400';
 };
 
 const StreamMonitor = () => {
@@ -83,7 +100,7 @@ const StreamMonitor = () => {
 
       {/* Summary Cards */}
       {data && (
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-4 gap-3">
           <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="glass rounded-xl p-4 text-center">
             <Server className="w-6 h-6 text-primary mx-auto mb-1" />
             <p className="text-2xl font-bold text-foreground">{data.origin_connections}</p>
@@ -98,6 +115,13 @@ const StreamMonitor = () => {
             <Users className="w-6 h-6 text-blue-400 mx-auto mb-1" />
             <p className="text-2xl font-bold text-foreground">{data.total_clients_watching}</p>
             <p className="text-xs text-muted-foreground">Clientes Viendo</p>
+          </motion.div>
+          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }} className="glass rounded-xl p-4 text-center">
+            <ArrowDown className="w-6 h-6 text-orange-400 mx-auto mb-1" />
+            <p className="text-2xl font-bold text-foreground">
+              {formatBandwidth(data.streams.reduce((sum, s) => sum + (s.bandwidth_bps || 0), 0))}
+            </p>
+            <p className="text-xs text-muted-foreground">Salida Total</p>
           </motion.div>
         </div>
       )}
@@ -153,6 +177,12 @@ const StreamMonitor = () => {
                     }`}>
                       {stream.type === 'ffmpeg' ? 'TS→HLS' : 'HLS Proxy'}
                     </span>
+                  </div>
+                  <div className="text-center min-w-[60px]">
+                    <p className={`text-xs font-bold font-mono ${getBandwidthColor(stream.bandwidth_bps || 0)}`}>
+                      {formatBandwidth(stream.bandwidth_bps || 0)}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">salida</p>
                   </div>
                   <div className="text-center">
                     <p className="text-sm font-bold text-foreground">{stream.clients}</p>
