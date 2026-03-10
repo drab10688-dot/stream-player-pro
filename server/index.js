@@ -933,10 +933,11 @@ const HLS_DIR = fs.existsSync('/opt/streambox/hls-cache') ? '/opt/streambox/hls-
 const HLS_CACHE_DIR = fs.existsSync('/opt/streambox/hls-proxy-cache') ? '/opt/streambox/hls-proxy-cache' : '/tmp/streambox-cache';
 const activeTranscoders = new Map(); // channelId -> { ffmpeg, clients, lastAccess, type }
 // Per-channel bandwidth tracking (input = from origin, output = to clients)
-const channelBandwidth = new Map(); // channelId -> { bytesIn, bytesOut, lastReset, bytesInPrev, bytesOutPrev }
+// Uses exponential moving average (EMA) for smooth display
+const channelBandwidth = new Map(); // channelId -> { bytesIn, bytesOut, lastReset, bpsIn, bpsOut }
 function initBandwidthEntry(channelId) {
   if (!channelBandwidth.has(channelId)) {
-    channelBandwidth.set(channelId, { bytesIn: 0, bytesOut: 0, lastReset: Date.now(), bytesInPrev: 0, bytesOutPrev: 0 });
+    channelBandwidth.set(channelId, { bytesIn: 0, bytesOut: 0, lastReset: Date.now(), bpsIn: 0, bpsOut: 0 });
   }
 }
 function trackBandwidth(channelId, bytes) {
@@ -947,13 +948,19 @@ function trackInputBandwidth(channelId, bytes) {
   initBandwidthEntry(channelId);
   channelBandwidth.get(channelId).bytesIn += bytes;
 }
-// Reset bandwidth counters every 5 seconds and calculate rate
+// Calculate bandwidth rate every 3 seconds using EMA (alpha=0.4 for smooth transitions)
+const BW_EMA_ALPHA = 0.4;
 setInterval(() => {
   const now = Date.now();
   channelBandwidth.forEach((bw, channelId) => {
     const elapsed = (now - bw.lastReset) / 1000;
-    bw.bytesOutPrev = elapsed > 0 ? bw.bytesOut / elapsed : 0;
-    bw.bytesInPrev = elapsed > 0 ? bw.bytesIn / elapsed : 0;
+    if (elapsed > 0) {
+      const instantOut = bw.bytesOut / elapsed;
+      const instantIn = bw.bytesIn / elapsed;
+      // EMA: new = alpha * instant + (1-alpha) * previous
+      bw.bpsOut = BW_EMA_ALPHA * instantOut + (1 - BW_EMA_ALPHA) * bw.bpsOut;
+      bw.bpsIn = BW_EMA_ALPHA * instantIn + (1 - BW_EMA_ALPHA) * bw.bpsIn;
+    }
     bw.bytesOut = 0;
     bw.bytesIn = 0;
     bw.lastReset = now;
@@ -962,7 +969,7 @@ setInterval(() => {
   channelBandwidth.forEach((_, channelId) => {
     if (!activeTranscoders.has(channelId)) channelBandwidth.delete(channelId);
   });
-}, 5000);
+}, 3000);
 
 // Crear directorios base
 [HLS_DIR, HLS_CACHE_DIR].forEach(dir => {
