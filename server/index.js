@@ -3445,6 +3445,10 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`📺 Panel Admin: http://TU_IP:80`);
   console.log(`🔐 Setup inicial: POST http://localhost:${PORT}/api/admin/setup\n`);
   
-  // Iniciar canales keep-alive después de 3 segundos (esperar conexión DB)
-  setTimeout(() => initKeepAliveChannels(), 3000);
+  // Iniciar canales keep-alive después de 15 segundos
+  // para que la API responda al health check primero
+  setTimeout(() => {
+    console.log('⏳ Iniciando canales keep-alive en background...');
+    initKeepAliveChannels();
+  }, 15000);
 });
