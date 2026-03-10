@@ -121,9 +121,16 @@ const StreamMonitor = () => {
           <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }} className="glass rounded-xl p-4 text-center">
             <ArrowDown className="w-6 h-6 text-orange-400 mx-auto mb-1" />
             <p className="text-2xl font-bold text-foreground">
+              {formatBandwidth(data.streams.reduce((sum, s) => sum + (s.bandwidth_in_bps || 0), 0))}
+            </p>
+            <p className="text-xs text-muted-foreground">Entrada (Origen)</p>
+          </motion.div>
+          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="glass rounded-xl p-4 text-center">
+            <ArrowDown className="w-6 h-6 text-cyan-400 mx-auto mb-1 rotate-180" />
+            <p className="text-2xl font-bold text-foreground">
               {formatBandwidth(data.streams.reduce((sum, s) => sum + (s.bandwidth_bps || 0), 0))}
             </p>
-            <p className="text-xs text-muted-foreground">Salida Total</p>
+            <p className="text-xs text-muted-foreground">Salida (Clientes)</p>
           </motion.div>
         </div>
       )}
