@@ -1823,7 +1823,7 @@ app.get('/api/restream/:channelId', async (req, res) => {
         if (manifestFile) {
           let manifest = fs.readFileSync(manifestFile, 'utf8');
           if (manifestFile.includes('master.m3u8')) {
-            manifest = manifest.replace(/(micro|ultra|low|med|high)\/stream\.m3u8/g, (match, quality) => {
+            manifest = manifest.replace(/(copy|low)\/stream\.m3u8/g, (match, quality) => {
               return `/api/hls-adaptive/${channelId}/${quality}/stream.m3u8`;
             });
           } else {
