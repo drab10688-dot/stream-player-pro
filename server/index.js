@@ -1197,7 +1197,7 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
 
     if (!entry.ready && (msg.includes('Opening') || msg.includes('muxing'))) {
       entry.ready = true;
-      console.log(`✅ [${channelId}] FFmpeg Copy+480p listo (original+480p)`);
+      console.log(`✅ [${channelId}] FFmpeg ABR YouTube listo (240p/360p/480p/720p/original)`);
     }
   });
 
