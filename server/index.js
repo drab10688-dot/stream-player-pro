@@ -1286,7 +1286,7 @@ function startSingleQualityTranscoder(channelId, sourceUrl, channelDir, isKeepAl
     '-b:v', '1200k', '-maxrate', '1400k', '-bufsize', '2000k',
     '-vf', 'scale=1280:720',
     '-c:a', 'aac', '-b:a', '96k',
-    '-g', '48', '-keyint_min', '48', '-sc_threshold', '0',
+    '-g', '24', '-keyint_min', '24', '-sc_threshold', '0',
     '-f', 'hls',
     '-hls_time', String(cacheConfig.hls_time),
     '-hls_list_size', String(cacheConfig.hls_list_size),
