@@ -1047,20 +1047,13 @@ function cleanChannelDir(channelId) {
 // Codec: H.265 (HEVC) — ahorra ~50% de bitrate vs H.264
 // Audio: 32kbps mono en calidades bajas para ahorrar bandwidth
 // =============================================
-// Auto-detectar soporte H.265
-// execSync ya importado arriba
-let USE_HEVC = true;
-try {
-  const encoders = execSync('ffmpeg -encoders 2>/dev/null', { encoding: 'utf8' });
-  USE_HEVC = encoders.includes('libx265');
-  if (!USE_HEVC) console.log('⚠️  libx265 no disponible, usando H.264 (mayor consumo de datos)');
-  else console.log('✅ H.265/HEVC habilitado — ahorro de ~50% bandwidth');
-} catch { USE_HEVC = false; console.log('⚠️  No se pudo detectar ffmpeg, usando H.264'); }
-
-const VIDEO_CODEC = USE_HEVC ? 'libx265' : 'libx264';
-const CODEC_PARAMS = USE_HEVC 
-  ? ['-tag:v', 'hvc1', '-x265-params', 'log-level=error']
-  : [];
+// IMPORTANT: Always use H.264 for browser compatibility
+// H.265/HEVC is NOT supported by Chrome, Firefox, Edge in HLS
+// Only Safari supports HEVC in HLS. VLC supports everything, but browsers don't.
+const USE_HEVC = false;
+const VIDEO_CODEC = 'libx264';
+const CODEC_PARAMS = [];
+console.log('✅ Usando H.264 — compatible con todos los navegadores');
 
 const QUALITY_PROFILES = [
   { name: 'micro', width: 426, height: 240, vBitrate: '150k', maxrate: '200k', bufsize: '300k', aBitrate: '32k', audioChannels: 1, bandwidth: 250000 },
@@ -1157,9 +1150,9 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
     '-c:a:3', 'aac', '-b:a:3', QUALITY_PROFILES[3].aBitrate, '-ac:3', String(QUALITY_PROFILES[3].audioChannels),
     '-g', '48', '-keyint_min', '48',
 
-    // --- Output 4: HIGH (original, copy) ---
+    // --- Output 4: HIGH (original resolution, re-encode to H.264 for browser compat) ---
     '-map', '0:v:0', '-map', '0:a:0?',
-    '-c:v:4', 'copy',
+    '-c:v:4', 'libx264', '-preset', 'veryfast', '-crf', '18',
     '-c:a:4', 'aac', '-b:a:4', '128k',
 
     // --- HLS output ---
