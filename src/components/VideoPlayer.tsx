@@ -79,6 +79,7 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
   const [showQualityMenu, setShowQualityMenu] = useState(false);
   const [qualityVisible, setQualityVisible] = useState(true);
   const [bufferAhead, setBufferAhead] = useState(0);
+  const [userSelectedLevel, setUserSelectedLevel] = useState<number | null>(null);
   const [retryInfo, setRetryInfo] = useState<string | null>(null);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const retryCountRef = useRef(0);
@@ -436,8 +437,10 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
     if (!hls) return;
     if (levelIndex === -1) {
       hls.currentLevel = -1;
+      setUserSelectedLevel(null);
     } else {
       hls.currentLevel = levelIndex;
+      setUserSelectedLevel(levelIndex);
     }
     setShowQualityMenu(false);
     resetHideTimer();
@@ -494,43 +497,47 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
         }}
       />
 
-      {/* Quality Badge */}
+      {/* Quality Badge — always visible */}
       {quality && !error && !loading && (
-        <div
-          className={`absolute top-3 right-3 z-20 transition-opacity duration-300 ${
-            qualityVisible || showQualityMenu ? 'opacity-100' : 'opacity-0'
-          }`}
-        >
+        <div className="absolute top-3 right-3 z-20">
           <button
             onClick={() => {
               setShowQualityMenu(!showQualityMenu);
               resetHideTimer();
             }}
-            className={`${getQualityColor(quality.label)} text-white text-xs font-bold px-2.5 py-1 rounded-md shadow-lg backdrop-blur-sm flex items-center gap-1.5 hover:scale-105 transition-transform cursor-pointer`}
+            className={`${getQualityColor(quality.label)} text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow-lg backdrop-blur-sm flex items-center gap-1.5 hover:scale-105 transition-transform cursor-pointer`}
           >
             <span className="inline-block w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
             {quality.label}
-            {bufferAhead > 0 && (
-              <span className="text-[10px] opacity-70 ml-0.5">
-                {bufferAhead >= 60 ? `${Math.floor(bufferAhead / 60)}m` : `${bufferAhead}s`}
-              </span>
-            )}
             {quality.auto && quality.levels > 1 && (
               <span className="text-[10px] opacity-80">AUTO</span>
             )}
+            {!quality.auto && userSelectedLevel !== null && (
+              <span className="text-[10px] opacity-80">FIJO</span>
+            )}
+            <svg className={`w-3 h-3 transition-transform ${showQualityMenu ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
           </button>
 
           {/* Quality Selector Menu */}
           {showQualityMenu && hlsRef.current && hlsRef.current.levels.length > 1 && (
-            <div className="absolute top-full right-0 mt-1 bg-black/90 backdrop-blur-md rounded-lg shadow-2xl border border-white/10 overflow-hidden min-w-[140px]">
+            <div className="absolute top-full right-0 mt-1.5 bg-black/95 backdrop-blur-md rounded-xl shadow-2xl border border-white/15 overflow-hidden min-w-[180px] animate-in fade-in slide-in-from-top-2 duration-200">
+              <div className="px-3 py-2 border-b border-white/10">
+                <p className="text-[10px] text-white/40 uppercase tracking-wider font-semibold">Calidad de Video</p>
+              </div>
               <button
                 onClick={() => switchQuality(-1)}
-                className={`w-full text-left px-3 py-2 text-xs font-medium flex items-center justify-between hover:bg-white/10 transition-colors ${
-                  quality.auto ? 'text-primary' : 'text-white/80'
+                className={`w-full text-left px-3 py-2.5 text-sm font-medium flex items-center justify-between hover:bg-white/10 transition-colors ${
+                  quality.auto ? 'text-primary bg-primary/10' : 'text-white/80'
                 }`}
               >
-                <span>Auto</span>
-                {quality.auto && <span className="text-primary">●</span>}
+                <div className="flex items-center gap-2">
+                  <span className="text-base">🔄</span>
+                  <div>
+                    <span>Automático</span>
+                    <p className="text-[10px] text-white/40">Se ajusta según tu internet</p>
+                  </div>
+                </div>
+                {quality.auto && <span className="text-primary text-lg">●</span>}
               </button>
               <div className="h-px bg-white/10" />
               {hlsRef.current.levels.map((level, idx) => {
@@ -541,21 +548,24 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
                   <button
                     key={idx}
                     onClick={() => switchQuality(idx)}
-                    className={`w-full text-left px-3 py-2 text-xs font-medium flex items-center justify-between hover:bg-white/10 transition-colors ${
-                      isActive ? 'text-primary' : 'text-white/80'
+                    className={`w-full text-left px-3 py-2.5 text-sm font-medium flex items-center justify-between hover:bg-white/10 transition-colors ${
+                      isActive ? 'text-primary bg-primary/10' : 'text-white/80'
                     }`}
                   >
-                    <span>{label}</span>
-                    <span className="text-[10px] text-white/40 ml-2">{bitrateMbps}M</span>
-                    {isActive && <span className="text-primary ml-1">●</span>}
+                    <div className="flex items-center gap-2">
+                      <span className={`inline-block w-2 h-2 rounded-full ${getQualityColor(label)}`} />
+                      <span>{label}</span>
+                    </div>
+                    <span className="text-[10px] text-white/40">{bitrateMbps} Mbps</span>
+                    {isActive && <span className="text-primary ml-1 text-lg">●</span>}
                   </button>
                 );
               })}
               {quality.bandwidth > 0 && (
                 <>
                   <div className="h-px bg-white/10" />
-                  <div className="px-3 py-1.5 text-[10px] text-white/30">
-                    ↓ {quality.bandwidth} kbps
+                  <div className="px-3 py-2 text-[10px] text-white/30 flex items-center gap-1.5">
+                    <span>📶</span> Tu velocidad: {quality.bandwidth} kbps
                   </div>
                 </>
               )}
