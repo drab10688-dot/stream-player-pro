@@ -293,7 +293,7 @@ sleep 1
 # =============================================
 # PASO 3: Actualizar sistema e instalar dependencias
 # =============================================
-log_step "📦 [2/9] Actualizando sistema e instalando dependencias..."
+log_step "📦 [2/8] Actualizando sistema e instalando dependencias..."
 
 log_info "Actualizando paquetes del sistema (esto puede tardar)..."
 apt update -qq 2>/dev/null
@@ -452,15 +452,15 @@ echo -e "║  Espacio total:    ${DISK_TOTAL_GB}GB$(printf '%*s' $((27 - ${#DISK
 echo -e "║  Espacio libre:    ${DISK_AVAIL_GB}GB$(printf '%*s' $((27 - ${#DISK_AVAIL_GB})) '')║"
 echo -e "║  RAM total:        ${TOTAL_RAM_MB}MB$(printf '%*s' $((27 - ${#TOTAL_RAM_MB})) '')║"
 echo "╠══════════════════════════════════════════════════╣"
-echo "║  📊 Recomendación de disco por canales:          ║"
+echo "║  📊 Recomendación (ABR 5 calidades):      ║"
 echo "║                                                  ║"
 echo "║  Canales    Caché   Disco     RAM (FFmpeg)       ║"
 echo "║  ────────   ─────   ────────  ──────────         ║"
-echo "║  10 ch      30min   ~5 GB     ~4 GB              ║"
-echo "║  25 ch      30min   ~12 GB    ~8 GB              ║"
-echo "║  50 ch      30min   ~25 GB    ~12 GB             ║"
-echo "║  100 ch     30min   ~50 GB    ~20 GB             ║"
-echo "║  200 ch     30min   ~100 GB   ~35 GB             ║"
+echo "║  10 ch      30min   ~15 GB    ~8 GB              ║"
+echo "║  25 ch      30min   ~35 GB    ~16 GB             ║"
+echo "║  50 ch      30min   ~70 GB    ~25 GB             ║"
+echo "║  100 ch     30min   ~140 GB   ~40 GB             ║"
+echo "║  200 ch     30min   ~280 GB   ~70 GB             ║"
 echo "║                                                  ║"
 echo "║  💡 Tip: Solo canales keep-alive usan caché      ║"
 echo "║     Los demás se conectan bajo demanda (0 disco) ║"
@@ -494,15 +494,7 @@ mkdir -p "$HLS_DIR" "$HLS_CACHE_DIR"
 chmod 777 "$HLS_DIR" "$HLS_CACHE_DIR"
 
 log_ok "Almacenamiento HLS en disco SSD: $HLS_DIR"
-log_info "Capacidad estimada: ~$((DISK_AVAIL_GB / 500 * 1000)) canales keep-alive (30min caché)"
-
-# Instalar FFmpeg si no está
-if ! command -v ffmpeg &> /dev/null; then
-  log_info "Instalando FFmpeg..."
-  apt install -y -qq ffmpeg > /dev/null 2>&1
-fi
-FFMPEG_VERSION=$(ffmpeg -version 2>/dev/null | head -1 | awk '{print $3}')
-log_ok "FFmpeg ${FFMPEG_VERSION} listo"
+log_info "Capacidad estimada: ~$((DISK_AVAIL_GB * 10 / 14)) canales keep-alive (30min caché, ABR 5 calidades)"
 
 log_ok "Almacenamiento configurado - streams HLS en SSD"
 
@@ -580,6 +572,9 @@ server {
     server_name _;
     server_tokens off;
 
+    # Sin límite para subida de VOD (videos grandes)
+    client_max_body_size 0;
+
     root /var/www/streambox;
     index index.html;
 
@@ -595,6 +590,8 @@ server {
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection 'upgrade';
         proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Host \$host;
+        proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_cache_bypass \$http_upgrade;
         proxy_set_header X-Real-IP \$remote_addr;
 
@@ -607,10 +604,18 @@ server {
         proxy_buffering off;
     }
 
-    # Seguridad
+    # Seguridad: ocultar headers del origen
     proxy_hide_header X-Powered-By;
     proxy_hide_header Server;
     proxy_hide_header Via;
+    proxy_hide_header X-Real-IP;
+    proxy_hide_header X-Forwarded-For;
+    proxy_hide_header X-Forwarded-Host;
+
+    # Headers de seguridad
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options SAMEORIGIN always;
+    add_header Referrer-Policy no-referrer always;
 
     location ~ /\. {
         deny all;

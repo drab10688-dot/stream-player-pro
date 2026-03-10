@@ -98,12 +98,13 @@ fi
 # =============================================
 # 6. tmpfs / HLS cache
 # =============================================
-echo -e "${YELLOW}[6/7] Limpiando tmpfs y caché HLS...${NC}"
+echo -e "${YELLOW}[6/7] Limpiando HLS cache y tmpfs...${NC}"
 if mountpoint -q /tmp/streambox-hls 2>/dev/null; then
   umount /tmp/streambox-hls 2>/dev/null || true
   echo -e "${GREEN}  ✓ tmpfs desmontado${NC}"
 fi
 rm -rf /tmp/streambox-hls /tmp/streambox-cache 2>/dev/null || true
+rm -rf /opt/streambox/hls-cache /opt/streambox/hls-proxy-cache 2>/dev/null || true
 # Eliminar entrada de fstab
 sed -i '/streambox-hls/d' /etc/fstab 2>/dev/null || true
 echo -e "${GREEN}  ✓ Entrada tmpfs eliminada de fstab${NC}"
@@ -114,7 +115,10 @@ echo -e "${GREEN}  ✓ Entrada tmpfs eliminada de fstab${NC}"
 echo -e "${YELLOW}[7/7] Limpieza final...${NC}"
 rm -f /var/log/streambox*.log 2>/dev/null || true
 rm -f /var/log/omnisync*.log 2>/dev/null || true
-echo -e "${GREEN}  ✓ Logs eliminados${NC}"
+rm -f /etc/sysctl.d/99-streambox.conf 2>/dev/null || true
+rm -f /etc/security/limits.d/streambox.conf 2>/dev/null || true
+sysctl --system > /dev/null 2>&1 || true
+echo -e "${GREEN}  ✓ Logs y config del kernel eliminados${NC}"
 
 echo ""
 echo -e "${GREEN}╔══════════════════════════════════════════╗"
