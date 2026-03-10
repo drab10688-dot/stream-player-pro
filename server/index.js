@@ -1083,7 +1083,7 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
   });
 
   const cacheLabel = isKeepAlive ? `${cacheConfig.hls_list_size}seg ≈ ${Math.round(cacheConfig.hls_list_size * cacheConfig.hls_time / 60)}min` : '2min';
-  console.log(`🎬 [${channelId}] FFmpeg adaptativo (3 calidades, caché: ${cacheLabel}): ${sourceUrl}`);
+  console.log(`🎬 [${channelId}] FFmpeg adaptativo (4 calidades: 360p/480p/720p/original, caché: ${cacheLabel}): ${sourceUrl}`);
 
   // Build FFmpeg command for multi-output adaptive streaming
   const ffmpegArgs = [
