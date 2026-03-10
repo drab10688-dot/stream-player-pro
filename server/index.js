@@ -1257,28 +1257,46 @@ app.get('/api/channels/cache-status', authAdmin, async (req, res) => {
       const entry = activeTranscoders.get(ch.id);
       let cacheSize = 0;
       let segmentCount = 0;
-      if (entry && entry.channelDir && fs.existsSync(entry.channelDir)) {
-        try {
-          const countFiles = (dir) => {
-            let count = 0, size = 0;
-            fs.readdirSync(dir).forEach(f => {
-              const fp = path.join(dir, f);
-              const stat = fs.statSync(fp);
-              if (stat.isDirectory()) {
-                const sub = countFiles(fp);
-                count += sub.count;
-                size += sub.size;
-              } else if (f.endsWith('.ts')) {
-                count++;
-                size += stat.size;
+      if (entry) {
+        if (entry.type === 'hls-proxy') {
+          // Count in-memory cached segments for HLS proxy channels
+          if (entry.cachedSegments) {
+            entry.cachedSegments.forEach(url => {
+              const seg = segmentCache.get(url);
+              if (seg) {
+                segmentCount++;
+                cacheSize += seg.data.length;
+              } else {
+                entry.cachedSegments.delete(url); // Clean stale refs
               }
             });
-            return { count, size };
-          };
-          const result = countFiles(entry.channelDir);
-          segmentCount = result.count;
-          cacheSize = result.size;
-        } catch {}
+          }
+          // Also count manifest cache
+          const manifestKey = `m3u8_${ch.id}`;
+          if (streamCache.has(manifestKey)) segmentCount++;
+        } else if (entry.channelDir && fs.existsSync(entry.channelDir)) {
+          try {
+            const countFiles = (dir) => {
+              let count = 0, size = 0;
+              fs.readdirSync(dir).forEach(f => {
+                const fp = path.join(dir, f);
+                const stat = fs.statSync(fp);
+                if (stat.isDirectory()) {
+                  const sub = countFiles(fp);
+                  count += sub.count;
+                  size += sub.size;
+                } else if (f.endsWith('.ts')) {
+                  count++;
+                  size += stat.size;
+                }
+              });
+              return { count, size };
+            };
+            const result = countFiles(entry.channelDir);
+            segmentCount = result.count;
+            cacheSize = result.size;
+          } catch {}
+        }
       }
       return {
         id: ch.id,
@@ -1337,9 +1355,11 @@ function startHLSProxy(channelId, sourceUrl) {
   const entry = {
     clients: 1,
     lastAccess: Date.now(),
+    startTime: Date.now(),
     type: 'hls-proxy',
     sourceUrl,
     ready: true,
+    cachedSegments: new Set(), // Track cached segment URLs for this channel
   };
   activeTranscoders.set(channelId, entry);
   console.log(`📡 [${channelId}] Proxy HLS iniciado: ${sourceUrl}`);
@@ -1396,9 +1416,15 @@ const fetchSegment = (segmentUrl) => {
       const chunks = [];
       res.on('data', chunk => chunks.push(chunk));
       res.on('end', () => {
-        const buffer = Buffer.concat(chunks);
-        segmentCache.set(segmentUrl, { data: buffer, timestamp: Date.now() });
-        pendingSegments.delete(segmentUrl);
+      const buffer = Buffer.concat(chunks);
+                segmentCache.set(segmentUrl, { data: buffer, timestamp: Date.now() });
+                // Track segment in the channel's proxy entry
+                activeTranscoders.forEach((entry) => {
+                  if (entry.type === 'hls-proxy' && entry.cachedSegments && segmentUrl.includes(entry.sourceUrl.substring(0, entry.sourceUrl.lastIndexOf('/')))) {
+                    entry.cachedSegments.add(segmentUrl);
+                  }
+                });
+                pendingSegments.delete(segmentUrl);
         resolve(buffer);
       });
       res.on('error', (err) => { pendingSegments.delete(segmentUrl); reject(err); });
