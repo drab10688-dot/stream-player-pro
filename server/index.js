@@ -1038,12 +1038,14 @@ function cleanChannelDir(channelId) {
 // TRANSCODIFICADOR TS → HLS con FFmpeg
 // =============================================
 // =============================================
-// CALIDADES ADAPTATIVAS (tipo Netflix)
-// Low: 480p ~800kbps (para 2-3 Mbps)
-// Med: 720p ~2Mbps (para 4-6 Mbps) 
-// High: original (copy, sin re-encode)
+// CALIDADES ADAPTATIVAS (tipo DirecTV Go / Netflix)
+// Ultra: 360p ~400kbps (para 1-2 Mbps — conexiones lentas)
+// Low:   480p ~800kbps (para 2-3 Mbps)
+// Med:   720p ~2Mbps   (para 4-6 Mbps) 
+// High:  original (copy, sin re-encode)
 // =============================================
 const QUALITY_PROFILES = [
+  { name: 'ultra', width: 640, height: 360, vBitrate: '350k', maxrate: '400k', bufsize: '600k', aBitrate: '64k', bandwidth: 450000 },
   { name: 'low', width: 854, height: 480, vBitrate: '800k', maxrate: '900k', bufsize: '1200k', aBitrate: '96k', bandwidth: 900000 },
   { name: 'med', width: 1280, height: 720, vBitrate: '2000k', maxrate: '2200k', bufsize: '3000k', aBitrate: '128k', bandwidth: 2200000 },
 ];
