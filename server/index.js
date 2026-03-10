@@ -1047,29 +1047,13 @@ function cleanChannelDir(channelId) {
 // TRANSCODIFICADOR TS → HLS con FFmpeg
 // =============================================
 // =============================================
-// CALIDADES ADAPTATIVAS (tipo DirecTV Go / Netflix)
-// Micro: 240p ~200kbps (para <1 Mbps — conexiones muy lentas)
-// Ultra: 360p ~350kbps (para 1-2 Mbps)
-// Low:   480p ~700kbps (para 2-3 Mbps)
-// Med:   720p ~1.5Mbps (para 4-6 Mbps) 
-// High:  original (copy, sin re-encode)
-// Codec: H.265 (HEVC) — ahorra ~50% de bitrate vs H.264
-// Audio: 32kbps mono en calidades bajas para ahorrar bandwidth
+// MODO COPY + 480p (estilo Xtream UI)
+// Copy: passthrough del original sin transcodificar (0% CPU)
+// Low:  480p ~700kbps para conexiones lentas (mínimo CPU)
 // =============================================
-// IMPORTANT: Always use H.264 for browser compatibility
-// H.265/HEVC is NOT supported by Chrome, Firefox, Edge in HLS
-// Only Safari supports HEVC in HLS. VLC supports everything, but browsers don't.
-const USE_HEVC = false;
-const VIDEO_CODEC = 'libx264';
-const CODEC_PARAMS = [];
-console.log('✅ Usando H.264 — compatible con todos los navegadores');
+console.log('✅ Modo Copy + 480p — mínimo CPU, máxima compatibilidad');
 
-const QUALITY_PROFILES = [
-  { name: 'micro', width: 426, height: 240, vBitrate: '150k', maxrate: '200k', bufsize: '300k', aBitrate: '32k', audioChannels: 1, bandwidth: 250000 },
-  { name: 'ultra', width: 640, height: 360, vBitrate: '280k', maxrate: '350k', bufsize: '500k', aBitrate: '32k', audioChannels: 1, bandwidth: 400000 },
-  { name: 'low', width: 854, height: 480, vBitrate: '550k', maxrate: '700k', bufsize: '1000k', aBitrate: '64k', audioChannels: 1, bandwidth: 800000 },
-  { name: 'med', width: 1280, height: 720, vBitrate: '1200k', maxrate: '1500k', bufsize: '2000k', aBitrate: '96k', audioChannels: 2, bandwidth: 1600000 },
-];
+const LOW_PROFILE = { name: 'low', width: 854, height: 480, vBitrate: '550k', maxrate: '700k', bufsize: '1000k', aBitrate: '64k', audioChannels: 1, bandwidth: 800000 };
 
 // Configuración de caché según modo — segmentos de 2s para switching rápido estilo DirecTV Go
 const CACHE_NORMAL = { hls_list_size: 60, hls_time: 2 };       // 60×2s = 2 min
