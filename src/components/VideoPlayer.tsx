@@ -475,7 +475,7 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError, onQualityCha
       try {
         const tech = playerRef.current.tech({ IWillNotUseThisInPlugins: true }) as any;
         const reps = tech?.vhs?.representations?.() || [];
-        if (reps.length > 1) {
+        if (reps.length > 1 && !isBridgeStream) {
           if (qualityId === 'auto' || qualityId === 'original') {
             reps.forEach((r: any) => r.enabled(true));
           } else {
@@ -489,16 +489,19 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError, onQualityCha
       } catch (e) { /* ignore */ }
     }
 
-    // Fallback: server-side quality change via URL
-    if (src.includes('/api/restream/') && qualityId !== 'auto') {
-      const streamIdMatch = src.match(/\/api\/restream\/(\d+)/);
-      if (streamIdMatch) {
-        const streamId = streamIdMatch[1];
-        const newUrl = qualityId === 'original'
-          ? `/api/restream/${streamId}/variant/original.m3u8`
-          : `/api/restream/${streamId}/variant/${qualityId}.m3u8`;
-        
-        // Reload player with new URL
+    // Server-side quality change via bridge URL
+    if (bridgeStreamId) {
+      if (qualityId === 'auto') {
+        // Auto = master ABR playlist
+        const newUrl = `/api/restream/${bridgeStreamId}`;
+        if (playerRef.current) {
+          try {
+            playerRef.current.src({ src: newUrl, type: 'application/x-mpegURL' });
+            playerRef.current.play()?.catch(() => {});
+          } catch (e) { /* ignore */ }
+        }
+      } else {
+        const newUrl = `/api/restream/${bridgeStreamId}/variant/${qualityId}.m3u8`;
         if (playerRef.current) {
           try {
             playerRef.current.src({ src: newUrl, type: 'application/x-mpegURL' });
@@ -507,7 +510,7 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError, onQualityCha
         }
       }
     }
-  }, [src]);
+  }, [isBridgeStream, bridgeStreamId]);
 
   // Initialize on src change
   useEffect(() => {
