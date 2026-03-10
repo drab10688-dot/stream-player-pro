@@ -1401,6 +1401,8 @@ function startKeepAliveChannel(channelId, sourceUrl) {
       entry.keepAlive = true;
       entry.clients = 0;
       console.log(`💚 [${channelId}] Keep-alive HLS proxy iniciado`);
+      // Start active polling to pre-fetch segments continuously
+      startHLSKeepAlivePolling(channelId, sourceUrl);
     }
   } else {
     const entry = startFFmpegTranscoder(channelId, sourceUrl, true); // isKeepAlive = true → 30 min caché
