@@ -3,7 +3,7 @@ import { apiGet } from '@/lib/api';
 import { supabase } from '@/integrations/supabase/client';
 import { isLovablePreview } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
-import { Users, UserCheck, UserX, Clock, Tv, Store, Megaphone, Wifi, AlertTriangle } from 'lucide-react';
+import { Users, UserCheck, UserX, Clock, Tv, Store, Megaphone, Wifi, AlertTriangle, Link, Copy, Check } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { format } from 'date-fns';
