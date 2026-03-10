@@ -360,9 +360,39 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
     }
 
     // Stall check — only when actively playing, every 15s (was 10s)
+    // Also detects black screen: video time advances but no video frames decoded
+    let lastCheckTime = 0;
+    let blackScreenCount = 0;
     const stallCheck = setInterval(() => {
-      if (video && !video.paused && video.readyState < 3 && !loading) {
+      if (!video) return;
+      
+      // Classic stall: video not paused but not enough data
+      if (!video.paused && video.readyState < 3 && !loading) {
         retryStream();
+        return;
+      }
+      
+      // Black screen detection: video is "playing" (time advancing) but no video dimensions
+      // This means data is flowing but no decodable video frames
+      if (!video.paused && video.currentTime > 3 && video.videoWidth === 0 && video.videoHeight === 0) {
+        blackScreenCount++;
+        if (blackScreenCount >= 2) { // 2 checks = ~30s of black screen
+          console.warn('Black screen detected — no video frames after', Math.round(video.currentTime), 's. Reconnecting...');
+          blackScreenCount = 0;
+          fullReconnect();
+          return;
+        }
+      } else {
+        blackScreenCount = 0;
+      }
+      
+      // Also detect: time not advancing while supposedly playing (frozen stream)
+      if (!video.paused && isPlayingRef.current && video.currentTime > 0) {
+        if (lastCheckTime > 0 && Math.abs(video.currentTime - lastCheckTime) < 0.1) {
+          console.warn('Frozen stream detected — time not advancing. Retrying...');
+          retryStream();
+        }
+        lastCheckTime = video.currentTime;
       }
     }, 15000);
 
