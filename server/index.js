@@ -1062,9 +1062,9 @@ const QUALITY_PROFILES = [
   { name: 'med', width: 1280, height: 720, vBitrate: '1200k', maxrate: '1500k', bufsize: '2000k', aBitrate: '96k', audioChannels: 2, bandwidth: 1600000 },
 ];
 
-// Configuración de caché según modo
-const CACHE_NORMAL = { hls_list_size: 30, hls_time: 4 };       // 30×4s = 2 min
-const CACHE_KEEPALIVE = { hls_list_size: 450, hls_time: 4 };   // 450×4s = 30 min
+// Configuración de caché según modo — segmentos de 2s para switching rápido estilo DirecTV Go
+const CACHE_NORMAL = { hls_list_size: 60, hls_time: 2 };       // 60×2s = 2 min
+const CACHE_KEEPALIVE = { hls_list_size: 900, hls_time: 2 };   // 900×2s = 30 min
 
 function startFFmpegTranscoder(channelId, sourceUrl, isKeepAlive = false) {
   if (activeTranscoders.has(channelId)) {
