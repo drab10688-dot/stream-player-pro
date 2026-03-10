@@ -494,10 +494,11 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
         data-vjs-player
       />
 
-      {/* Engine indicator */}
+      {/* Engine indicator + Quality selector */}
       {engineType && !loading && !error && (
-        <div className="absolute top-3 left-3 z-10 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-          <span className="px-2 py-1 bg-black/70 rounded text-[10px] text-white/50 font-mono uppercase">
+        <div className="absolute top-3 left-3 right-3 z-10 flex items-start justify-between opacity-0 group-hover:opacity-100 transition-opacity">
+          {/* Engine badge */}
+          <span className="px-2 py-1 bg-black/70 rounded text-[10px] text-white/50 font-mono uppercase pointer-events-none">
             {engineType === 'mpegts' ? '📡 MPEG-TS' : '🎬 VJS-HLS'}
             {currentBandwidth > 0 && (
               <span className="ml-2">
@@ -506,6 +507,61 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
               </span>
             )}
           </span>
+
+          {/* Quality selector */}
+          {qualityLevels.length > 1 && engineType === 'videojs' && (
+            <div className="relative">
+              <button
+                onClick={() => setShowQualityMenu(prev => !prev)}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-black/80 hover:bg-black/90 rounded-lg text-xs text-white/80 hover:text-white transition-colors backdrop-blur-sm border border-white/10"
+              >
+                <Settings className="w-3.5 h-3.5" />
+                <span className="font-medium">
+                  {selectedQuality === 'auto'
+                    ? 'Auto'
+                    : qualityLevels.find(q => q.id === selectedQuality)?.label || 'Auto'}
+                </span>
+                {selectedQuality !== 'auto' && (
+                  <span className="text-[9px] text-primary font-bold ml-0.5">FIJO</span>
+                )}
+                <ChevronUp className={`w-3 h-3 transition-transform ${showQualityMenu ? '' : 'rotate-180'}`} />
+              </button>
+
+              {showQualityMenu && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowQualityMenu(false)} />
+                  <div className="absolute right-0 top-full mt-1 z-50 bg-black/95 backdrop-blur-xl rounded-xl border border-white/10 shadow-2xl overflow-hidden min-w-[180px]">
+                    <div className="px-3 py-2 border-b border-white/10">
+                      <span className="text-[10px] text-white/40 font-semibold uppercase tracking-wider">Calidad de video</span>
+                    </div>
+                    <div className="py-1">
+                      <button
+                        onClick={() => selectQuality('auto')}
+                        className={`w-full flex items-center justify-between px-3 py-2 text-sm transition-colors ${
+                          selectedQuality === 'auto' ? 'text-primary bg-primary/10' : 'text-white/80 hover:bg-white/10'
+                        }`}
+                      >
+                        <span className="font-medium">Auto</span>
+                        <span className="text-[10px] text-white/40">ABR</span>
+                      </button>
+                      {qualityLevels.map((level) => (
+                        <button
+                          key={level.id}
+                          onClick={() => selectQuality(level.id)}
+                          className={`w-full flex items-center justify-between px-3 py-2 text-sm transition-colors ${
+                            selectedQuality === level.id ? 'text-primary bg-primary/10' : 'text-white/80 hover:bg-white/10'
+                          }`}
+                        >
+                          <span className="font-medium">{level.label}</span>
+                          <span className="text-[10px] text-white/40 font-mono">{formatBitrate(level.bandwidth)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
       )}
 
