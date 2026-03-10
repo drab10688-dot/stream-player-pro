@@ -2,9 +2,17 @@ import { useRef, useEffect, useState, useCallback, memo } from 'react';
 import videojs from 'video.js';
 import 'video.js/dist/video-js.css';
 import mpegts from 'mpegts.js';
-import { Settings, Wifi, AlertTriangle, RefreshCw } from 'lucide-react';
+import { Settings, Wifi, AlertTriangle, RefreshCw, ChevronUp } from 'lucide-react';
 
 import type Player from 'video.js/dist/types/player';
+
+interface QualityLevel {
+  id: string;
+  label: string;
+  height: number;
+  bandwidth: number;
+  enabled: boolean;
+}
 
 interface VideoPlayerProps {
   src: string;
