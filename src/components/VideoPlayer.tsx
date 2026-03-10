@@ -27,7 +27,8 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
   const [activeQuality, setActiveQuality] = useState('auto');
   const [showQMenu, setShowQMenu] = useState(false);
 
-  const isBridge = src?.includes('/api/restream/');
+  // Bridge streams use port 3002 (xtream-bridge), not the main API
+  const isBridge = src?.includes(':3002/api/restream/');
   const streamId = isBridge ? src.match(/\/api\/restream\/([^/?]+)/)?.[1] : null;
 
   // ── Cleanup ──
