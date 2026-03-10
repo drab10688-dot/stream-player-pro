@@ -13,6 +13,7 @@ interface ActiveStream {
   ready: boolean;
   uptime_seconds: number;
   source_url: string;
+  bandwidth_bps: number;
 }
 
 interface StreamsData {
