@@ -1047,10 +1047,19 @@ function cleanChannelDir(channelId) {
 // Codec: H.265 (HEVC) — ahorra ~50% de bitrate vs H.264
 // Audio: 32kbps mono en calidades bajas para ahorrar bandwidth
 // =============================================
-const USE_HEVC = true; // H.265 — reduce bandwidth ~50%. Poner false si el server no soporta libx265
+// Auto-detectar soporte H.265
+const { execSync } = require('child_process');
+let USE_HEVC = true;
+try {
+  const encoders = execSync('ffmpeg -encoders 2>/dev/null', { encoding: 'utf8' });
+  USE_HEVC = encoders.includes('libx265');
+  if (!USE_HEVC) console.log('⚠️  libx265 no disponible, usando H.264 (mayor consumo de datos)');
+  else console.log('✅ H.265/HEVC habilitado — ahorro de ~50% bandwidth');
+} catch { USE_HEVC = false; console.log('⚠️  No se pudo detectar ffmpeg, usando H.264'); }
+
 const VIDEO_CODEC = USE_HEVC ? 'libx265' : 'libx264';
 const CODEC_PARAMS = USE_HEVC 
-  ? ['-tag:v', 'hvc1', '-x265-params', 'log-level=error'] // hvc1 tag para compatibilidad con Safari/iOS
+  ? ['-tag:v', 'hvc1', '-x265-params', 'log-level=error']
   : [];
 
 const QUALITY_PROFILES = [
