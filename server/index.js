@@ -1161,9 +1161,9 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
     '-hls_list_size', String(cacheConfig.hls_list_size),
     '-hls_flags', isKeepAlive ? 'append_list+delete_segments+temp_file' : 'append_list+temp_file',
     '-hls_segment_type', 'mpegts',
-    '-hls_segment_filename', path.join(channelDir, 'micro', 'seg_%05d.ts'),
+    '-hls_segment_type', 'mpegts',
     '-hls_allow_cache', '1',
-    '-var_stream_map', 'v:0,a:0 v:1,a:1 v:2,a:2 v:3,a:3 v:4,a:4',
+    '-var_stream_map', 'v:0,a:0,name:micro v:1,a:1,name:ultra v:2,a:2,name:low v:3,a:3,name:med v:4,a:4,name:high',
     '-master_pl_name', 'master.m3u8',
     '-hls_segment_filename', path.join(channelDir, '%v', 'seg_%05d.ts'),
     '-y',
@@ -1368,14 +1368,23 @@ function releaseTranscoder(channelId) {
     // Keep alive channels NEVER stop
     if (entry.keepAlive) {
       entry.clients = 0; // Floor at 0
-      console.log(`💚 [${channelId}] Keep-alive activo, FFmpeg permanece encendido`);
+      console.log(`💚 [${channelId}] Keep-alive activo, permanece encendido`);
       return;
+    }
+    // Stop HLS polling if active
+    if (entry.pollTimer) {
+      clearInterval(entry.pollTimer);
+      entry.pollTimer = null;
     }
     // Esperar 30 segundos antes de matar, por si alguien vuelve
     setTimeout(() => {
       const current = activeTranscoders.get(channelId);
       if (current && current.clients <= 0 && !current.keepAlive) {
-        console.log(`🔴 [${channelId}] Sin clientes, deteniendo FFmpeg`);
+        console.log(`🔴 [${channelId}] Sin clientes, deteniendo`);
+        if (current.pollTimer) {
+          clearInterval(current.pollTimer);
+          current.pollTimer = null;
+        }
         if ((current.type === 'ffmpeg' || current.type === 'ffmpeg-adaptive') && current.ffmpeg) {
           current.ffmpeg.kill('SIGTERM');
         }
@@ -1401,6 +1410,8 @@ function startKeepAliveChannel(channelId, sourceUrl) {
       entry.keepAlive = true;
       entry.clients = 0;
       console.log(`💚 [${channelId}] Keep-alive HLS proxy iniciado`);
+      // Start active polling to pre-fetch segments continuously
+      startHLSKeepAlivePolling(channelId, sourceUrl);
     }
   } else {
     const entry = startFFmpegTranscoder(channelId, sourceUrl, true); // isKeepAlive = true → 30 min caché
@@ -1575,10 +1586,44 @@ function startHLSProxy(channelId, sourceUrl) {
     sourceUrl,
     ready: true,
     cachedSegments: new Set(), // Track cached segment URLs for this channel
+    pollTimer: null, // Timer for keep-alive polling
   };
   activeTranscoders.set(channelId, entry);
   console.log(`📡 [${channelId}] Proxy HLS iniciado: ${sourceUrl}`);
   return entry;
+}
+
+// Active polling for keep-alive HLS proxy channels
+// Periodically fetches manifest + new segments to keep cache warm
+function startHLSKeepAlivePolling(channelId, sourceUrl) {
+  const entry = activeTranscoders.get(channelId);
+  if (!entry || entry.type !== 'hls-proxy' || entry.pollTimer) return;
+
+  const poll = async () => {
+    try {
+      // Fetch and cache the manifest
+      const manifest = await getCachedM3U8(channelId, sourceUrl);
+      
+      // Extract segment URLs from manifest and pre-fetch them
+      const segmentMatches = manifest.match(/\/api\/hls-segment\/[^\s]+/g);
+      if (segmentMatches) {
+        for (const segPath of segmentMatches.slice(-6)) { // Pre-fetch last 6 segments
+          const urlMatch = segPath.match(/url=([^&\s]+)/);
+          if (urlMatch) {
+            const segUrl = decodeURIComponent(urlMatch[1]);
+            try { await fetchSegment(segUrl); } catch {}
+          }
+        }
+      }
+    } catch (err) {
+      console.error(`⚠️ [${channelId}] Keep-alive HLS poll error:`, err.message);
+    }
+  };
+
+  // Poll immediately, then every 4 seconds (matching typical HLS segment duration)
+  poll();
+  entry.pollTimer = setInterval(poll, 4000);
+  console.log(`💚 [${channelId}] Keep-alive HLS polling activo (cada 4s)`);
 }
 
 // Obtener manifiesto m3u8 con caché y reescritura de URLs
@@ -1733,8 +1778,8 @@ app.get('/api/restream/:channelId', async (req, res) => {
           let manifest = fs.readFileSync(manifestFile, 'utf8');
 
           if (manifestFile.includes('master.m3u8')) {
-            // Rewrite sub-playlist paths in master playlist
-            manifest = manifest.replace(/(low|med|high)\/stream\.m3u8/g, (match, quality) => {
+            // Rewrite sub-playlist paths in master playlist (all 5 qualities)
+            manifest = manifest.replace(/(micro|ultra|low|med|high)\/stream\.m3u8/g, (match, quality) => {
               return `/api/hls-adaptive/${channelId}/${quality}/stream.m3u8`;
             });
           } else {
