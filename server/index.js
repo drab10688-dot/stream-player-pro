@@ -932,21 +932,30 @@ app.get('/api/validate-stream', async (req, res) => {
 const HLS_DIR = fs.existsSync('/opt/streambox/hls-cache') ? '/opt/streambox/hls-cache' : '/tmp/streambox-hls';
 const HLS_CACHE_DIR = fs.existsSync('/opt/streambox/hls-proxy-cache') ? '/opt/streambox/hls-proxy-cache' : '/tmp/streambox-cache';
 const activeTranscoders = new Map(); // channelId -> { ffmpeg, clients, lastAccess, type }
-// Per-channel bandwidth tracking
-const channelBandwidth = new Map(); // channelId -> { bytesOut: number, lastReset: number, bytesOutPrev: number }
-function trackBandwidth(channelId, bytes) {
+// Per-channel bandwidth tracking (input = from origin, output = to clients)
+const channelBandwidth = new Map(); // channelId -> { bytesIn, bytesOut, lastReset, bytesInPrev, bytesOutPrev }
+function initBandwidthEntry(channelId) {
   if (!channelBandwidth.has(channelId)) {
-    channelBandwidth.set(channelId, { bytesOut: 0, lastReset: Date.now(), bytesOutPrev: 0 });
+    channelBandwidth.set(channelId, { bytesIn: 0, bytesOut: 0, lastReset: Date.now(), bytesInPrev: 0, bytesOutPrev: 0 });
   }
+}
+function trackBandwidth(channelId, bytes) {
+  initBandwidthEntry(channelId);
   channelBandwidth.get(channelId).bytesOut += bytes;
+}
+function trackInputBandwidth(channelId, bytes) {
+  initBandwidthEntry(channelId);
+  channelBandwidth.get(channelId).bytesIn += bytes;
 }
 // Reset bandwidth counters every 5 seconds and calculate rate
 setInterval(() => {
   const now = Date.now();
   channelBandwidth.forEach((bw, channelId) => {
     const elapsed = (now - bw.lastReset) / 1000;
-    bw.bytesOutPrev = elapsed > 0 ? bw.bytesOut / elapsed : 0; // bytes per second
+    bw.bytesOutPrev = elapsed > 0 ? bw.bytesOut / elapsed : 0;
+    bw.bytesInPrev = elapsed > 0 ? bw.bytesIn / elapsed : 0;
     bw.bytesOut = 0;
+    bw.bytesIn = 0;
     bw.lastReset = now;
   });
   // Clean up channels no longer active
