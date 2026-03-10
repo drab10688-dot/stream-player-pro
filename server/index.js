@@ -1047,29 +1047,13 @@ function cleanChannelDir(channelId) {
 // TRANSCODIFICADOR TS → HLS con FFmpeg
 // =============================================
 // =============================================
-// CALIDADES ADAPTATIVAS (tipo DirecTV Go / Netflix)
-// Micro: 240p ~200kbps (para <1 Mbps — conexiones muy lentas)
-// Ultra: 360p ~350kbps (para 1-2 Mbps)
-// Low:   480p ~700kbps (para 2-3 Mbps)
-// Med:   720p ~1.5Mbps (para 4-6 Mbps) 
-// High:  original (copy, sin re-encode)
-// Codec: H.265 (HEVC) — ahorra ~50% de bitrate vs H.264
-// Audio: 32kbps mono en calidades bajas para ahorrar bandwidth
+// MODO COPY + 480p (estilo Xtream UI)
+// Copy: passthrough del original sin transcodificar (0% CPU)
+// Low:  480p ~700kbps para conexiones lentas (mínimo CPU)
 // =============================================
-// IMPORTANT: Always use H.264 for browser compatibility
-// H.265/HEVC is NOT supported by Chrome, Firefox, Edge in HLS
-// Only Safari supports HEVC in HLS. VLC supports everything, but browsers don't.
-const USE_HEVC = false;
-const VIDEO_CODEC = 'libx264';
-const CODEC_PARAMS = [];
-console.log('✅ Usando H.264 — compatible con todos los navegadores');
+console.log('✅ Modo Copy + 480p — mínimo CPU, máxima compatibilidad');
 
-const QUALITY_PROFILES = [
-  { name: 'micro', width: 426, height: 240, vBitrate: '150k', maxrate: '200k', bufsize: '300k', aBitrate: '32k', audioChannels: 1, bandwidth: 250000 },
-  { name: 'ultra', width: 640, height: 360, vBitrate: '280k', maxrate: '350k', bufsize: '500k', aBitrate: '32k', audioChannels: 1, bandwidth: 400000 },
-  { name: 'low', width: 854, height: 480, vBitrate: '550k', maxrate: '700k', bufsize: '1000k', aBitrate: '64k', audioChannels: 1, bandwidth: 800000 },
-  { name: 'med', width: 1280, height: 720, vBitrate: '1200k', maxrate: '1500k', bufsize: '2000k', aBitrate: '96k', audioChannels: 2, bandwidth: 1600000 },
-];
+const LOW_PROFILE = { name: 'low', width: 854, height: 480, vBitrate: '550k', maxrate: '700k', bufsize: '1000k', aBitrate: '64k', audioChannels: 1, bandwidth: 800000 };
 
 // Configuración de caché según modo — segmentos de 2s para switching rápido estilo DirecTV Go
 const CACHE_NORMAL = { hls_list_size: 60, hls_time: 2 };       // 60×2s = 2 min
@@ -1097,17 +1081,16 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
   const copyManifestPath = path.join(channelDir, 'high', 'stream.m3u8');
   const cacheConfig = isKeepAlive ? CACHE_KEEPALIVE : CACHE_NORMAL;
 
-  // Create subdirectories for each quality
-  ['micro', 'ultra', 'low', 'med', 'high'].forEach(q => {
+  // Create subdirectories: copy (original) + low (480p)
+  ['copy', 'low'].forEach(q => {
     const qDir = path.join(channelDir, q);
     if (!fs.existsSync(qDir)) fs.mkdirSync(qDir, { recursive: true });
   });
 
   const cacheLabel = isKeepAlive ? `${cacheConfig.hls_list_size}seg ≈ ${Math.round(cacheConfig.hls_list_size * cacheConfig.hls_time / 60)}min` : '2min';
-  const codecLabel = USE_HEVC ? 'H.265/HEVC' : 'H.264';
-  console.log(`🎬 [${channelId}] FFmpeg adaptativo ${codecLabel} (5 calidades: 240p/360p/480p/720p/original, caché: ${cacheLabel}): ${sourceUrl}`);
+  console.log(`🎬 [${channelId}] FFmpeg Copy+480p (2 calidades: original+480p, caché: ${cacheLabel}): ${sourceUrl}`);
 
-  // Build FFmpeg command for multi-output adaptive streaming
+  // Build FFmpeg command: 2 outputs — copy (passthrough) + 480p (light transcode)
   const ffmpegArgs = [
     '-reconnect', '1',
     '-reconnect_streamed', '1',
@@ -1115,55 +1098,20 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
     '-rw_timeout', '10000000',
     '-i', sourceUrl,
 
-    // --- Output 0: MICRO (240p ~200kbps) — para <1 Mbps ---
+    // --- Output 0: LOW (480p ~700kbps) — para conexiones lentas ---
     '-map', '0:v:0', '-map', '0:a:0?',
-    '-c:v:0', VIDEO_CODEC, '-preset', 'ultrafast', '-tune', 'zerolatency',
-    ...CODEC_PARAMS,
-    '-b:v:0', QUALITY_PROFILES[0].vBitrate,
-    '-maxrate:v:0', QUALITY_PROFILES[0].maxrate,
-    '-bufsize:v:0', QUALITY_PROFILES[0].bufsize,
-    '-vf:0', `scale=${QUALITY_PROFILES[0].width}:${QUALITY_PROFILES[0].height}`,
-    '-c:a:0', 'aac', '-b:a:0', QUALITY_PROFILES[0].aBitrate, '-ac:0', String(QUALITY_PROFILES[0].audioChannels),
+    '-c:v:0', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency',
+    '-b:v:0', LOW_PROFILE.vBitrate,
+    '-maxrate:v:0', LOW_PROFILE.maxrate,
+    '-bufsize:v:0', LOW_PROFILE.bufsize,
+    '-vf:0', `scale=${LOW_PROFILE.width}:${LOW_PROFILE.height}`,
+    '-c:a:0', 'aac', '-b:a:0', LOW_PROFILE.aBitrate, '-ac:0', String(LOW_PROFILE.audioChannels),
     '-g', '24', '-keyint_min', '24', '-sc_threshold', '0',
 
-    // --- Output 1: ULTRA (360p ~350kbps) — para 1-2 Mbps ---
+    // --- Output 1: COPY (original passthrough — 0% CPU) ---
     '-map', '0:v:0', '-map', '0:a:0?',
-    '-c:v:1', VIDEO_CODEC, '-preset', 'ultrafast', '-tune', 'zerolatency',
-    ...CODEC_PARAMS,
-    '-b:v:1', QUALITY_PROFILES[1].vBitrate,
-    '-maxrate:v:1', QUALITY_PROFILES[1].maxrate,
-    '-bufsize:v:1', QUALITY_PROFILES[1].bufsize,
-    '-vf:1', `scale=${QUALITY_PROFILES[1].width}:${QUALITY_PROFILES[1].height}`,
-    '-c:a:1', 'aac', '-b:a:1', QUALITY_PROFILES[1].aBitrate, '-ac:1', String(QUALITY_PROFILES[1].audioChannels),
-    '-g', '24', '-keyint_min', '24', '-sc_threshold', '0',
-
-    // --- Output 2: LOW (480p ~700kbps) — para 2-3 Mbps ---
-    '-map', '0:v:0', '-map', '0:a:0?',
-    '-c:v:2', VIDEO_CODEC, '-preset', 'ultrafast', '-tune', 'zerolatency',
-    ...CODEC_PARAMS,
-    '-b:v:2', QUALITY_PROFILES[2].vBitrate,
-    '-maxrate:v:2', QUALITY_PROFILES[2].maxrate,
-    '-bufsize:v:2', QUALITY_PROFILES[2].bufsize,
-    '-vf:2', `scale=${QUALITY_PROFILES[2].width}:${QUALITY_PROFILES[2].height}`,
-    '-c:a:2', 'aac', '-b:a:2', QUALITY_PROFILES[2].aBitrate, '-ac:2', String(QUALITY_PROFILES[2].audioChannels),
-    '-g', '24', '-keyint_min', '24', '-sc_threshold', '0',
-
-    // --- Output 3: MED (720p ~1.5Mbps) — para 4-6 Mbps ---
-    '-map', '0:v:0', '-map', '0:a:0?',
-    '-c:v:3', VIDEO_CODEC, '-preset', 'veryfast', '-tune', 'zerolatency',
-    ...CODEC_PARAMS,
-    '-b:v:3', QUALITY_PROFILES[3].vBitrate,
-    '-maxrate:v:3', QUALITY_PROFILES[3].maxrate,
-    '-bufsize:v:3', QUALITY_PROFILES[3].bufsize,
-    '-vf:3', `scale=${QUALITY_PROFILES[3].width}:${QUALITY_PROFILES[3].height}`,
-    '-c:a:3', 'aac', '-b:a:3', QUALITY_PROFILES[3].aBitrate, '-ac:3', String(QUALITY_PROFILES[3].audioChannels),
-    '-g', '24', '-keyint_min', '24', '-sc_threshold', '0',
-
-    // --- Output 4: HIGH (original resolution, re-encode to H.264 for browser compat) ---
-    '-map', '0:v:0', '-map', '0:a:0?',
-    '-c:v:4', 'libx264', '-preset', 'veryfast', '-crf', '18',
-    '-g', '24', '-keyint_min', '24', '-sc_threshold', '0',
-    '-c:a:4', 'aac', '-b:a:4', '128k',
+    '-c:v:1', 'copy',
+    '-c:a:1', 'aac', '-b:a:1', '128k',
 
     // --- HLS output ---
     '-f', 'hls',
@@ -1172,7 +1120,7 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
     '-hls_flags', isKeepAlive ? 'append_list+delete_segments+temp_file' : 'append_list+temp_file',
     '-hls_segment_type', 'mpegts',
     '-hls_allow_cache', '1',
-    '-var_stream_map', 'v:0,a:0,name:micro v:1,a:1,name:ultra v:2,a:2,name:low v:3,a:3,name:med v:4,a:4,name:high',
+    '-var_stream_map', 'v:0,a:0,name:low v:1,a:1,name:copy',
     '-master_pl_name', 'master.m3u8',
     '-hls_segment_filename', path.join(channelDir, '%v', 'seg_%05d.ts'),
     '-y',
@@ -1235,7 +1183,7 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
 
     if (!entry.ready && (msg.includes('Opening') || msg.includes('muxing'))) {
       entry.ready = true;
-      console.log(`✅ [${channelId}] FFmpeg adaptativo listo (360p/480p/720p/original)`);
+      console.log(`✅ [${channelId}] FFmpeg Copy+480p listo (original+480p)`);
     }
   });
 
@@ -1875,7 +1823,7 @@ app.get('/api/restream/:channelId', async (req, res) => {
         if (manifestFile) {
           let manifest = fs.readFileSync(manifestFile, 'utf8');
           if (manifestFile.includes('master.m3u8')) {
-            manifest = manifest.replace(/(micro|ultra|low|med|high)\/stream\.m3u8/g, (match, quality) => {
+            manifest = manifest.replace(/(copy|low)\/stream\.m3u8/g, (match, quality) => {
               return `/api/hls-adaptive/${channelId}/${quality}/stream.m3u8`;
             });
           } else {
@@ -1906,7 +1854,7 @@ app.get('/api/restream/:channelId', async (req, res) => {
         if (manifestFile) {
           let manifest = fs.readFileSync(manifestFile, 'utf8');
           if (manifestFile.includes('master.m3u8')) {
-            manifest = manifest.replace(/(micro|ultra|low|med|high)\/stream\.m3u8/g, (match, quality) => {
+            manifest = manifest.replace(/(copy|low)\/stream\.m3u8/g, (match, quality) => {
               return `/api/hls-adaptive/${channelId}/${quality}/stream.m3u8`;
             });
           } else {
