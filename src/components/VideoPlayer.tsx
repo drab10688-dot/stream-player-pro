@@ -115,7 +115,14 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
       playerRef.current = null;
     }
 
+    if (qualityPollRef.current) {
+      clearInterval(qualityPollRef.current);
+      qualityPollRef.current = undefined;
+    }
+
     setEngineType(null);
+    setQualityLevels([]);
+    setSelectedQuality('auto');
   }, []);
 
   // ── mpegts.js engine (for raw .ts streams — VLC-like TS handling) ──
