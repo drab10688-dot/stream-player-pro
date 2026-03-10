@@ -1062,9 +1062,9 @@ const QUALITY_PROFILES = [
   { name: 'med', width: 1280, height: 720, vBitrate: '1200k', maxrate: '1500k', bufsize: '2000k', aBitrate: '96k', audioChannels: 2, bandwidth: 1600000 },
 ];
 
-// Configuración de caché según modo
-const CACHE_NORMAL = { hls_list_size: 30, hls_time: 4 };       // 30×4s = 2 min
-const CACHE_KEEPALIVE = { hls_list_size: 450, hls_time: 4 };   // 450×4s = 30 min
+// Configuración de caché según modo — segmentos de 2s para switching rápido estilo DirecTV Go
+const CACHE_NORMAL = { hls_list_size: 60, hls_time: 2 };       // 60×2s = 2 min
+const CACHE_KEEPALIVE = { hls_list_size: 900, hls_time: 2 };   // 900×2s = 30 min
 
 function startFFmpegTranscoder(channelId, sourceUrl, isKeepAlive = false) {
   if (activeTranscoders.has(channelId)) {
@@ -1108,51 +1108,52 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
 
     // --- Output 0: MICRO (240p ~200kbps) — para <1 Mbps ---
     '-map', '0:v:0', '-map', '0:a:0?',
-    '-c:v:0', VIDEO_CODEC, '-preset', USE_HEVC ? 'ultrafast' : 'ultrafast', '-tune', USE_HEVC ? 'fastdecode' : 'zerolatency',
+    '-c:v:0', VIDEO_CODEC, '-preset', 'ultrafast', '-tune', 'zerolatency',
     ...CODEC_PARAMS,
     '-b:v:0', QUALITY_PROFILES[0].vBitrate,
     '-maxrate:v:0', QUALITY_PROFILES[0].maxrate,
     '-bufsize:v:0', QUALITY_PROFILES[0].bufsize,
     '-vf:0', `scale=${QUALITY_PROFILES[0].width}:${QUALITY_PROFILES[0].height}`,
     '-c:a:0', 'aac', '-b:a:0', QUALITY_PROFILES[0].aBitrate, '-ac:0', String(QUALITY_PROFILES[0].audioChannels),
-    '-g', '48', '-keyint_min', '48', '-sc_threshold', '0',
+    '-g', '24', '-keyint_min', '24', '-sc_threshold', '0',
 
     // --- Output 1: ULTRA (360p ~350kbps) — para 1-2 Mbps ---
     '-map', '0:v:0', '-map', '0:a:0?',
-    '-c:v:1', VIDEO_CODEC, '-preset', 'ultrafast', '-tune', USE_HEVC ? 'fastdecode' : 'zerolatency',
+    '-c:v:1', VIDEO_CODEC, '-preset', 'ultrafast', '-tune', 'zerolatency',
     ...CODEC_PARAMS,
     '-b:v:1', QUALITY_PROFILES[1].vBitrate,
     '-maxrate:v:1', QUALITY_PROFILES[1].maxrate,
     '-bufsize:v:1', QUALITY_PROFILES[1].bufsize,
     '-vf:1', `scale=${QUALITY_PROFILES[1].width}:${QUALITY_PROFILES[1].height}`,
     '-c:a:1', 'aac', '-b:a:1', QUALITY_PROFILES[1].aBitrate, '-ac:1', String(QUALITY_PROFILES[1].audioChannels),
-    '-g', '48', '-keyint_min', '48', '-sc_threshold', '0',
+    '-g', '24', '-keyint_min', '24', '-sc_threshold', '0',
 
     // --- Output 2: LOW (480p ~700kbps) — para 2-3 Mbps ---
     '-map', '0:v:0', '-map', '0:a:0?',
-    '-c:v:2', VIDEO_CODEC, '-preset', 'ultrafast', '-tune', USE_HEVC ? 'fastdecode' : 'zerolatency',
+    '-c:v:2', VIDEO_CODEC, '-preset', 'ultrafast', '-tune', 'zerolatency',
     ...CODEC_PARAMS,
     '-b:v:2', QUALITY_PROFILES[2].vBitrate,
     '-maxrate:v:2', QUALITY_PROFILES[2].maxrate,
     '-bufsize:v:2', QUALITY_PROFILES[2].bufsize,
     '-vf:2', `scale=${QUALITY_PROFILES[2].width}:${QUALITY_PROFILES[2].height}`,
     '-c:a:2', 'aac', '-b:a:2', QUALITY_PROFILES[2].aBitrate, '-ac:2', String(QUALITY_PROFILES[2].audioChannels),
-    '-g', '48', '-keyint_min', '48', '-sc_threshold', '0',
+    '-g', '24', '-keyint_min', '24', '-sc_threshold', '0',
 
     // --- Output 3: MED (720p ~1.5Mbps) — para 4-6 Mbps ---
     '-map', '0:v:0', '-map', '0:a:0?',
-    '-c:v:3', VIDEO_CODEC, '-preset', 'veryfast', '-tune', USE_HEVC ? 'fastdecode' : 'zerolatency',
+    '-c:v:3', VIDEO_CODEC, '-preset', 'veryfast', '-tune', 'zerolatency',
     ...CODEC_PARAMS,
     '-b:v:3', QUALITY_PROFILES[3].vBitrate,
     '-maxrate:v:3', QUALITY_PROFILES[3].maxrate,
     '-bufsize:v:3', QUALITY_PROFILES[3].bufsize,
     '-vf:3', `scale=${QUALITY_PROFILES[3].width}:${QUALITY_PROFILES[3].height}`,
     '-c:a:3', 'aac', '-b:a:3', QUALITY_PROFILES[3].aBitrate, '-ac:3', String(QUALITY_PROFILES[3].audioChannels),
-    '-g', '48', '-keyint_min', '48',
+    '-g', '24', '-keyint_min', '24',
 
     // --- Output 4: HIGH (original resolution, re-encode to H.264 for browser compat) ---
     '-map', '0:v:0', '-map', '0:a:0?',
     '-c:v:4', 'libx264', '-preset', 'veryfast', '-crf', '18',
+    '-g', '24', '-keyint_min', '24',
     '-c:a:4', 'aac', '-b:a:4', '128k',
 
     // --- HLS output ---
@@ -1160,7 +1161,6 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
     '-hls_time', String(cacheConfig.hls_time),
     '-hls_list_size', String(cacheConfig.hls_list_size),
     '-hls_flags', isKeepAlive ? 'append_list+delete_segments+temp_file' : 'append_list+temp_file',
-    '-hls_segment_type', 'mpegts',
     '-hls_segment_type', 'mpegts',
     '-hls_allow_cache', '1',
     '-var_stream_map', 'v:0,a:0,name:micro v:1,a:1,name:ultra v:2,a:2,name:low v:3,a:3,name:med v:4,a:4,name:high',
@@ -1285,7 +1285,7 @@ function startSingleQualityTranscoder(channelId, sourceUrl, channelDir, isKeepAl
     '-b:v', '1200k', '-maxrate', '1400k', '-bufsize', '2000k',
     '-vf', 'scale=1280:720',
     '-c:a', 'aac', '-b:a', '96k',
-    '-g', '48', '-keyint_min', '48', '-sc_threshold', '0',
+    '-g', '24', '-keyint_min', '24', '-sc_threshold', '0',
     '-f', 'hls',
     '-hls_time', String(cacheConfig.hls_time),
     '-hls_list_size', String(cacheConfig.hls_list_size),
