@@ -100,7 +100,7 @@ const StreamMonitor = () => {
 
       {/* Summary Cards */}
       {data && (
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-4 gap-3">
           <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="glass rounded-xl p-4 text-center">
             <Server className="w-6 h-6 text-primary mx-auto mb-1" />
             <p className="text-2xl font-bold text-foreground">{data.origin_connections}</p>
@@ -115,6 +115,13 @@ const StreamMonitor = () => {
             <Users className="w-6 h-6 text-blue-400 mx-auto mb-1" />
             <p className="text-2xl font-bold text-foreground">{data.total_clients_watching}</p>
             <p className="text-xs text-muted-foreground">Clientes Viendo</p>
+          </motion.div>
+          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }} className="glass rounded-xl p-4 text-center">
+            <ArrowDown className="w-6 h-6 text-orange-400 mx-auto mb-1" />
+            <p className="text-2xl font-bold text-foreground">
+              {formatBandwidth(data.streams.reduce((sum, s) => sum + (s.bandwidth_bps || 0), 0))}
+            </p>
+            <p className="text-xs text-muted-foreground">Salida Total</p>
           </motion.div>
         </div>
       )}
