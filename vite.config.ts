@@ -20,6 +20,8 @@ export default defineConfig(({ mode }) => ({
       registerType: "autoUpdate",
       includeAssets: ["favicon.png", "omnisync-icon-192.png", "omnisync-icon-512.png"],
       workbox: {
+        skipWaiting: true,
+        clientsClaim: true,
         navigateFallbackDenylist: [/^\/~oauth/],
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
