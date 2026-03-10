@@ -660,6 +660,149 @@ app.delete('/api/resellers/:id', authAdmin, async (req, res) => {
 });
 
 // =============================================
+// MIDDLEWARE: Verificar token de reseller
+// =============================================
+const authReseller = async (req, res, next) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Token requerido' });
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    if (!decoded.reseller_id) return res.status(401).json({ error: 'Token inválido' });
+    const { rows } = await pool.query('SELECT * FROM resellers WHERE id = $1 AND is_active = true', [decoded.reseller_id]);
+    if (rows.length === 0) return res.status(401).json({ error: 'Reseller no encontrado o suspendido' });
+    req.reseller = rows[0];
+    next();
+  } catch {
+    res.status(401).json({ error: 'Token inválido' });
+  }
+};
+
+// =============================================
+// RUTAS: RESELLER AUTH Y PANEL
+// =============================================
+app.post('/api/reseller/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    const { rows } = await pool.query(
+      'SELECT * FROM resellers WHERE username = $1 AND password = $2 AND is_active = true',
+      [username, password]
+    );
+    if (rows.length === 0) return res.status(401).json({ error: 'Credenciales inválidas o cuenta suspendida' });
+
+    const r = rows[0];
+    const { rows: clients } = await pool.query('SELECT id FROM clients WHERE reseller_id = $1', [r.id]);
+    const token = jwt.sign({ reseller_id: r.id }, JWT_SECRET, { expiresIn: '12h' });
+    res.json({
+      token,
+      reseller: {
+        id: r.id, name: r.name, username: r.username,
+        max_clients: r.max_clients, commission_percent: r.commission_percent || 0,
+        client_count: clients.length,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Reseller: get own info
+app.get('/api/reseller/me', authReseller, async (req, res) => {
+  const r = req.reseller;
+  const { rows: clients } = await pool.query('SELECT id FROM clients WHERE reseller_id = $1', [r.id]);
+  res.json({
+    id: r.id, name: r.name, username: r.username,
+    max_clients: r.max_clients, commission_percent: r.commission_percent || 0,
+    client_count: clients.length,
+  });
+});
+
+// Reseller: list own clients
+app.get('/api/reseller/clients', authReseller, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT id, username, password, max_screens, expiry_date, is_active, notes, plan_id, vod_enabled, created_at FROM clients WHERE reseller_id = $1 ORDER BY created_at DESC',
+      [req.reseller.id]
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Reseller: list available plans (read-only)
+app.get('/api/reseller/plans', authReseller, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT id, name FROM plans WHERE is_active = true ORDER BY sort_order');
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Reseller: create client (respects max_clients limit)
+app.post('/api/reseller/clients', authReseller, async (req, res) => {
+  try {
+    const { rows: existing } = await pool.query('SELECT id FROM clients WHERE reseller_id = $1', [req.reseller.id]);
+    if (existing.length >= req.reseller.max_clients) {
+      return res.status(403).json({ error: `Has alcanzado el límite de ${req.reseller.max_clients} clientes` });
+    }
+
+    const { username, password, max_screens, expiry_date, notes, plan_id, vod_enabled } = req.body;
+    if (!username || !password || !expiry_date) return res.status(400).json({ error: 'Usuario, contraseña y fecha de expiración requeridos' });
+
+    const playlist_token = crypto.randomBytes(16).toString('hex');
+    const { rows } = await pool.query(
+      'INSERT INTO clients (username, password, max_screens, expiry_date, notes, plan_id, vod_enabled, reseller_id, playlist_token) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *',
+      [username, password, max_screens || 1, expiry_date, notes, plan_id || null, vod_enabled || false, req.reseller.id, playlist_token]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Reseller: update own client
+app.put('/api/reseller/clients/:id', authReseller, async (req, res) => {
+  try {
+    const { rows: current } = await pool.query('SELECT * FROM clients WHERE id = $1 AND reseller_id = $2', [req.params.id, req.reseller.id]);
+    if (current.length === 0) return res.status(404).json({ error: 'Cliente no encontrado' });
+
+    const c = current[0];
+    const username = req.body.username !== undefined ? req.body.username : c.username;
+    const password = req.body.password !== undefined ? req.body.password : c.password;
+    const max_screens = req.body.max_screens !== undefined ? req.body.max_screens : c.max_screens;
+    const expiry_date = req.body.expiry_date !== undefined ? req.body.expiry_date : c.expiry_date;
+    const is_active = req.body.is_active !== undefined ? req.body.is_active : c.is_active;
+    const notes = req.body.notes !== undefined ? req.body.notes : c.notes;
+    const plan_id = req.body.plan_id !== undefined ? req.body.plan_id : c.plan_id;
+    const vod_enabled = req.body.vod_enabled !== undefined ? req.body.vod_enabled : c.vod_enabled;
+
+    const { rows } = await pool.query(
+      'UPDATE clients SET username=$1, password=$2, max_screens=$3, expiry_date=$4, is_active=$5, notes=$6, plan_id=$7, vod_enabled=$8 WHERE id=$9 RETURNING *',
+      [username, password, max_screens, expiry_date, is_active, notes, plan_id, vod_enabled, req.params.id]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Reseller: delete own client
+app.delete('/api/reseller/clients/:id', authReseller, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT id FROM clients WHERE id = $1 AND reseller_id = $2', [req.params.id, req.reseller.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Cliente no encontrado' });
+    
+    await pool.query('DELETE FROM active_connections WHERE client_id = $1', [req.params.id]);
+    await pool.query('DELETE FROM clients WHERE id = $1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// =============================================
 // RUTAS: LOGIN DE CLIENTES (público, para la app)
 // =============================================
 app.post('/api/client/login', async (req, res) => {
