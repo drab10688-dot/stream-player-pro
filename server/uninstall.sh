@@ -98,7 +98,7 @@ fi
 # =============================================
 # 6. tmpfs / HLS cache
 # =============================================
-echo -e "${YELLOW}[6/7] Limpiando tmpfs y caché HLS...${NC}"
+echo -e "${YELLOW}[6/7] Limpiando HLS cache y tmpfs...${NC}"
 if mountpoint -q /tmp/streambox-hls 2>/dev/null; then
   umount /tmp/streambox-hls 2>/dev/null || true
   echo -e "${GREEN}  ✓ tmpfs desmontado${NC}"
