@@ -247,37 +247,40 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
         const hls = new Hls({
           enableWorker: true,
           lowLatencyMode: true,
-          abrEwmaDefaultEstimate: 1000000,
-          abrEwmaFastLive: 3,
-          abrEwmaSlowLive: 9,
-          abrEwmaFastVoD: 3,
-          abrEwmaSlowVoD: 9,
-          abrBandWidthFactor: 0.8,
-          abrBandWidthUpFactor: 0.6,
-          // Buffer: reasonable limits (was 1800/3600 = extreme memory usage)
-          maxBufferLength: 120,                // 2 min (was 30 min!)
-          maxMaxBufferLength: 300,             // 5 min max (was 60 min!)
-          maxBufferSize: 60 * 1000 * 1000,    // 60MB (was 500MB!)
-          maxBufferHole: 0.5,
-          backBufferLength: 30,               // 30s back (was 120s)
-          // Live sync
+          // ABR: aggressive downshift for slow connections (DirecTV Go style)
+          abrEwmaDefaultEstimate: 500000,       // Start assuming 500kbps (was 1Mbps) — forces lowest quality first
+          abrEwmaFastLive: 2,                    // React faster to bandwidth drops (was 3)
+          abrEwmaSlowLive: 6,                    // Shorter averaging window (was 9)
+          abrEwmaFastVoD: 2,
+          abrEwmaSlowVoD: 6,
+          abrBandWidthFactor: 0.7,               // More conservative — only upgrade at 70% capacity (was 0.8)
+          abrBandWidthUpFactor: 0.5,             // Even more conservative for upgrading (was 0.6)
+          // Buffer: small for fast start, reasonable for stability
+          maxBufferLength: 30,                   // 30s buffer (was 120s) — less memory, faster adaptation
+          maxMaxBufferLength: 60,                // 1 min max (was 300s)
+          maxBufferSize: 30 * 1000 * 1000,       // 30MB (was 60MB) — less memory on mobile
+          maxBufferHole: 0.3,                    // Tighter hole tolerance (was 0.5)
+          backBufferLength: 10,                  // 10s back (was 30s) — save memory
+          // Live sync — stay close to live edge
           liveSyncDurationCount: 2,
-          liveMaxLatencyDurationCount: 5,
+          liveMaxLatencyDurationCount: 4,        // Tighter (was 5)
           liveDurationInfinity: true,
-          // Retries — still aggressive but less extreme
-          fragLoadingMaxRetry: 15,            // (was 30)
-          fragLoadingRetryDelay: 1000,        // faster retry (was 1500)
-          fragLoadingMaxRetryTimeout: 30000,  // (was 64000)
-          manifestLoadingMaxRetry: 10,        // (was 25)
-          manifestLoadingRetryDelay: 1000,
-          manifestLoadingMaxRetryTimeout: 30000,
+          // Retries
+          fragLoadingMaxRetry: 15,
+          fragLoadingRetryDelay: 800,            // Faster retry (was 1000)
+          fragLoadingMaxRetryTimeout: 20000,     // Faster give-up (was 30000)
+          manifestLoadingMaxRetry: 10,
+          manifestLoadingRetryDelay: 800,
+          manifestLoadingMaxRetryTimeout: 20000,
           levelLoadingMaxRetry: 10,
-          levelLoadingRetryDelay: 1000,
-          levelLoadingMaxRetryTimeout: 30000,
-          startLevel: 0,
+          levelLoadingRetryDelay: 800,
+          levelLoadingMaxRetryTimeout: 20000,
+          startLevel: 0,                         // Always start at lowest quality (360p)
           startFragPrefetch: true,
           testBandwidth: true,
           progressive: true,
+          // Segments: prefer smaller for faster switching
+          maxFragLookUpTolerance: 0.2,
         });
         hlsRef.current = hls;
         hls.loadSource(src);
