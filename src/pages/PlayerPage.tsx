@@ -416,7 +416,7 @@ const PlayerPage = () => {
             src={selectedChannel.url}
             channelId={selectedChannel.id}
             muted={muted}
-            onError={(msg) => reportChannelError(selectedChannel.id, msg)}
+            onError={(chId, msg) => reportChannelError(chId, msg)}
           />
 
           {/* Ad Banner */}
