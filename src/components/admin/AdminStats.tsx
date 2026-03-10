@@ -3,7 +3,7 @@ import { apiGet } from '@/lib/api';
 import { supabase } from '@/integrations/supabase/client';
 import { isLovablePreview } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
-import { Users, UserCheck, UserX, Clock, Tv, Store, Megaphone, Wifi, AlertTriangle } from 'lucide-react';
+import { Users, UserCheck, UserX, Clock, Tv, Store, Megaphone, Wifi, AlertTriangle, Link, Copy, Check } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { format } from 'date-fns';
@@ -229,7 +229,59 @@ const AdminStats = () => {
           <p className="text-muted-foreground text-sm text-center py-6">No hay clientes aún</p>
         )}
       </motion.div>
+
+      {/* Access Links */}
+      <AccessLinks />
     </div>
+  );
+};
+
+const AccessLinks = () => {
+  const [copiedLink, setCopiedLink] = useState<string | null>(null);
+  const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
+
+  const links = [
+    { label: 'Login Cliente', path: '/login', icon: Users, color: 'text-primary' },
+    { label: 'Panel Reseller', path: '/reseller', icon: Store, color: 'text-accent' },
+    { label: 'Panel Admin', path: '/admin', icon: AlertTriangle, color: 'text-destructive' },
+  ];
+
+  const copyLink = (path: string) => {
+    const url = `${baseUrl}${path}`;
+    navigator.clipboard.writeText(url).then(() => {
+      setCopiedLink(path);
+      setTimeout(() => setCopiedLink(null), 2000);
+    });
+  };
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }} className="glass rounded-xl p-5">
+      <h3 className="font-semibold text-foreground mb-3 flex items-center gap-2">
+        <Link className="w-4 h-4 text-primary" /> Enlaces de Acceso
+      </h3>
+      <div className="space-y-2">
+        {links.map((link) => (
+          <div key={link.path} className="flex items-center justify-between glass rounded-lg px-4 py-3">
+            <div className="flex items-center gap-3">
+              <link.icon className={`w-4 h-4 ${link.color}`} />
+              <div>
+                <p className="text-sm font-medium text-foreground">{link.label}</p>
+                <p className="text-xs text-muted-foreground font-mono">{baseUrl}{link.path}</p>
+              </div>
+            </div>
+            <button
+              onClick={() => copyLink(link.path)}
+              className="p-2 rounded-lg hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
+            >
+              {copiedLink === link.path ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+            </button>
+          </div>
+        ))}
+      </div>
+      <p className="text-[10px] text-muted-foreground mt-3">
+        Estos enlaces usan el host actual. Si accedes por Cloudflare, los links serán con tu dominio. Si accedes por IP, serán con la IP del VPS.
+      </p>
+    </motion.div>
   );
 };
 
