@@ -197,6 +197,10 @@ function getActiveCreds() {
   for (const [username, session] of activeSessions) {
     return { username, password: session.password };
   }
+  // Fallback: credenciales de env para que el proxy funcione sin sesión
+  if (process.env.XTREAM_USER && process.env.XTREAM_PASS) {
+    return { username: process.env.XTREAM_USER, password: process.env.XTREAM_PASS };
+  }
   return null;
 }
 
