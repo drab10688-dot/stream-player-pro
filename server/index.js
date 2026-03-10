@@ -1150,9 +1150,9 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
     '-c:a:3', 'aac', '-b:a:3', QUALITY_PROFILES[3].aBitrate, '-ac:3', String(QUALITY_PROFILES[3].audioChannels),
     '-g', '48', '-keyint_min', '48',
 
-    // --- Output 4: HIGH (original, copy) ---
+    // --- Output 4: HIGH (original resolution, re-encode to H.264 for browser compat) ---
     '-map', '0:v:0', '-map', '0:a:0?',
-    '-c:v:4', 'copy',
+    '-c:v:4', 'libx264', '-preset', 'veryfast', '-crf', '18',
     '-c:a:4', 'aac', '-b:a:4', '128k',
 
     // --- HLS output ---
