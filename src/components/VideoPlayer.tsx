@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useCallback, memo } from 'react';
-import shaka from 'shaka-player';
+import Hls from 'hls.js';
 
 interface VideoPlayerProps {
   src: string;
@@ -21,82 +21,135 @@ const getYouTubeId = (url: string): string | null => {
   return null;
 };
 
+const isHlsStream = (url: string): boolean => {
+  return /\.m3u8(\?|$)/i.test(url) || /\/live\//i.test(url);
+};
+
 const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlayerProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const playerRef = useRef<shaka.Player | null>(null);
+  const hlsRef = useRef<Hls | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const retryCountRef = useRef(0);
+  const maxRetries = 8;
 
-  const cleanup = useCallback(async () => {
-    if (playerRef.current) {
-      try { await playerRef.current.destroy(); } catch { /* ignore */ }
-      playerRef.current = null;
+  const cleanup = useCallback(() => {
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
     }
+    retryCountRef.current = 0;
   }, []);
 
-  const initStream = useCallback(async () => {
+  const initStream = useCallback(() => {
     const video = videoRef.current;
     if (!video || !src) return;
-
     if (getYouTubeId(src)) return;
 
     setError(null);
     setLoading(true);
-    await cleanup();
+    cleanup();
 
-    shaka.polyfill.installAll();
+    const isHls = isHlsStream(src);
 
-    if (!shaka.Player.isBrowserSupported()) {
-      setError('Tu navegador no es compatible con el reproductor.');
-      setLoading(false);
-      onError?.('Browser not supported');
-      return;
-    }
+    // Case 1: HLS stream with hls.js support
+    if (isHls && Hls.isSupported()) {
+      const hls = new Hls({
+        // Stability-first config for IPTV
+        maxBufferLength: 30,
+        maxMaxBufferLength: 60,
+        maxBufferSize: 60 * 1000 * 1000, // 60MB
+        maxBufferHole: 0.5,
+        lowLatencyMode: false,
+        startLevel: 0, // Start at lowest quality for fast start
+        capLevelToPlayerSize: true,
+        // Recovery settings
+        manifestLoadingMaxRetry: 8,
+        manifestLoadingRetryDelay: 1000,
+        levelLoadingMaxRetry: 8,
+        levelLoadingRetryDelay: 1000,
+        fragLoadingMaxRetry: 8,
+        fragLoadingRetryDelay: 1000,
+        // Stall recovery
+        nudgeMaxRetry: 5,
+        nudgeOffset: 0.2,
+      });
 
-    const player = new shaka.Player();
-    await player.attach(video);
-    playerRef.current = player;
+      hlsRef.current = hls;
 
-    player.addEventListener('error', (event: Event) => {
-      const detail = (event as any).detail || {};
-      console.warn('Shaka error:', detail.code, detail.message);
-      // Solo mostrar error si el video no está reproduciendo
-      if (video.paused || video.ended || video.readyState < 2) {
-        setError(`Error del stream: ${detail.message || 'No se pudo cargar el canal'}`);
+      hls.on(Hls.Events.MEDIA_ATTACHED, () => {
+        hls.loadSource(src);
+      });
+
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
         setLoading(false);
-        onError?.(detail.message || 'Stream error');
-      }
-    });
+        video.muted = muted;
+        video.play().catch(() => {
+          video.muted = true;
+          video.play().catch(() => { /* user will click play */ });
+        });
+      });
 
-    player.addEventListener('buffering', (e: Event) => {
-      const buffering = (e as any).buffering;
-      setLoading(buffering);
-    });
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        console.warn('HLS error:', data.type, data.details, data.fatal);
 
-    try {
-      const isTs = /\.ts(\?|$)/i.test(src) || /\/\d+\.ts/.test(src);
-      if (isTs) {
-        video.src = src;
-      } else {
-        await player.load(src);
-      }
-    } catch (err: any) {
-      console.error('Shaka load error:', err);
-      setError('No se pudo cargar el stream. Verifica que el canal esté activo.');
-      setLoading(false);
-      onError?.('Load error');
-      return;
+        if (data.fatal) {
+          switch (data.type) {
+            case Hls.ErrorTypes.NETWORK_ERROR:
+              if (retryCountRef.current < maxRetries) {
+                retryCountRef.current++;
+                console.log(`HLS: retry ${retryCountRef.current}/${maxRetries}`);
+                setTimeout(() => hls.startLoad(), 1000 * retryCountRef.current);
+              } else {
+                setError('Error de red: no se pudo cargar el stream.');
+                setLoading(false);
+                onError?.('Network error');
+              }
+              break;
+            case Hls.ErrorTypes.MEDIA_ERROR:
+              console.log('HLS: recovering from media error');
+              hls.recoverMediaError();
+              break;
+            default:
+              setError('No se pudo reproducir este canal.');
+              setLoading(false);
+              onError?.('Fatal error');
+              break;
+          }
+        }
+      });
+
+      hls.on(Hls.Events.FRAG_BUFFERED, () => {
+        retryCountRef.current = 0; // Reset on success
+      });
+
+      hls.attachMedia(video);
     }
-
-    try {
-      video.muted = false;
-      await video.play();
-    } catch {
-      video.muted = true;
-      try { await video.play(); } catch { /* user will click play */ }
+    // Case 2: Native HLS support (Safari/iOS)
+    else if (isHls && video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = src;
+      video.addEventListener('loadedmetadata', () => {
+        setLoading(false);
+        video.muted = muted;
+        video.play().catch(() => {
+          video.muted = true;
+          video.play().catch(() => {});
+        });
+      }, { once: true });
     }
-    setLoading(false);
-  }, [src, cleanup, onError]);
+    // Case 3: Direct URL (TS segments, MP4, etc.)
+    else {
+      video.src = src;
+      video.muted = muted;
+      video.addEventListener('loadeddata', () => {
+        setLoading(false);
+        video.play().catch(() => {
+          video.muted = true;
+          video.play().catch(() => {});
+        });
+      }, { once: true });
+    }
+  }, [src, cleanup, onError, muted]);
 
   useEffect(() => {
     initStream();
@@ -106,6 +159,39 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
   useEffect(() => {
     if (videoRef.current) videoRef.current.muted = muted;
   }, [muted]);
+
+  // Stall detection: restart if stuck for 15s
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    let stallTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const onStall = () => {
+      stallTimer = setTimeout(() => {
+        console.warn('Stall detected, restarting stream');
+        initStream();
+      }, 15000);
+    };
+
+    const onPlaying = () => {
+      if (stallTimer) {
+        clearTimeout(stallTimer);
+        stallTimer = null;
+      }
+    };
+
+    video.addEventListener('stalled', onStall);
+    video.addEventListener('waiting', onStall);
+    video.addEventListener('playing', onPlaying);
+
+    return () => {
+      video.removeEventListener('stalled', onStall);
+      video.removeEventListener('waiting', onStall);
+      video.removeEventListener('playing', onPlaying);
+      if (stallTimer) clearTimeout(stallTimer);
+    };
+  }, [initStream]);
 
   // YouTube embed
   const youtubeId = getYouTubeId(src);
@@ -136,7 +222,7 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
         onWaiting={() => setLoading(true)}
         onPlaying={() => setLoading(false)}
         onError={() => {
-          if (!playerRef.current) {
+          if (!hlsRef.current) {
             setError('No se pudo reproducir este canal.');
             setLoading(false);
           }
@@ -155,7 +241,7 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
             <p className="text-destructive font-semibold mb-2">Error de reproducción</p>
             <p className="text-muted-foreground text-sm mb-4">{error}</p>
             <button
-              onClick={() => initStream()}
+              onClick={() => { retryCountRef.current = 0; initStream(); }}
               className="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors"
             >
               Reintentar
