@@ -302,6 +302,29 @@ log_ok "Sistema actualizado"
 
 apt install -y -qq postgresql postgresql-contrib nginx curl git build-essential netcat-openbsd lsof > /dev/null 2>&1
 
+# Instalar FFmpeg con soporte H.265/HEVC
+if ! command -v ffmpeg &> /dev/null; then
+  log_info "Instalando FFmpeg con soporte H.265 (HEVC)..."
+  apt install -y -qq ffmpeg > /dev/null 2>&1
+fi
+
+# Verificar que FFmpeg tiene libx265
+if ffmpeg -encoders 2>/dev/null | grep -q "libx265"; then
+  log_ok "FFmpeg con H.265/HEVC (libx265) ✓"
+else
+  log_warn "FFmpeg instalado pero sin libx265. Instalando codecs adicionales..."
+  apt install -y -qq libx265-dev libx264-dev > /dev/null 2>&1
+  # En Ubuntu/Debian, ffmpeg del repo oficial ya trae libx265
+  # Si no, intentar desde ppa
+  if ! ffmpeg -encoders 2>/dev/null | grep -q "libx265"; then
+    log_warn "libx265 no disponible. El servidor usará H.264 (mayor consumo de datos)"
+    log_info "Para habilitar H.265 manualmente: apt install ffmpeg libx265-dev"
+  else
+    log_ok "FFmpeg H.265 habilitado tras instalar codecs"
+  fi
+fi
+log_ok "FFmpeg $(ffmpeg -version 2>/dev/null | head -1 | awk '{print $3}')"
+
 # Instalar Node.js 20 si no está o es muy viejo
 if ! command -v node &> /dev/null || [[ $(node -v | cut -d'.' -f1 | tr -d 'v') -lt 18 ]]; then
   log_info "Instalando Node.js 20..."
