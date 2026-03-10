@@ -1122,7 +1122,7 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
       `-maxrate:v:${i}`, profile.maxrate,
       `-bufsize:v:${i}`, profile.bufsize,
       `-g:v:${i}`, '48', `-keyint_min:v:${i}`, '48',
-      `-vf:v:${i}`, `scale=${profile.width}:${profile.height}`,
+      `-filter:v:${i}`, `scale=${profile.width}:${profile.height}`,
       `-c:a:${i}`, 'aac', `-b:a:${i}`, profile.aBitrate, `-ac:${i}`, String(profile.audioChannels),
     );
   });
