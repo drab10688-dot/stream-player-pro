@@ -510,8 +510,11 @@ pm2 delete omnisync-api > /dev/null 2>&1 || true
 # Liberar puerto API por si acaso
 kill_port $API_PORT 2>/dev/null
 
-# Crear directorio
+# Crear directorios
 mkdir -p /opt/streambox/server
+mkdir -p /opt/streambox/server/uploads/logos
+mkdir -p /opt/streambox/server/uploads/vod
+mkdir -p /opt/streambox/server/uploads/vod-posters
 cp -r "${SCRIPT_DIR}"/* /opt/streambox/server/
 
 # Configurar index.js con los valores correctos
