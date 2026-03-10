@@ -2003,18 +2003,110 @@ app.get('/api/restream/:channelId', async (req, res) => {
     res.setHeader('Cache-Control', 'no-cache, no-store');
 
     if (isHLS) {
-      // Canal ya es HLS → proxy con caché
-      startHLSProxy(channelId, targetUrl);
-      try {
-        const manifest = await getCachedM3U8(channelId, targetUrl);
-        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-        res.send(manifest);
-      } catch (err) {
-        console.error('HLS proxy error:', err.message);
-        res.status(502).json({ error: 'No se pudo obtener el manifiesto HLS' });
+      // Canal ya es HLS → check if HEVC needs transcoding
+      // First, probe the stream codec to detect HEVC without CODECS attribute
+      let needsTranscode = false;
+      const existingEntry = activeTranscoders.get(channelId);
+      
+      // Only probe if we haven't already determined this channel needs transcoding
+      if (!existingEntry || existingEntry.type === 'hls-proxy') {
+        try {
+          const codec = await probeStreamCodec(targetUrl);
+          if (codec === 'hevc' || codec === 'h265' || codec === 'hev1' || codec === 'hvc1') {
+            console.log(`🔄 [${channelId}] HEVC detectado via ffprobe → transcodificando a H.264`);
+            needsTranscode = true;
+            // Stop existing HLS proxy if running
+            if (existingEntry && existingEntry.type === 'hls-proxy') {
+              if (existingEntry.pollTimer) clearInterval(existingEntry.pollTimer);
+              activeTranscoders.delete(channelId);
+            }
+          }
+        } catch (err) {
+          console.warn(`⚠️ [${channelId}] ffprobe failed, falling back to HLS proxy:`, err.message);
+        }
       }
-      // Liberar al terminar respuesta
-      res.on('finish', () => releaseTranscoder(channelId));
+      
+      if (needsTranscode) {
+        // Route HEVC HLS streams through FFmpeg transcoder (same as .ts streams)
+        const entry = startFFmpegTranscoder(channelId, targetUrl);
+        
+        if (entry.ready && entry.keepAlive) {
+          const masterPath = path.join(HLS_DIR, channelId, 'master.m3u8');
+          const singlePath = entry.manifestPath || path.join(HLS_DIR, channelId, 'stream.m3u8');
+          const fallbackPath = entry.fallbackManifest || singlePath;
+          
+          let manifestFile = null;
+          if (fs.existsSync(masterPath)) manifestFile = masterPath;
+          else if (fs.existsSync(singlePath)) manifestFile = singlePath;
+          else if (fs.existsSync(fallbackPath)) manifestFile = fallbackPath;
+          
+          if (manifestFile) {
+            let manifest = fs.readFileSync(manifestFile, 'utf8');
+            if (manifestFile.includes('master.m3u8')) {
+              manifest = manifest.replace(/(copy|micro|low|med|high)\/stream\.m3u8/g, (match, quality) => {
+                return `/api/hls-adaptive/${channelId}/${quality}/stream.m3u8`;
+              });
+            } else {
+              manifest = manifest.replace(/seg_\d+\.ts/g, (match) => {
+                return `/api/hls-local/${channelId}/${match}`;
+              });
+            }
+            console.log(`⚡ [${channelId}] HEVC→H264 keep-alive: sirviendo manifiesto instantáneamente`);
+            res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+            res.send(manifest);
+            res.on('finish', () => releaseTranscoder(channelId));
+            return;
+          }
+        }
+        
+        // Wait for FFmpeg to generate manifest
+        let waited = 0;
+        const waitForManifest = () => {
+          const masterPath = path.join(HLS_DIR, channelId, 'master.m3u8');
+          const singlePath = entry.manifestPath || path.join(HLS_DIR, channelId, 'stream.m3u8');
+          const fallbackPath = entry.fallbackManifest || singlePath;
+          
+          let manifestFile = null;
+          if (fs.existsSync(masterPath)) manifestFile = masterPath;
+          else if (fs.existsSync(singlePath)) manifestFile = singlePath;
+          else if (fs.existsSync(fallbackPath)) manifestFile = fallbackPath;
+          
+          if (manifestFile) {
+            let manifest = fs.readFileSync(manifestFile, 'utf8');
+            if (manifestFile.includes('master.m3u8')) {
+              manifest = manifest.replace(/(copy|micro|low|med|high)\/stream\.m3u8/g, (match, quality) => {
+                return `/api/hls-adaptive/${channelId}/${quality}/stream.m3u8`;
+              });
+            } else {
+              manifest = manifest.replace(/seg_\d+\.ts/g, (match) => {
+                return `/api/hls-local/${channelId}/${match}`;
+              });
+            }
+            res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+            res.send(manifest);
+            res.on('finish', () => releaseTranscoder(channelId));
+          } else if (waited < 20000) {
+            waited += 500;
+            setTimeout(waitForManifest, 500);
+          } else {
+            releaseTranscoder(channelId);
+            res.status(504).json({ error: 'FFmpeg no generó el manifiesto a tiempo' });
+          }
+        };
+        waitForManifest();
+      } else {
+        // Normal HLS proxy (H.264 or compatible)
+        startHLSProxy(channelId, targetUrl);
+        try {
+          const manifest = await getCachedM3U8(channelId, targetUrl);
+          res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+          res.send(manifest);
+        } catch (err) {
+          console.error('HLS proxy error:', err.message);
+          res.status(502).json({ error: 'No se pudo obtener el manifiesto HLS' });
+        }
+        res.on('finish', () => releaseTranscoder(channelId));
+      }
     } else {
       // Canal TS → FFmpeg → HLS (adaptive o single)
       const entry = startFFmpegTranscoder(channelId, targetUrl);
