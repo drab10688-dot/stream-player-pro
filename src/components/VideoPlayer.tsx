@@ -19,6 +19,9 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
   const hlsRef = useRef<Hls | null>(null);
   const retryTimer = useRef<ReturnType<typeof setTimeout>>();
   const retryCount = useRef(0);
+  const stallTimer = useRef<ReturnType<typeof setInterval>>();
+  const lastTimeRef = useRef(0);
+  const stallCountRef = useRef(0);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
