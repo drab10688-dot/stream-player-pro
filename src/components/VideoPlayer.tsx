@@ -1,20 +1,16 @@
 import { useRef, useEffect, useState, useCallback, memo } from 'react';
-import Hls from 'hls.js';
+import videojs from 'video.js';
+import 'video.js/dist/video-js.css';
 import mpegts from 'mpegts.js';
 import { Settings, Wifi, AlertTriangle, RefreshCw } from 'lucide-react';
+
+import type Player from 'video.js/dist/types/player';
 
 interface VideoPlayerProps {
   src: string;
   channelId?: string;
   muted?: boolean;
   onError?: (message: string) => void;
-}
-
-interface QualityLevel {
-  index: number;
-  height: number;
-  bitrate: number;
-  label: string;
 }
 
 const getYouTubeId = (url: string): string | null => {
@@ -35,7 +31,7 @@ type StreamType = 'hls' | 'ts' | 'direct';
 const detectStreamType = (url: string): StreamType => {
   if (/\.m3u8(\?|$)/i.test(url)) return 'hls';
   if (/\.ts(\?|$)/i.test(url)) return 'ts';
-  if (/\/api\/restream\//i.test(url)) return 'hls'; // try HLS first, fallback to TS
+  if (/\/api\/restream\//i.test(url)) return 'hls';
   if (/\/live\//i.test(url)) return 'hls';
   return 'direct';
 };
@@ -47,24 +43,21 @@ const formatBitrate = (bps: number): string => {
 };
 
 const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlayerProps) => {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const hlsRef = useRef<Hls | null>(null);
-  const mpegtsRef = useRef<mpegts.Player | null>(null);
+  const videoContainerRef = useRef<HTMLDivElement>(null);
+  const videoElementRef = useRef<HTMLVideoElement>(null);
+  const playerRef = useRef<Player | null>(null);
+  const mpegtsPlayerRef = useRef<mpegts.Player | null>(null);
+
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingTime, setLoadingTime] = useState(0);
-  const [playerType, setPlayerType] = useState<'hls' | 'mpegts' | 'native' | null>(null);
-  const retryCountRef = useRef(0);
-  const maxRetries = 10;
-  const loadingTimerRef = useRef<ReturnType<typeof setInterval>>();
-
-  // Quality selector state
-  const [qualities, setQualities] = useState<QualityLevel[]>([]);
-  const [currentQuality, setCurrentQuality] = useState(-1);
-  const [showQualityMenu, setShowQualityMenu] = useState(false);
+  const [engineType, setEngineType] = useState<'videojs' | 'mpegts' | null>(null);
   const [currentBandwidth, setCurrentBandwidth] = useState(0);
-  const [autoLabel, setAutoLabel] = useState('Auto');
-  const qualityMenuRef = useRef<HTMLDivElement>(null);
+
+  const retryCountRef = useRef(0);
+  const maxRetries = 12;
+  const loadingTimerRef = useRef<ReturnType<typeof setInterval>>();
+  const retryTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
 
   // Loading time counter
   useEffect(() => {
@@ -79,27 +72,44 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
     return () => { if (loadingTimerRef.current) clearInterval(loadingTimerRef.current); };
   }, [loading, error]);
 
+  // Loading timeout — 35s
+  useEffect(() => {
+    if (loadingTime >= 35 && loading) {
+      setError('El canal tardó demasiado en responder. Puede estar caído o tu conexión es muy lenta.');
+      setLoading(false);
+    }
+  }, [loadingTime, loading]);
+
   const cleanup = useCallback(() => {
-    if (hlsRef.current) {
-      hlsRef.current.destroy();
-      hlsRef.current = null;
+    if (retryTimeoutRef.current) {
+      clearTimeout(retryTimeoutRef.current);
+      retryTimeoutRef.current = undefined;
     }
-    if (mpegtsRef.current) {
-      mpegtsRef.current.pause();
-      mpegtsRef.current.unload();
-      mpegtsRef.current.detachMediaElement();
-      mpegtsRef.current.destroy();
-      mpegtsRef.current = null;
+
+    if (mpegtsPlayerRef.current) {
+      try {
+        mpegtsPlayerRef.current.pause();
+        mpegtsPlayerRef.current.unload();
+        mpegtsPlayerRef.current.detachMediaElement();
+        mpegtsPlayerRef.current.destroy();
+      } catch (e) { /* ignore */ }
+      mpegtsPlayerRef.current = null;
     }
-    setQualities([]);
-    setCurrentQuality(-1);
-    setPlayerType(null);
+
+    if (playerRef.current) {
+      try {
+        playerRef.current.dispose();
+      } catch (e) { /* ignore */ }
+      playerRef.current = null;
+    }
+
+    setEngineType(null);
   }, []);
 
-  // Try MPEG-TS player (for raw .ts streams from Xtream UI)
+  // ── mpegts.js engine (for raw .ts streams — VLC-like TS handling) ──
   const initMpegTs = useCallback((streamUrl: string) => {
-    const video = videoRef.current;
-    if (!video) return;
+    if (!videoElementRef.current) return;
+    const video = videoElementRef.current;
 
     if (!mpegts.isSupported()) {
       setError('Tu navegador no soporta reproducción MPEG-TS.');
@@ -107,8 +117,8 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
       return;
     }
 
-    console.log('📺 Usando mpegts.js para stream TS:', streamUrl);
-    setPlayerType('mpegts');
+    console.log('📡 Engine: mpegts.js (VLC-mode) →', streamUrl);
+    setEngineType('mpegts');
 
     const player = mpegts.createPlayer({
       type: 'mpegts',
@@ -125,21 +135,21 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
       autoCleanupMinBackwardDuration: 5,
     });
 
-    mpegtsRef.current = player;
+    mpegtsPlayerRef.current = player;
     player.attachMediaElement(video);
     player.load();
 
-    player.on(mpegts.Events.ERROR, (errorType: string, errorDetail: string, errorInfo: any) => {
-      console.warn('mpegts.js error:', errorType, errorDetail, errorInfo);
-      
+    player.on(mpegts.Events.ERROR, (errorType: string, errorDetail: string) => {
+      console.warn('mpegts error:', errorType, errorDetail);
       if (retryCountRef.current < maxRetries) {
         retryCountRef.current++;
-        console.log(`mpegts.js: retry ${retryCountRef.current}/${maxRetries}`);
         const delay = Math.min(1000 * retryCountRef.current, 8000);
-        setTimeout(() => {
-          player.unload();
-          player.load();
-          video.play().catch(() => {});
+        retryTimeoutRef.current = setTimeout(() => {
+          try {
+            player.unload();
+            player.load();
+            video.play().catch(() => {});
+          } catch (e) { /* ignore */ }
         }, delay);
       } else {
         setError('Error de reproducción MPEG-TS. El canal puede estar caído.');
@@ -148,14 +158,8 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
       }
     });
 
-    player.on(mpegts.Events.LOADING_COMPLETE, () => {
-      console.log('mpegts.js: loading complete');
-    });
-
     player.on(mpegts.Events.STATISTICS_INFO, (stats: any) => {
-      if (stats.speed) {
-        setCurrentBandwidth(stats.speed * 1000);
-      }
+      if (stats.speed) setCurrentBandwidth(stats.speed * 1000);
     });
 
     video.muted = muted;
@@ -171,285 +175,235 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
     });
   }, [muted, onError]);
 
+  // ── video.js engine (HLS + general — like VLC's libavformat) ──
+  const initVideoJs = useCallback((streamUrl: string, fallbackToTs: boolean = true) => {
+    if (!videoContainerRef.current) return;
+
+    console.log('🎬 Engine: video.js (VLC-mode) →', streamUrl);
+    setEngineType('videojs');
+
+    // Create fresh video element for video.js
+    const existingVideo = videoContainerRef.current.querySelector('video');
+    if (existingVideo) existingVideo.remove();
+
+    const videoEl = document.createElement('video');
+    videoEl.className = 'video-js vjs-big-play-centered vjs-fluid';
+    videoEl.setAttribute('playsinline', '');
+    videoContainerRef.current.appendChild(videoEl);
+    videoElementRef.current = videoEl;
+
+    const player = videojs(videoEl, {
+      autoplay: true,
+      muted: muted,
+      controls: true,
+      fluid: true,
+      fill: true,
+      preload: 'auto',
+      liveui: true,
+      liveTracker: {
+        trackingThreshold: 0,
+        liveTolerance: 15,
+      },
+      html5: {
+        vhs: {
+          // VLC-like aggressive settings
+          overrideNative: true,
+          allowSeeksWithinUnsafeLiveWindow: true,
+          handlePartialData: true,
+          smoothQualityChange: true,
+          bandwidth: 5000000, // Start assuming 5Mbps (be optimistic like VLC)
+          enableLowInitialPlaylist: false,
+          limitRenditionByPlayerDimensions: true,
+          useDevicePixelRatio: true,
+          experimentalBufferBasedABR: true,
+          // Aggressive retry like VLC
+          maxPlaylistRetries: 10,
+        },
+        nativeAudioTracks: false,
+        nativeVideoTracks: false,
+      },
+      sources: [{
+        src: streamUrl,
+        type: detectStreamType(streamUrl) === 'hls'
+          ? 'application/x-mpegURL'
+          : 'video/mp4',
+      }],
+    });
+
+    playerRef.current = player;
+
+    let hlsTimeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    // Timeout: if video.js can't play in 10s, fallback to mpegts
+    if (fallbackToTs) {
+      hlsTimeoutId = setTimeout(() => {
+        if (loading) {
+          console.log('⚠️ video.js timeout → switching to mpegts.js');
+          try { player.dispose(); } catch (e) { /* */ }
+          playerRef.current = null;
+
+          // Re-create video element for mpegts
+          const container = videoContainerRef.current;
+          if (container) {
+            const existing = container.querySelector('video');
+            if (existing) existing.remove();
+            const newVid = document.createElement('video');
+            newVid.className = 'w-full h-full object-contain';
+            newVid.setAttribute('playsinline', '');
+            newVid.controls = true;
+            container.appendChild(newVid);
+            videoElementRef.current = newVid;
+          }
+
+          const tsUrl = streamUrl.replace(/\.m3u8(\?|$)/i, '.ts$1');
+          initMpegTs(tsUrl !== streamUrl ? tsUrl : streamUrl);
+        }
+      }, 10000);
+      retryTimeoutRef.current = hlsTimeoutId;
+    }
+
+    player.on('playing', () => {
+      if (hlsTimeoutId) clearTimeout(hlsTimeoutId);
+      setLoading(false);
+      setError(null);
+      retryCountRef.current = 0;
+    });
+
+    player.on('waiting', () => {
+      setLoading(true);
+    });
+
+    player.on('canplay', () => {
+      setLoading(false);
+    });
+
+    // VLC-like: track bandwidth from VHS tech
+    player.on('progress', () => {
+      try {
+        const tech = player.tech({ IWillNotUseThisInPlugins: true }) as any;
+        if (tech?.vhs?.bandwidth) {
+          setCurrentBandwidth(tech.vhs.bandwidth);
+        }
+      } catch (e) { /* ignore */ }
+    });
+
+    player.on('error', () => {
+      const err = player.error();
+      console.warn('video.js error:', err?.code, err?.message);
+      if (hlsTimeoutId) clearTimeout(hlsTimeoutId);
+
+      // VLC-like: retry aggressively before giving up
+      if (retryCountRef.current < maxRetries) {
+        retryCountRef.current++;
+        const delay = Math.min(1500 * retryCountRef.current, 10000);
+        console.log(`🔄 Retry ${retryCountRef.current}/${maxRetries} in ${delay}ms`);
+        
+        retryTimeoutRef.current = setTimeout(() => {
+          if (fallbackToTs && retryCountRef.current >= 3) {
+            // After 3 video.js failures, try mpegts
+            console.log('🔄 video.js failed 3x → fallback to mpegts.js');
+            try { player.dispose(); } catch (e) { /* */ }
+            playerRef.current = null;
+
+            const container = videoContainerRef.current;
+            if (container) {
+              const existing = container.querySelector('video');
+              if (existing) existing.remove();
+              const newVid = document.createElement('video');
+              newVid.className = 'w-full h-full object-contain';
+              newVid.setAttribute('playsinline', '');
+              newVid.controls = true;
+              container.appendChild(newVid);
+              videoElementRef.current = newVid;
+            }
+            initMpegTs(streamUrl);
+          } else {
+            try {
+              player.src({
+                src: streamUrl,
+                type: 'application/x-mpegURL',
+              });
+              player.play()?.catch(() => {});
+            } catch (e) { /* ignore */ }
+          }
+        }, delay);
+      } else {
+        setError('No se pudo reproducir este canal. El canal puede estar caído.');
+        setLoading(false);
+        onError?.('video.js error after max retries');
+      }
+    });
+
+    // Stall detection — VLC recovers after stalls
+    let stallTimer: ReturnType<typeof setTimeout> | null = null;
+
+    player.on('stalled', () => {
+      if (stallTimer) clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => {
+        console.warn('⚠️ Stall detectado (20s), reiniciando stream...');
+        try {
+          player.src({ src: streamUrl, type: 'application/x-mpegURL' });
+          player.play()?.catch(() => {});
+        } catch (e) { /* ignore */ }
+      }, 20000);
+    });
+
+    player.on('playing', () => {
+      if (stallTimer) { clearTimeout(stallTimer); stallTimer = null; }
+    });
+
+  }, [muted, onError, initMpegTs, loading]);
+
+  // ── Main init — VLC-like format detection ──
   const initStream = useCallback(() => {
-    const video = videoRef.current;
-    if (!video || !src) return;
+    if (!src) return;
     if (getYouTubeId(src)) return;
 
     setError(null);
     setLoading(true);
     cleanup();
 
+    // Create initial video element
+    const container = videoContainerRef.current;
+    if (container) {
+      const existing = container.querySelector('video');
+      if (existing) existing.remove();
+    }
+
     const streamType = detectStreamType(src);
 
-    // For restream URLs: try HLS first, if it fails within 8s, fallback to mpegts.js
-    if (streamType === 'hls' && Hls.isSupported()) {
-      console.log('📺 Intentando HLS:', src);
-      setPlayerType('hls');
-
-      const hls = new Hls({
-        maxBufferLength: 15,
-        maxMaxBufferLength: 30,
-        maxBufferSize: 30 * 1000 * 1000,
-        maxBufferHole: 0.5,
-        lowLatencyMode: false,
-        startLevel: 0,
-        capLevelToPlayerSize: true,
-        abrEwmaDefaultEstimate: 300000,
-        abrBandWidthUpFactor: 0.6,
-        abrBandWidthFactor: 0.95,
-        manifestLoadingMaxRetry: 3,       // Fewer retries — fallback to TS faster
-        manifestLoadingRetryDelay: 1000,
-        manifestLoadingMaxRetryTimeout: 8000,
-        levelLoadingMaxRetry: 5,
-        levelLoadingRetryDelay: 1500,
-        levelLoadingMaxRetryTimeout: 15000,
-        fragLoadingMaxRetry: 8,
-        fragLoadingRetryDelay: 1000,
-        fragLoadingMaxRetryTimeout: 20000,
-        nudgeMaxRetry: 10,
-        nudgeOffset: 0.2,
-      });
-
-      hlsRef.current = hls;
-      let hlsFailed = false;
-
-      // If HLS doesn't get manifest in 8s, try TS
-      const hlsTimeout = setTimeout(() => {
-        if (!hlsFailed && loading) {
-          console.log('⚠️ HLS timeout, switching to mpegts.js');
-          hlsFailed = true;
-          hls.destroy();
-          hlsRef.current = null;
-          // Convert restream URL to .ts endpoint
-          const tsUrl = src.replace(/\.m3u8(\?|$)/i, '.ts$1');
-          initMpegTs(tsUrl);
-        }
-      }, 8000);
-
-      hls.on(Hls.Events.MEDIA_ATTACHED, () => {
-        hls.loadSource(src);
-      });
-
-      hls.on(Hls.Events.MANIFEST_PARSED, (_event, data) => {
-        clearTimeout(hlsTimeout);
-        if (hlsFailed) return;
-        
-        setLoading(false);
-        retryCountRef.current = 0;
-
-        const levels: QualityLevel[] = data.levels.map((level, idx) => ({
-          index: idx,
-          height: level.height || 0,
-          bitrate: level.bitrate || 0,
-          label: level.height
-            ? `${level.height}p`
-            : `${formatBitrate(level.bitrate)}`,
-        }));
-
-        levels.sort((a, b) => a.bitrate - b.bitrate);
-        setQualities(levels);
-
-        video.muted = muted;
-        video.play().catch(() => {
-          video.muted = true;
-          video.play().catch(() => {});
-        });
-      });
-
-      hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => {
-        const level = hls.levels[data.level];
-        if (level) {
-          const label = level.height ? `${level.height}p` : formatBitrate(level.bitrate);
-          setAutoLabel(label);
-        }
-      });
-
-      hls.on(Hls.Events.FRAG_LOADED, (_event, data) => {
-        retryCountRef.current = 0;
-        if (data.frag.stats) {
-          const stats = data.frag.stats;
-          const duration = (stats.loading.end - stats.loading.start) / 1000;
-          if (duration > 0 && stats.total > 0) {
-            const bps = (stats.total * 8) / duration;
-            setCurrentBandwidth(bps);
-          }
-        }
-      });
-
-      hls.on(Hls.Events.ERROR, (_event, data) => {
-        console.warn('HLS error:', data.type, data.details, data.fatal);
-
-        if (data.fatal) {
-          clearTimeout(hlsTimeout);
-          
-          // On manifest/network fatal errors → fallback to mpegts.js
-          if (data.type === Hls.ErrorTypes.NETWORK_ERROR && !hlsFailed) {
-            console.log('🔄 HLS network error, fallback to mpegts.js');
-            hlsFailed = true;
-            hls.destroy();
-            hlsRef.current = null;
-            // For restream URLs, just use the same URL — bridge will return TS
-            initMpegTs(src);
-            return;
-          }
-          
-          if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-            console.log('HLS: recovering from media error');
-            hls.recoverMediaError();
-            return;
-          }
-          
-          if (!hlsFailed) {
-            hlsFailed = true;
-            hls.destroy();
-            hlsRef.current = null;
-            initMpegTs(src);
-          }
-        }
-      });
-
-      hls.attachMedia(video);
-    }
-    // TS stream directly
-    else if (streamType === 'ts') {
+    if (streamType === 'ts') {
+      // Raw TS → mpegts.js directly (like VLC handles TS natively)
+      if (container) {
+        const vid = document.createElement('video');
+        vid.className = 'w-full h-full object-contain';
+        vid.setAttribute('playsinline', '');
+        vid.controls = true;
+        container.appendChild(vid);
+        videoElementRef.current = vid;
+      }
       initMpegTs(src);
-    }
-    // Native HLS (Safari/iOS)
-    else if (streamType === 'hls' && video.canPlayType('application/vnd.apple.mpegurl')) {
-      setPlayerType('native');
-      video.src = src;
-      video.addEventListener('loadedmetadata', () => {
-        setLoading(false);
-        video.muted = muted;
-        video.play().catch(() => {
-          video.muted = true;
-          video.play().catch(() => {});
-        });
-      }, { once: true });
-    }
-    // Direct URL — try native first, then mpegts
-    else {
-      setPlayerType('native');
-      video.src = src;
-      video.muted = muted;
-      
-      const directTimeout = setTimeout(() => {
-        if (loading) {
-          console.log('⚠️ Direct playback timeout, trying mpegts.js');
-          video.src = '';
-          initMpegTs(src);
-        }
-      }, 10000);
-      
-      video.addEventListener('loadeddata', () => {
-        clearTimeout(directTimeout);
-        setLoading(false);
-        video.play().catch(() => {
-          video.muted = true;
-          video.play().catch(() => {});
-        });
-      }, { once: true });
-      
-      video.addEventListener('error', () => {
-        clearTimeout(directTimeout);
-        console.log('⚠️ Direct playback failed, trying mpegts.js');
-        initMpegTs(src);
-      }, { once: true });
-    }
-  }, [src, cleanup, onError, muted, initMpegTs]);
-
-  const setQuality = useCallback((levelIndex: number) => {
-    const hls = hlsRef.current;
-    if (!hls) return;
-
-    if (levelIndex === -1) {
-      hls.currentLevel = -1;
-      hls.nextLevel = -1;
-      setCurrentQuality(-1);
     } else {
-      hls.currentLevel = levelIndex;
-      hls.nextLevel = levelIndex;
-      setCurrentQuality(levelIndex);
+      // HLS or unknown → video.js first (with mpegts fallback)
+      initVideoJs(src, true);
     }
-    setShowQualityMenu(false);
-  }, []);
+  }, [src, cleanup, initMpegTs, initVideoJs]);
 
+  // Initialize on src change
   useEffect(() => {
     initStream();
     return () => { cleanup(); };
   }, [src]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Mute sync
   useEffect(() => {
-    if (videoRef.current) videoRef.current.muted = muted;
+    if (playerRef.current) {
+      try { playerRef.current.muted(muted); } catch (e) { /* */ }
+    }
+    if (videoElementRef.current) {
+      videoElementRef.current.muted = muted;
+    }
   }, [muted]);
-
-  // Stall detection — restart after 20s of no playback
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-
-    let stallTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const onStall = () => {
-      if (stallTimer) clearTimeout(stallTimer);
-      stallTimer = setTimeout(() => {
-        console.warn('Stall detected (20s), restarting stream');
-        if (mpegtsRef.current) {
-          mpegtsRef.current.unload();
-          mpegtsRef.current.load();
-          video.play().catch(() => {});
-        } else if (hlsRef.current) {
-          if (hlsRef.current.currentLevel > 0) {
-            hlsRef.current.currentLevel = 0;
-          }
-          hlsRef.current.startLoad();
-        } else {
-          retryCountRef.current = 0;
-          initStream();
-        }
-      }, 20000);
-    };
-
-    const onPlaying = () => {
-      if (stallTimer) {
-        clearTimeout(stallTimer);
-        stallTimer = null;
-      }
-    };
-
-    video.addEventListener('stalled', onStall);
-    video.addEventListener('waiting', onStall);
-    video.addEventListener('playing', onPlaying);
-
-    return () => {
-      video.removeEventListener('stalled', onStall);
-      video.removeEventListener('waiting', onStall);
-      video.removeEventListener('playing', onPlaying);
-      if (stallTimer) clearTimeout(stallTimer);
-    };
-  }, [initStream]);
-
-  // Loading timeout — show error after 30s
-  useEffect(() => {
-    if (loadingTime >= 30 && loading) {
-      setError('El canal tardó demasiado en responder. Puede estar caído o tu conexión es muy lenta.');
-      setLoading(false);
-    }
-  }, [loadingTime, loading]);
-
-  // Close quality menu on outside click
-  useEffect(() => {
-    const handleClick = (e: MouseEvent) => {
-      if (qualityMenuRef.current && !qualityMenuRef.current.contains(e.target as Node)) {
-        setShowQualityMenu(false);
-      }
-    };
-    if (showQualityMenu) {
-      document.addEventListener('mousedown', handleClick);
-      return () => document.removeEventListener('mousedown', handleClick);
-    }
-  }, [showQualityMenu]);
 
   // YouTube embed
   const youtubeId = getYouTubeId(src);
@@ -470,97 +424,43 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
 
   return (
     <div className="relative w-full h-full bg-black group">
-      <video
-        ref={videoRef}
-        className="w-full h-full object-contain"
-        playsInline
-        controls
-        muted={muted}
-        onCanPlay={() => setLoading(false)}
-        onWaiting={() => setLoading(true)}
-        onPlaying={() => { setLoading(false); setError(null); }}
-        onError={() => {
-          if (!hlsRef.current && !mpegtsRef.current) {
-            setError('No se pudo reproducir este canal.');
-            setLoading(false);
-          }
-        }}
+      {/* Video.js / mpegts container */}
+      <div
+        ref={videoContainerRef}
+        className="w-full h-full [&_.video-js]:!w-full [&_.video-js]:!h-full [&_.video-js]:!bg-black [&_.vjs-tech]:!object-contain"
+        data-vjs-player
       />
 
-      {/* Quality selector (only for HLS) */}
-      {qualities.length > 1 && playerType === 'hls' && (
-        <div ref={qualityMenuRef} className="absolute bottom-16 right-3 z-30">
-          {showQualityMenu && (
-            <div className="mb-2 bg-black/90 backdrop-blur-sm rounded-lg border border-white/10 overflow-hidden min-w-[180px]">
-              <div className="px-3 py-2 border-b border-white/10 flex items-center gap-2">
-                <Wifi className="w-3 h-3 text-primary" />
-                <span className="text-xs text-white/60">{formatBitrate(currentBandwidth)}</span>
-              </div>
-
-              <button
-                onClick={() => setQuality(-1)}
-                className={`w-full px-3 py-2 text-left text-sm flex items-center justify-between hover:bg-white/10 transition-colors ${
-                  currentQuality === -1 ? 'text-primary font-semibold' : 'text-white'
-                }`}
-              >
-                <span>Auto ({autoLabel})</span>
-                {currentQuality === -1 && <span className="text-xs text-primary">●</span>}
-              </button>
-
-              {[...qualities].reverse().map((q) => (
-                <button
-                  key={q.index}
-                  onClick={() => setQuality(q.index)}
-                  className={`w-full px-3 py-2 text-left text-sm flex items-center justify-between hover:bg-white/10 transition-colors ${
-                    currentQuality === q.index ? 'text-primary font-semibold' : 'text-white'
-                  }`}
-                >
-                  <span>{q.label}</span>
-                  <span className="text-xs text-white/40">{formatBitrate(q.bitrate)}</span>
-                </button>
-              ))}
-            </div>
-          )}
-
-          <button
-            onClick={() => setShowQualityMenu(!showQualityMenu)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-black/70 hover:bg-black/90 rounded-md text-white text-xs font-medium transition-colors opacity-0 group-hover:opacity-100"
-          >
-            <Settings className="w-3.5 h-3.5" />
-            <span>
-              {currentQuality === -1 ? `Auto (${autoLabel})` : qualities.find(q => q.index === currentQuality)?.label || ''}
-            </span>
-            {currentQuality !== -1 && (
-              <span className="text-[10px] text-primary font-bold">FIJO</span>
-            )}
-          </button>
-        </div>
-      )}
-
-      {/* Player type indicator */}
-      {playerType && !loading && !error && (
-        <div className="absolute top-3 left-3 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
+      {/* Engine indicator */}
+      {engineType && !loading && !error && (
+        <div className="absolute top-3 left-3 z-10 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
           <span className="px-2 py-1 bg-black/70 rounded text-[10px] text-white/50 font-mono uppercase">
-            {playerType === 'mpegts' ? '📡 MPEG-TS' : playerType === 'hls' ? '🎬 HLS' : '📹 Nativo'}
+            {engineType === 'mpegts' ? '📡 MPEG-TS' : '🎬 VJS-HLS'}
+            {currentBandwidth > 0 && (
+              <span className="ml-2">
+                <Wifi className="w-2.5 h-2.5 inline mr-0.5" />
+                {formatBitrate(currentBandwidth)}
+              </span>
+            )}
           </span>
         </div>
       )}
 
-      {/* Loading overlay with diagnostics */}
+      {/* Loading overlay */}
       {loading && !error && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/80 pointer-events-none">
+        <div className="absolute inset-0 flex items-center justify-center bg-black/80 pointer-events-none z-20">
           <div className="flex flex-col items-center gap-3">
             <div className="w-10 h-10 border-2 border-primary border-t-transparent rounded-full animate-spin" />
             {loadingTime >= 3 && (
               <div className="text-center">
                 <p className="text-white/60 text-xs">Conectando... {loadingTime}s</p>
-                {loadingTime >= 5 && playerType === 'hls' && (
-                  <p className="text-white/40 text-[10px] mt-1">Probando formato HLS...</p>
+                {loadingTime >= 5 && engineType === 'videojs' && (
+                  <p className="text-white/40 text-[10px] mt-1">Motor video.js (HLS)...</p>
                 )}
-                {loadingTime >= 8 && (
-                  <p className="text-white/40 text-[10px] mt-1">Cambiando a MPEG-TS...</p>
+                {loadingTime >= 10 && (
+                  <p className="text-white/40 text-[10px] mt-1">Probando MPEG-TS...</p>
                 )}
-                {loadingTime >= 15 && (
+                {loadingTime >= 20 && (
                   <p className="text-white/40 text-[10px] mt-1">La conexión está muy lenta</p>
                 )}
               </div>
@@ -571,7 +471,7 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
 
       {/* Error overlay */}
       {error && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/80">
+        <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-20">
           <div className="text-center max-w-sm px-4">
             <AlertTriangle className="w-8 h-8 text-destructive mx-auto mb-3" />
             <p className="text-destructive font-semibold mb-2">Error de reproducción</p>
