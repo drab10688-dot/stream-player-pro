@@ -1575,10 +1575,44 @@ function startHLSProxy(channelId, sourceUrl) {
     sourceUrl,
     ready: true,
     cachedSegments: new Set(), // Track cached segment URLs for this channel
+    pollTimer: null, // Timer for keep-alive polling
   };
   activeTranscoders.set(channelId, entry);
   console.log(`📡 [${channelId}] Proxy HLS iniciado: ${sourceUrl}`);
   return entry;
+}
+
+// Active polling for keep-alive HLS proxy channels
+// Periodically fetches manifest + new segments to keep cache warm
+function startHLSKeepAlivePolling(channelId, sourceUrl) {
+  const entry = activeTranscoders.get(channelId);
+  if (!entry || entry.type !== 'hls-proxy' || entry.pollTimer) return;
+
+  const poll = async () => {
+    try {
+      // Fetch and cache the manifest
+      const manifest = await getCachedM3U8(channelId, sourceUrl);
+      
+      // Extract segment URLs from manifest and pre-fetch them
+      const segmentMatches = manifest.match(/\/api\/hls-segment\/[^\s]+/g);
+      if (segmentMatches) {
+        for (const segPath of segmentMatches.slice(-6)) { // Pre-fetch last 6 segments
+          const urlMatch = segPath.match(/url=([^&\s]+)/);
+          if (urlMatch) {
+            const segUrl = decodeURIComponent(urlMatch[1]);
+            try { await fetchSegment(segUrl); } catch {}
+          }
+        }
+      }
+    } catch (err) {
+      console.error(`⚠️ [${channelId}] Keep-alive HLS poll error:`, err.message);
+    }
+  };
+
+  // Poll immediately, then every 4 seconds (matching typical HLS segment duration)
+  poll();
+  entry.pollTimer = setInterval(poll, 4000);
+  console.log(`💚 [${channelId}] Keep-alive HLS polling activo (cada 4s)`);
 }
 
 // Obtener manifiesto m3u8 con caché y reescritura de URLs
