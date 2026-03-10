@@ -247,10 +247,13 @@ app.get('/api/restream/:streamId', (req, res) => {
         /^(?!#)(https?:\/\/[^\s]+|[^\s]+\.ts[^\s]*|[^\s]+\.m3u8[^\s]*)/gm,
         (match) => {
           if (match.startsWith('http')) {
-            // URL absoluta → proxear
             return `/api/stream-proxy?url=${encodeURIComponent(match)}`;
           }
-          // URL relativa → construir absoluta y proxear
+          // Path absoluto (empieza con /) → usar host+port directamente
+          if (match.startsWith('/')) {
+            return `/api/stream-proxy?url=${encodeURIComponent(`${XTREAM_HOST}:${XTREAM_PORT}${match}`)}`;
+          }
+          // Path relativo → construir desde base
           const base = `${XTREAM_HOST}:${XTREAM_PORT}/live/${creds.username}/${creds.password}/`;
           return `/api/stream-proxy?url=${encodeURIComponent(base + match)}`;
         }
@@ -296,7 +299,9 @@ app.get('/api/stream-proxy', (req, res) => {
             if (match.startsWith('http')) {
               return `/api/stream-proxy?url=${encodeURIComponent(match)}`;
             }
-            // Derivar base URL del targetUrl
+            if (match.startsWith('/')) {
+              return `/api/stream-proxy?url=${encodeURIComponent(`${XTREAM_HOST}:${XTREAM_PORT}${match}`)}`;
+            }
             const baseUrl = targetUrl.substring(0, targetUrl.lastIndexOf('/') + 1);
             return `/api/stream-proxy?url=${encodeURIComponent(baseUrl + match)}`;
           }
