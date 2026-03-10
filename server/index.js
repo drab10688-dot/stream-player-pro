@@ -1614,6 +1614,7 @@ app.get('/api/hls-segment/:channelId', async (req, res) => {
     const segmentUrl = req.query.url;
     if (!segmentUrl) return res.status(400).send('Missing url');
     const data = await fetchSegment(segmentUrl);
+    trackBandwidth(req.params.channelId, data.length);
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Content-Type', 'video/mp2t');
     res.setHeader('Cache-Control', 'public, max-age=10');
