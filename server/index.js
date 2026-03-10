@@ -1113,6 +1113,7 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
   ];
 
   // Add transcoded outputs (0-3: micro, low, med, high)
+  // Encoder params (-g, -keyint_min, -sc_threshold) are per-stream to avoid conflict with copy output
   ABR_PROFILES.forEach((profile, i) => {
     ffmpegArgs.push(
       '-map', '0:v:0', '-map', '0:a:0?',
@@ -1120,21 +1121,22 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
       `-b:v:${i}`, profile.vBitrate,
       `-maxrate:v:${i}`, profile.maxrate,
       `-bufsize:v:${i}`, profile.bufsize,
-      `-vf:${i}`, `scale=${profile.width}:${profile.height}`,
+      `-g:v:${i}`, '48', `-keyint_min:v:${i}`, '48',
+      `-filter:v:${i}`, `scale=${profile.width}:${profile.height}`,
       `-c:a:${i}`, 'aac', `-b:a:${i}`, profile.aBitrate, `-ac:${i}`, String(profile.audioChannels),
     );
   });
 
-  // Output 4: COPY (original passthrough — 0% CPU)
+  // Output 4: COPY (original passthrough — 0% CPU, NO filters, NO encoder params)
   ffmpegArgs.push(
     '-map', '0:v:0', '-map', '0:a:0?',
     '-c:v:4', 'copy',
-    '-c:a:4', 'aac', '-b:a:4', '128k',
+    '-c:a:4', 'copy',
   );
 
   // Common settings
   ffmpegArgs.push(
-    '-g', '48', '-keyint_min', '48', '-sc_threshold', '0',
+    '-sc_threshold', '0',
     '-f', 'hls',
     '-hls_time', String(cacheConfig.hls_time),
     '-hls_list_size', String(cacheConfig.hls_list_size),
