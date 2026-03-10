@@ -597,7 +597,7 @@ app.get('/api/stream-proxy', (req, res) => {
     res.writeHead(proxyRes.statusCode, {
       'Content-Type': contentType,
       'Cache-Control': 'no-cache',
-      'Access-Control-Allow-Origin', '*',
+      'Access-Control-Allow-Origin': '*',
       'Connection': 'keep-alive',
     });
     proxyRes.pipe(res);
