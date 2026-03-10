@@ -1744,10 +1744,14 @@ const fetchSegment = (segmentUrl) => {
       res.on('end', () => {
       const buffer = Buffer.concat(chunks);
                 segmentCache.set(segmentUrl, { data: buffer, timestamp: Date.now() });
-                // Track segment in the channel's proxy entry
-                activeTranscoders.forEach((entry) => {
-                  if (entry.type === 'hls-proxy' && entry.cachedSegments && segmentUrl.includes(entry.sourceUrl.substring(0, entry.sourceUrl.lastIndexOf('/')))) {
-                    entry.cachedSegments.add(segmentUrl);
+                // Track input bandwidth for ALL proxy channels that match this segment's origin
+                activeTranscoders.forEach((entry, chId) => {
+                  if (entry.type === 'hls-proxy') {
+                    const baseOrigin = entry.sourceUrl.substring(0, entry.sourceUrl.lastIndexOf('/'));
+                    if (segmentUrl.startsWith(baseOrigin) || segmentUrl.includes(baseOrigin.replace(/https?:\/\//, ''))) {
+                      trackInputBandwidth(chId, buffer.length);
+                      if (entry.cachedSegments) entry.cachedSegments.add(segmentUrl);
+                    }
                   }
                 });
                 pendingSegments.delete(segmentUrl);
