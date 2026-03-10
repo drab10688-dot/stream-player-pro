@@ -1185,7 +1185,7 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
 
     if (!entry.ready && (msg.includes('Opening') || msg.includes('muxing'))) {
       entry.ready = true;
-      console.log(`✅ [${channelId}] FFmpeg adaptativo listo (480p/720p/original)`);
+      console.log(`✅ [${channelId}] FFmpeg adaptativo listo (360p/480p/720p/original)`);
     }
   });
 
