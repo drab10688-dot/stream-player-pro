@@ -496,14 +496,6 @@ chmod 777 "$HLS_DIR" "$HLS_CACHE_DIR"
 log_ok "Almacenamiento HLS en disco SSD: $HLS_DIR"
 log_info "Capacidad estimada: ~$((DISK_AVAIL_GB * 10 / 14)) canales keep-alive (30min caché, ABR 5 calidades)"
 
-# Instalar FFmpeg si no está
-if ! command -v ffmpeg &> /dev/null; then
-  log_info "Instalando FFmpeg..."
-  apt install -y -qq ffmpeg > /dev/null 2>&1
-fi
-FFMPEG_VERSION=$(ffmpeg -version 2>/dev/null | head -1 | awk '{print $3}')
-log_ok "FFmpeg ${FFMPEG_VERSION} listo"
-
 log_ok "Almacenamiento configurado - streams HLS en SSD"
 
 # =============================================
