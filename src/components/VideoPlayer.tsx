@@ -434,17 +434,17 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError, onQualityCha
     }
   }, [src, cleanup, initMpegTs, initVideoJs]);
 
-  // Fetch server-side quality options as fallback
-  useEffect(() => {
-    if (!src || !src.includes('/api/restream/')) return;
-    const streamIdMatch = src.match(/\/api\/restream\/(\d+)/);
-    if (!streamIdMatch) return;
+  const isBridgeStream = src?.includes('/api/restream/');
+  const bridgeStreamId = isBridgeStream ? src.match(/\/api\/restream\/([^/?]+)/)?.[1] : null;
 
-    const streamId = streamIdMatch[1];
-    fetch(`/api/restream/${streamId}/qualities`)
+  // Fetch server-side quality options for bridge streams
+  useEffect(() => {
+    if (!bridgeStreamId) return;
+
+    fetch(`/api/restream/${bridgeStreamId}/qualities`)
       .then(r => r.ok ? r.json() : [])
       .then((serverQualities: any[]) => {
-        if (serverQualities.length > 1 && qualityLevels.length <= 1) {
+        if (serverQualities.length > 0) {
           setQualityLevels(serverQualities.map((q: any) => ({
             id: q.id,
             label: q.label,
@@ -454,8 +454,16 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError, onQualityCha
           })));
         }
       })
-      .catch(() => { /* ignore */ });
-  }, [src]); // eslint-disable-line react-hooks/exhaustive-deps
+      .catch(() => {
+        // Fallback: show default qualities even if fetch fails
+        setQualityLevels([
+          { id: 'original', label: 'Original', height: 0, bandwidth: 5000000, enabled: true },
+          { id: '720', label: '720p', height: 720, bandwidth: 2500000, enabled: true },
+          { id: '480', label: '480p', height: 480, bandwidth: 1200000, enabled: true },
+          { id: '360', label: '360p', height: 360, bandwidth: 600000, enabled: true },
+        ]);
+      });
+  }, [bridgeStreamId]);
 
   // Quality selection handler
   const selectQuality = useCallback((qualityId: string) => {
