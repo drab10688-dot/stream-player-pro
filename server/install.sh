@@ -510,8 +510,11 @@ pm2 delete omnisync-api > /dev/null 2>&1 || true
 # Liberar puerto API por si acaso
 kill_port $API_PORT 2>/dev/null
 
-# Crear directorio
+# Crear directorios
 mkdir -p /opt/streambox/server
+mkdir -p /opt/streambox/server/uploads/logos
+mkdir -p /opt/streambox/server/uploads/vod
+mkdir -p /opt/streambox/server/uploads/vod-posters
 cp -r "${SCRIPT_DIR}"/* /opt/streambox/server/
 
 # Configurar index.js con los valores correctos
@@ -583,7 +586,7 @@ server {
         try_files \$uri \$uri/ /index.html;
     }
 
-    # API proxy
+    # API proxy (todas las rutas /api/)
     location /api/ {
         proxy_pass http://127.0.0.1:${API_PORT};
         proxy_http_version 1.1;
@@ -595,13 +598,64 @@ server {
         proxy_cache_bypass \$http_upgrade;
         proxy_set_header X-Real-IP \$remote_addr;
 
-        # Timeout para restreaming
-        proxy_connect_timeout 300;
-        proxy_send_timeout 300;
-        proxy_read_timeout 300;
+        # Timeout para restreaming y uploads VOD grandes
+        proxy_connect_timeout 1800;
+        proxy_send_timeout 1800;
+        proxy_read_timeout 1800;
 
         # Sin buffering para streams
         proxy_buffering off;
+    }
+
+    # =============================================
+    # Xtream Codes API — Compatible con TiviMate, Smarters, etc.
+    # =============================================
+    location = /player_api.php {
+        proxy_pass http://127.0.0.1:${API_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Host \$host;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_buffering off;
+    }
+
+    location = /get.php {
+        proxy_pass http://127.0.0.1:${API_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Host \$host;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_buffering off;
+    }
+
+    location = /xmltv.php {
+        proxy_pass http://127.0.0.1:${API_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Host \$host;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_buffering off;
+    }
+
+    location /live/ {
+        proxy_pass http://127.0.0.1:${API_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Host \$host;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_buffering off;
+        proxy_read_timeout 300;
+    }
+
+    # Archivos estáticos: logos y posters VOD
+    location /uploads/ {
+        proxy_pass http://127.0.0.1:${API_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_cache_bypass \$http_upgrade;
     }
 
     # Seguridad: ocultar headers del origen
@@ -881,9 +935,13 @@ echo ""
 if [ "$WEB_PORT" = "80" ]; then
   echo -e "${CYAN}🌐 Panel Admin:    http://${SERVER_IP}/admin${NC}"
   echo -e "${CYAN}📺 App Clientes:   http://${SERVER_IP}/login${NC}"
+  echo -e "${CYAN}📡 Xtream API:     http://${SERVER_IP}/player_api.php${NC}"
+  echo -e "${CYAN}📋 M3U Playlist:   http://${SERVER_IP}/get.php?username=X&password=X&type=m3u_plus${NC}"
 else
   echo -e "${CYAN}🌐 Panel Admin:    http://${SERVER_IP}:${WEB_PORT}/admin${NC}"
   echo -e "${CYAN}📺 App Clientes:   http://${SERVER_IP}:${WEB_PORT}/login${NC}"
+  echo -e "${CYAN}📡 Xtream API:     http://${SERVER_IP}:${WEB_PORT}/player_api.php${NC}"
+  echo -e "${CYAN}📋 M3U Playlist:   http://${SERVER_IP}:${WEB_PORT}/get.php?username=X&password=X&type=m3u_plus${NC}"
 fi
 echo -e "${CYAN}🔑 Admin Email:    ${ADMIN_EMAIL}${NC}"
 echo -e "${CYAN}⚙️  API Puerto:     ${API_PORT}${NC}"
@@ -898,7 +956,14 @@ echo ""
 echo -e "${YELLOW}📁 Archivos instalados:${NC}"
 echo "   /var/www/streambox/            → Frontend"
 echo "   /opt/streambox/server/         → API Node.js"
+echo "   /opt/streambox/server/uploads/ → Logos, VOD, Posters"
 echo "   /etc/nginx/sites-available/    → Nginx config"
+echo ""
+echo -e "${YELLOW}📡 Xtream Codes (TiviMate, Smarters, etc.):${NC}"
+echo "   Host:     ${SERVER_IP}"
+echo "   Puerto:   ${WEB_PORT}"
+echo "   Usuario:  (username del cliente)"
+echo "   Password: (password del cliente)"
 echo ""
 echo -e "${YELLOW}🔧 Si hay problemas:${NC}"
 echo "   pm2 logs streambox-api --lines 50  → Ver errores"
