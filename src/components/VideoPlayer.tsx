@@ -139,6 +139,34 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
     video.addEventListener('playing', onPlaying, { once: true });
     video.addEventListener('timeupdate', onPlaying, { once: true });
 
+    // ── Stall detection: if currentTime doesn't advance for 6s, recover ──
+    if (stallTimer.current) clearInterval(stallTimer.current);
+    stallCountRef.current = 0;
+    lastTimeRef.current = 0;
+    stallTimer.current = setInterval(() => {
+      if (!video || video.paused || video.ended) return;
+      const ct = video.currentTime;
+      if (ct > 0 && ct === lastTimeRef.current) {
+        stallCountRef.current++;
+        if (stallCountRef.current >= 3) {
+          // Stalled for ~6 seconds
+          console.warn(`[Player] Stall detectado (${stallCountRef.current * 2}s), recuperando...`);
+          stallCountRef.current = 0;
+          if (hls) {
+            try {
+              hls.recoverMediaError();
+            } catch {
+              // If recovery fails, reload source
+              hls.loadSource(url);
+            }
+          }
+        }
+      } else {
+        stallCountRef.current = 0;
+      }
+      lastTimeRef.current = ct;
+    }, 2000);
+
   }, [muted, destroy, channelId, onError, isBridge]);
 
   // ── Fetch bridge qualities ──
