@@ -286,6 +286,31 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
       setLoading(false);
       setError(null);
       retryCountRef.current = 0;
+
+      // Poll quality levels from VHS
+      if (qualityPollRef.current) clearInterval(qualityPollRef.current);
+      const pollQualities = () => {
+        try {
+          const tech = player.tech({ IWillNotUseThisInPlugins: true }) as any;
+          const reps = tech?.vhs?.representations?.() || [];
+          if (reps.length > 1) {
+            const levels: QualityLevel[] = reps.map((r: any, i: number) => ({
+              id: r.id || String(i),
+              label: r.height ? `${r.height}p` : `${Math.round((r.bandwidth || 0) / 1000)}k`,
+              height: r.height || 0,
+              bandwidth: r.bandwidth || 0,
+              enabled: r.enabled?.() !== false,
+            }));
+            levels.sort((a, b) => b.height - a.height || b.bandwidth - a.bandwidth);
+            setQualityLevels(levels);
+            if (qualityPollRef.current) { clearInterval(qualityPollRef.current); qualityPollRef.current = undefined; }
+          }
+        } catch (e) { /* ignore */ }
+      };
+      pollQualities();
+      qualityPollRef.current = setInterval(pollQualities, 2000);
+      // Stop polling after 15s max
+      setTimeout(() => { if (qualityPollRef.current) { clearInterval(qualityPollRef.current); qualityPollRef.current = undefined; } }, 15000);
     });
 
     player.on('waiting', () => {
