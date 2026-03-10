@@ -1792,36 +1792,50 @@ const getCachedM3U8 = async (channelId, targetUrl) => {
   console.log(`📋 [${channelId}] Manifest type: ${isMaster ? 'MASTER' : 'MEDIA'} (${body.split('\n').length} lines)`);
 
   if (isMaster) {
-    // Extract ALL variant URLs sorted by bandwidth (pick highest)
+    // Extract ALL variants, prefer H.264 (avc1) over H.265 (hev1/hvc1)
     const lines = body.split('\n');
-    let bestVariant = null;
-    let bestBandwidth = -1;
+    const variants = [];
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
       if (line.startsWith('#EXT-X-STREAM-INF')) {
         const bwMatch = line.match(/BANDWIDTH=(\d+)/);
         const bw = bwMatch ? parseInt(bwMatch[1]) : 0;
-        // Next non-empty, non-comment line is the URL
+        const codecsMatch = line.match(/CODECS="([^"]+)"/);
+        const codecs = codecsMatch ? codecsMatch[1].toLowerCase() : '';
+        const isH264 = !codecs || codecs.includes('avc1');
+        const isHEVC = codecs.includes('hev1') || codecs.includes('hvc1') || codecs.includes('hevc');
         for (let j = i + 1; j < lines.length; j++) {
           const urlLine = lines[j].trim();
           if (urlLine && !urlLine.startsWith('#')) {
-            if (bw > bestBandwidth) {
-              bestBandwidth = bw;
-              bestVariant = urlLine.startsWith('http') ? urlLine : baseUrl + urlLine;
-            }
+            variants.push({
+              url: urlLine.startsWith('http') ? urlLine : baseUrl + urlLine,
+              bandwidth: bw,
+              isH264,
+              isHEVC,
+              codecs,
+            });
             break;
           }
         }
       }
     }
 
-    if (bestVariant) {
-      console.log(`🔗 [${channelId}] Aplanando master → variante ${bestBandwidth}bps: ${bestVariant.substring(0, 80)}...`);
-      const sub = await fetchM3U8Raw(bestVariant);
+    // Prefer: H.264 with highest bandwidth, then unknown codec, then HEVC as last resort
+    variants.sort((a, b) => {
+      if (a.isH264 && !b.isH264) return -1;
+      if (!a.isH264 && b.isH264) return 1;
+      if (a.isHEVC && !b.isHEVC) return 1;
+      if (!a.isHEVC && b.isHEVC) return -1;
+      return b.bandwidth - a.bandwidth;
+    });
+
+    const best = variants[0];
+    if (best) {
+      console.log(`🔗 [${channelId}] Aplanando master → ${best.isH264 ? 'H.264' : best.isHEVC ? 'HEVC' : 'unknown'} ${best.bandwidth}bps ${best.codecs ? `(${best.codecs})` : ''}: ${best.url.substring(0, 80)}...`);
+      const sub = await fetchM3U8Raw(best.url);
       if (sub.statusCode >= 400) {
         console.error(`❌ [${channelId}] Sub-manifest returned ${sub.statusCode}, falling back to master rewrite`);
       } else {
-        // Use the sub-manifest's body and baseUrl
         body = sub.body;
         baseUrl = sub.baseUrl;
       }
