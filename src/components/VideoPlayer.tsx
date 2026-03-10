@@ -254,27 +254,26 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
           enableWorker: true,
           lowLatencyMode: true,
           // === DirecTV Go style ABR ===
-          // Start at minimum quality, upgrade only when bandwidth is confirmed
           abrEwmaDefaultEstimate: 200000,       // Assume 200kbps — forces 240p first
-          abrEwmaFastLive: 1.5,                  // Very fast reaction to bandwidth drops
-          abrEwmaSlowLive: 4,                    // Short averaging window
+          abrEwmaFastLive: 1.5,
+          abrEwmaSlowLive: 4,
           abrEwmaFastVoD: 1.5,
           abrEwmaSlowVoD: 4,
-          abrBandWidthFactor: 0.65,              // Only upgrade at 65% of measured bandwidth
-          abrBandWidthUpFactor: 0.45,            // Very conservative upgrades
-          // === Instant playback: tiny initial buffer ===
-          maxBufferLength: 8,                    // 8s buffer (4 segments of 2s)
-          maxMaxBufferLength: 20,                // 20s max buffer
-          maxBufferSize: 10 * 1000 * 1000,       // 10MB — minimal memory
-          maxBufferHole: 0.2,                    // Tight hole tolerance
-          backBufferLength: 4,                   // 4s back-buffer only
-          // === Live sync: stay very close to live edge ===
+          abrBandWidthFactor: 0.65,
+          abrBandWidthUpFactor: 0.45,
+          // === INSTANT PLAYBACK: minimal initial buffer ===
+          maxBufferLength: 4,                    // 4s buffer (2 segments) — play ASAP
+          maxMaxBufferLength: 15,                // 15s max buffer
+          maxBufferSize: 8 * 1000 * 1000,        // 8MB
+          maxBufferHole: 0.5,                    // Tolerate bigger holes for faster start
+          backBufferLength: 2,                   // 2s back-buffer only
+          // === Live sync: minimal latency ===
           liveSyncDurationCount: 1,              // 1 segment behind live (2s)
-          liveMaxLatencyDurationCount: 3,        // Max 3 segments (6s)
+          liveMaxLatencyDurationCount: 3,
           liveDurationInfinity: true,
-          // === Fast retries for 2s segments ===
+          // === Fast retries ===
           fragLoadingMaxRetry: 20,
-          fragLoadingRetryDelay: 500,            // 500ms retry (half a segment)
+          fragLoadingRetryDelay: 500,
           fragLoadingMaxRetryTimeout: 10000,
           manifestLoadingMaxRetry: 15,
           manifestLoadingRetryDelay: 500,
@@ -283,11 +282,10 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
           levelLoadingRetryDelay: 500,
           levelLoadingMaxRetryTimeout: 10000,
           startLevel: 0,                         // Always start at lowest (240p)
-          startFragPrefetch: true,               // Pre-fetch first fragment immediately
+          startFragPrefetch: true,
           testBandwidth: true,
           progressive: true,
-          // === 2s segments: tighter tolerance ===
-          maxFragLookUpTolerance: 0.1,
+          maxFragLookUpTolerance: 0.2,
         });
         hlsRef.current = hls;
         hls.loadSource(src);
