@@ -1803,16 +1803,21 @@ function startHLSKeepAlivePolling(channelId, sourceUrl) {
       }
 
       // Pre-fetch last 4 segments to keep cache warm
-      for (const segUrl of segmentUrls.slice(-4)) {
-        if (seenSegments.has(segUrl)) continue;
+      const newSegments = segmentUrls.slice(-4).filter(u => !seenSegments.has(u));
+      if (newSegments.length > 0) {
+        console.log(`📥 [${channelId}] Polling: ${segmentUrls.length} segs en manifest, ${newSegments.length} nuevos`);
+      }
+      for (const segUrl of newSegments) {
         try {
           const segData = await fetchSegment(segUrl);
           seenSegments.add(segUrl);
-          // Always track input bandwidth for THIS channel when we see a new segment
           if (segData && segData.length) {
             trackInputBandwidth(channelId, segData.length);
+            console.log(`📊 [${channelId}] Segment ${segData.length} bytes → trackInputBandwidth`);
           }
-        } catch {}
+        } catch (segErr) {
+          console.warn(`⚠️ [${channelId}] Segment fetch failed: ${segErr.message}`);
+        }
       }
 
       // Keep seenSegments from growing forever
