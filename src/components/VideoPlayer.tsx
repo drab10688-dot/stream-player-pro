@@ -19,6 +19,7 @@ interface VideoPlayerProps {
   channelId?: string;
   muted?: boolean;
   onError?: (message: string) => void;
+  onQualityChange?: (quality: string) => void;
 }
 
 const getYouTubeId = (url: string): string | null => {
