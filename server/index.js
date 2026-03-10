@@ -1920,6 +1920,9 @@ app.get('/api/streams/active', authAdmin, async (req, res) => {
       const channelName = rows.length > 0 ? rows[0].name : 'Desconocido';
       const sourceUrl = rows.length > 0 ? rows[0].url : entry.sourceUrl || 'N/A';
       
+      const bw = channelBandwidth.get(channelId);
+      const bandwidth_bps = bw ? bw.bytesOutPrev : 0;
+
       streams.push({
         channel_id: channelId,
         channel_name: channelName,
@@ -1929,6 +1932,7 @@ app.get('/api/streams/active', authAdmin, async (req, res) => {
         keep_alive: entry.keepAlive || false,
         uptime_seconds: Math.floor((Date.now() - entry.lastAccess) / 1000),
         source_url: sourceUrl.substring(0, 60) + (sourceUrl.length > 60 ? '...' : ''),
+        bandwidth_bps: Math.round(bandwidth_bps),
       });
     }
     
