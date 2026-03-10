@@ -1047,13 +1047,19 @@ function cleanChannelDir(channelId) {
 // TRANSCODIFICADOR TS → HLS con FFmpeg
 // =============================================
 // =============================================
-// MODO COPY + 480p (estilo Xtream UI)
-// Copy: passthrough del original sin transcodificar (0% CPU)
-// Low:  480p ~700kbps para conexiones lentas (mínimo CPU)
+// MODO ABR 5 CALIDADES (estilo YouTube)
+// 240p → 360p → 480p → 720p → Copy (original)
+// El reproductor cambia automáticamente según el ancho de banda
 // =============================================
-console.log('✅ Modo Copy + 480p — mínimo CPU, máxima compatibilidad');
+console.log('✅ Modo ABR YouTube — 5 calidades: 240p/360p/480p/720p/original');
 
-const LOW_PROFILE = { name: 'low', width: 854, height: 480, vBitrate: '550k', maxrate: '700k', bufsize: '1000k', aBitrate: '64k', audioChannels: 1, bandwidth: 800000 };
+const ABR_PROFILES = [
+  { name: 'micro', width: 426, height: 240, vBitrate: '250k', maxrate: '350k', bufsize: '500k', aBitrate: '32k', audioChannels: 1, bandwidth: 400000 },
+  { name: 'low',   width: 640, height: 360, vBitrate: '400k', maxrate: '550k', bufsize: '800k', aBitrate: '48k', audioChannels: 1, bandwidth: 600000 },
+  { name: 'med',   width: 854, height: 480, vBitrate: '700k', maxrate: '900k', bufsize: '1200k', aBitrate: '64k', audioChannels: 1, bandwidth: 1000000 },
+  { name: 'high',  width: 1280, height: 720, vBitrate: '1500k', maxrate: '2000k', bufsize: '3000k', aBitrate: '96k', audioChannels: 2, bandwidth: 2200000 },
+];
+// Copy profile is handled separately (no transcode, 0% CPU)
 
 // Configuración de caché según modo — segmentos de 2s para switching rápido estilo DirecTV Go
 const CACHE_NORMAL = { hls_list_size: 60, hls_time: 2 };       // 60×2s = 2 min
