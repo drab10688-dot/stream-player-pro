@@ -293,7 +293,7 @@ sleep 1
 # =============================================
 # PASO 3: Actualizar sistema e instalar dependencias
 # =============================================
-log_step "📦 [2/9] Actualizando sistema e instalando dependencias..."
+log_step "📦 [2/8] Actualizando sistema e instalando dependencias..."
 
 log_info "Actualizando paquetes del sistema (esto puede tardar)..."
 apt update -qq 2>/dev/null
