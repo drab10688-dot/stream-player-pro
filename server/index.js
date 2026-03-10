@@ -1209,6 +1209,20 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
   ffmpeg.stderr.on('data', (data) => {
     const msg = data.toString();
 
+    // Track input bandwidth from FFmpeg's reported bitrate
+    const bitrateMatch = msg.match(/bitrate=\s*([\d.]+)kbits\/s/);
+    if (bitrateMatch) {
+      const kbps = parseFloat(bitrateMatch[1]);
+      if (kbps > 0) {
+        // FFmpeg reports cumulative bitrate; use it as current input rate estimate
+        initBandwidthEntry(channelId);
+        const bw = channelBandwidth.get(channelId);
+        // Set bytesIn to match the reported bitrate for the current interval
+        const elapsed = (Date.now() - bw.lastReset) / 1000;
+        bw.bytesIn = (kbps * 1024 / 8) * elapsed; // Convert kbps to bytes for elapsed period
+      }
+    }
+
     // If var_stream_map fails, fallback to single quality optimized for slow internet
     if (!fallbackTriggered && ((msg.includes('var_stream_map') && msg.includes('Error')) || 
         msg.includes('Option var_stream_map not found'))) {
