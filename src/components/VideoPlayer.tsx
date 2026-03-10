@@ -437,8 +437,10 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
     if (!hls) return;
     if (levelIndex === -1) {
       hls.currentLevel = -1;
+      setUserSelectedLevel(null);
     } else {
       hls.currentLevel = levelIndex;
+      setUserSelectedLevel(levelIndex);
     }
     setShowQualityMenu(false);
     resetHideTimer();
