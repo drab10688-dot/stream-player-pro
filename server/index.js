@@ -1794,38 +1794,59 @@ app.get('/api/restream/:channelId', async (req, res) => {
       // Canal TS → FFmpeg → HLS (adaptive o single)
       const entry = startFFmpegTranscoder(channelId, targetUrl);
 
+      // If keep-alive transcoder is already running and ready, serve INSTANTLY
+      if (entry.ready && entry.keepAlive) {
+        const masterPath = path.join(HLS_DIR, channelId, 'master.m3u8');
+        const singlePath = entry.manifestPath || path.join(HLS_DIR, channelId, 'stream.m3u8');
+        const fallbackPath = entry.fallbackManifest || singlePath;
+        
+        let manifestFile = null;
+        if (fs.existsSync(masterPath)) manifestFile = masterPath;
+        else if (fs.existsSync(singlePath)) manifestFile = singlePath;
+        else if (fs.existsSync(fallbackPath)) manifestFile = fallbackPath;
+        
+        if (manifestFile) {
+          let manifest = fs.readFileSync(manifestFile, 'utf8');
+          if (manifestFile.includes('master.m3u8')) {
+            manifest = manifest.replace(/(micro|ultra|low|med|high)\/stream\.m3u8/g, (match, quality) => {
+              return `/api/hls-adaptive/${channelId}/${quality}/stream.m3u8`;
+            });
+          } else {
+            manifest = manifest.replace(/seg_\d+\.ts/g, (match) => {
+              return `/api/hls-local/${channelId}/${match}`;
+            });
+          }
+          console.log(`⚡ [${channelId}] Keep-alive: sirviendo manifiesto instantáneamente`);
+          res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+          res.send(manifest);
+          res.on('finish', () => releaseTranscoder(channelId));
+          return;
+        }
+      }
+
       // Esperar a que FFmpeg genere el manifiesto (máximo 20s para adaptive)
       let waited = 0;
       const waitForManifest = () => {
-        // Check for master playlist first (adaptive), then fallback manifest
         const masterPath = path.join(HLS_DIR, channelId, 'master.m3u8');
         const singlePath = entry.manifestPath || path.join(HLS_DIR, channelId, 'stream.m3u8');
         const fallbackPath = entry.fallbackManifest || singlePath;
 
         let manifestFile = null;
-        if (fs.existsSync(masterPath)) {
-          manifestFile = masterPath;
-        } else if (fs.existsSync(singlePath)) {
-          manifestFile = singlePath;
-        } else if (fs.existsSync(fallbackPath)) {
-          manifestFile = fallbackPath;
-        }
+        if (fs.existsSync(masterPath)) manifestFile = masterPath;
+        else if (fs.existsSync(singlePath)) manifestFile = singlePath;
+        else if (fs.existsSync(fallbackPath)) manifestFile = fallbackPath;
 
         if (manifestFile) {
           let manifest = fs.readFileSync(manifestFile, 'utf8');
-
           if (manifestFile.includes('master.m3u8')) {
-            // Rewrite sub-playlist paths in master playlist (all 5 qualities)
             manifest = manifest.replace(/(micro|ultra|low|med|high)\/stream\.m3u8/g, (match, quality) => {
               return `/api/hls-adaptive/${channelId}/${quality}/stream.m3u8`;
             });
           } else {
-            // Single quality: rewrite segment paths
             manifest = manifest.replace(/seg_\d+\.ts/g, (match) => {
               return `/api/hls-local/${channelId}/${match}`;
             });
           }
-
           res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
           res.send(manifest);
           res.on('finish', () => releaseTranscoder(channelId));
