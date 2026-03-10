@@ -254,7 +254,7 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
           enableWorker: true,
           lowLatencyMode: true,
           // ABR: aggressive downshift for slow connections (DirecTV Go style)
-          abrEwmaDefaultEstimate: 500000,       // Start assuming 500kbps (was 1Mbps) — forces lowest quality first
+          abrEwmaDefaultEstimate: 300000,       // Start assuming 300kbps — forces 240p first (HEVC needs less)
           abrEwmaFastLive: 2,                    // React faster to bandwidth drops (was 3)
           abrEwmaSlowLive: 6,                    // Shorter averaging window (was 9)
           abrEwmaFastVoD: 2,
