@@ -1662,12 +1662,12 @@ function startHLSKeepAlivePolling(channelId, sourceUrl) {
   const entry = activeTranscoders.get(channelId);
   if (!entry || entry.type !== 'hls-proxy' || entry.pollTimer) return;
 
+  const seenSegments = new Set(); // Track segments already counted for bandwidth
+
   const poll = async () => {
     try {
-      // Fetch and cache the manifest
+      // Fetch manifest directly from origin (bypass cache) to get fresh segment list
       const manifest = await getCachedM3U8(channelId, sourceUrl);
-      // Track manifest fetch as input bandwidth
-      trackInputBandwidth(channelId, Buffer.byteLength(manifest, 'utf8'));
       
       // Extract segment URLs from manifest and pre-fetch them
       const segmentMatches = manifest.match(/\/api\/hls-segment\/[^\s]+/g);
@@ -1678,13 +1678,15 @@ function startHLSKeepAlivePolling(channelId, sourceUrl) {
             const segUrl = decodeURIComponent(urlMatch[1]);
             try {
               const segData = await fetchSegment(segUrl);
-              // fetchSegment tracks input bandwidth internally when downloading from origin
-              // For cache hits, we still need to count it as active bandwidth for this channel
-              const cached = segmentCache.get(segUrl);
-              if (cached && Date.now() - cached.timestamp < 2000) {
-                // Segment was served from cache — already tracked on first download
-              } else {
+              // Only count each unique segment ONCE for input bandwidth
+              if (!seenSegments.has(segUrl)) {
+                seenSegments.add(segUrl);
                 trackInputBandwidth(channelId, segData.length);
+                // Keep set from growing forever — remove old entries
+                if (seenSegments.size > 100) {
+                  const first = seenSegments.values().next().value;
+                  seenSegments.delete(first);
+                }
               }
             } catch {}
           }
