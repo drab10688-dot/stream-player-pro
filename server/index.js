@@ -1243,10 +1243,21 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
     console.error(`❌ [${channelId}] FFmpeg error:`, err.message);
   });
 
-  ffmpeg.on('close', (code) => {
-    console.log(`⚠️ [${channelId}] FFmpeg terminó (code: ${code})`);
+  // Capture last stderr for debugging crashes
+  let lastStderr = '';
+  const origStderrHandler = ffmpeg.stderr.listeners('data').slice(-1)[0];
+  ffmpeg.stderr.on('data', (data) => {
+    lastStderr = data.toString().slice(-500); // Keep last 500 chars
+  });
 
+  ffmpeg.on('close', (code) => {
     const wasKeepAlive = entry.keepAlive;
+
+    // Log stderr on crash for debugging
+    if (code !== 0 && lastStderr) {
+      console.error(`❌ [${channelId}] FFmpeg stderr: ${lastStderr.trim().split('\n').slice(-3).join(' | ')}`);
+    }
+    console.log(`⚠️ [${channelId}] FFmpeg terminó (code: ${code})`);
 
     // If it crashed immediately and no fallback, try single quality
     if (!fallbackTriggered && code !== 0 && entry.retryCount === 0) {
@@ -1256,34 +1267,63 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
       const fallbackEntry = startSingleQualityTranscoder(channelId, sourceUrl, channelDir, wasKeepAlive);
       if (fallbackEntry) {
         fallbackEntry.clients = entry.clients;
-        fallbackEntry.keepAlive = wasKeepAlive; // PRESERVAR keepAlive
+        fallbackEntry.keepAlive = wasKeepAlive;
+        fallbackEntry.retryCount = entry.retryCount; // Preserve count
       }
       return;
     }
 
     activeTranscoders.delete(channelId);
-    // Keep-alive channels ALWAYS retry, sin límite de reintentos
-    const shouldRetry = wasKeepAlive || (entry.clients > 0 && entry.retryCount < entry.maxRetries);
-    if (shouldRetry) {
+
+    // Keep-alive: limit to 10 consecutive failures, then cooldown 5 min
+    const KEEPALIVE_MAX_RETRIES = 10;
+    const KEEPALIVE_COOLDOWN = 5 * 60 * 1000; // 5 minutes
+
+    if (wasKeepAlive) {
       entry.retryCount++;
-      const delay = wasKeepAlive 
-        ? Math.min(3000 * entry.retryCount, 30000) // keep-alive: más paciencia
-        : Math.min(2000 * entry.retryCount, 15000);
-      const maxLabel = wasKeepAlive ? '∞' : entry.maxRetries;
-      console.log(`🔄 [${channelId}] Reiniciando en ${delay}ms (intento ${entry.retryCount}/${maxLabel})${wasKeepAlive ? ' [KEEP-ALIVE]' : ''}`);
+      if (entry.retryCount >= KEEPALIVE_MAX_RETRIES) {
+        console.error(`🛑 [${channelId}] Keep-alive pausado tras ${KEEPALIVE_MAX_RETRIES} fallos consecutivos. Reintentando en 5 min...`);
+        setTimeout(() => {
+          console.log(`🔄 [${channelId}] Keep-alive: reintentando tras cooldown de 5 min`);
+          cleanChannelDir(channelId);
+          startFFmpegTranscoder(channelId, sourceUrl, true);
+          const newEntry = activeTranscoders.get(channelId);
+          if (newEntry) {
+            newEntry.keepAlive = true;
+            newEntry.retryCount = 0; // Reset after cooldown
+          }
+        }, KEEPALIVE_COOLDOWN);
+        return;
+      }
+      const delay = Math.min(3000 * entry.retryCount, 30000);
+      console.log(`🔄 [${channelId}] Reiniciando en ${delay}ms (intento ${entry.retryCount}/${KEEPALIVE_MAX_RETRIES}) [KEEP-ALIVE]`);
       setTimeout(() => {
         cleanChannelDir(channelId);
-        startFFmpegTranscoder(channelId, sourceUrl, wasKeepAlive);
+        startFFmpegTranscoder(channelId, sourceUrl, true);
         const newEntry = activeTranscoders.get(channelId);
         if (newEntry) {
           newEntry.clients = entry.clients;
-          newEntry.keepAlive = wasKeepAlive; // PRESERVAR keepAlive
-          // Reset retry count si era keep-alive (reintentos infinitos)
-          if (wasKeepAlive) newEntry.retryCount = 0;
+          newEntry.keepAlive = true;
+          newEntry.retryCount = entry.retryCount; // Preserve count!
         }
       }, delay);
     } else {
-      cleanChannelDir(channelId);
+      const shouldRetry = entry.clients > 0 && entry.retryCount < entry.maxRetries;
+      if (shouldRetry) {
+        entry.retryCount++;
+        const delay = Math.min(2000 * entry.retryCount, 15000);
+        console.log(`🔄 [${channelId}] Reiniciando en ${delay}ms (intento ${entry.retryCount}/${entry.maxRetries})`);
+        setTimeout(() => {
+          cleanChannelDir(channelId);
+          startFFmpegTranscoder(channelId, sourceUrl, false);
+          const newEntry = activeTranscoders.get(channelId);
+          if (newEntry) {
+            newEntry.clients = entry.clients;
+          }
+        }, delay);
+      } else {
+        cleanChannelDir(channelId);
+      }
     }
   });
 
@@ -1356,36 +1396,63 @@ function startSingleQualityTranscoder(channelId, sourceUrl, channelDir, isKeepAl
     }
   });
 
+  // Capture last stderr for crash debugging
+  let lastStderr = '';
+  ffmpeg.stderr.on('data', (data) => {
+    lastStderr = data.toString().slice(-500);
+  });
+
   ffmpeg.on('error', (err) => {
     console.error(`❌ [${channelId}] FFmpeg error:`, err.message);
   });
 
   ffmpeg.on('close', (code) => {
-    console.log(`⚠️ [${channelId}] FFmpeg terminó (code: ${code})`);
     const wasKeepAlive = entry.keepAlive;
+    if (code !== 0 && lastStderr) {
+      console.error(`❌ [${channelId}] FFmpeg stderr: ${lastStderr.trim().split('\n').slice(-3).join(' | ')}`);
+    }
+    console.log(`⚠️ [${channelId}] FFmpeg terminó (code: ${code})`);
     activeTranscoders.delete(channelId);
 
-    // Keep-alive channels ALWAYS retry
-    const shouldRetry = wasKeepAlive || (entry.clients > 0 && entry.retryCount < entry.maxRetries);
-    if (shouldRetry) {
+    const KEEPALIVE_MAX_RETRIES = 10;
+    const KEEPALIVE_COOLDOWN = 5 * 60 * 1000;
+
+    if (wasKeepAlive) {
       entry.retryCount++;
-      const delay = wasKeepAlive 
-        ? Math.min(3000 * entry.retryCount, 30000)
-        : Math.min(2000 * entry.retryCount, 15000);
-      const maxLabel = wasKeepAlive ? '∞' : entry.maxRetries;
-      console.log(`🔄 [${channelId}] Reiniciando FFmpeg en ${delay}ms (intento ${entry.retryCount}/${maxLabel})${wasKeepAlive ? ' [KEEP-ALIVE]' : ''}`);
+      if (entry.retryCount >= KEEPALIVE_MAX_RETRIES) {
+        console.error(`🛑 [${channelId}] Keep-alive pausado tras ${KEEPALIVE_MAX_RETRIES} fallos consecutivos. Reintentando en 5 min...`);
+        setTimeout(() => {
+          console.log(`🔄 [${channelId}] Keep-alive: reintentando tras cooldown de 5 min`);
+          cleanChannelDir(channelId);
+          startFFmpegTranscoder(channelId, sourceUrl, true);
+          const newEntry = activeTranscoders.get(channelId);
+          if (newEntry) { newEntry.keepAlive = true; newEntry.retryCount = 0; }
+        }, KEEPALIVE_COOLDOWN);
+        return;
+      }
+      const delay = Math.min(3000 * entry.retryCount, 30000);
+      console.log(`🔄 [${channelId}] Reiniciando en ${delay}ms (intento ${entry.retryCount}/${KEEPALIVE_MAX_RETRIES}) [KEEP-ALIVE]`);
       setTimeout(() => {
         cleanChannelDir(channelId);
-        startFFmpegTranscoder(channelId, sourceUrl, wasKeepAlive);
+        startFFmpegTranscoder(channelId, sourceUrl, true);
         const newEntry = activeTranscoders.get(channelId);
-        if (newEntry) {
-          newEntry.clients = entry.clients;
-          newEntry.keepAlive = wasKeepAlive;
-          if (wasKeepAlive) newEntry.retryCount = 0;
-        }
+        if (newEntry) { newEntry.clients = entry.clients; newEntry.keepAlive = true; newEntry.retryCount = entry.retryCount; }
       }, delay);
     } else {
-      cleanChannelDir(channelId);
+      const shouldRetry = entry.clients > 0 && entry.retryCount < entry.maxRetries;
+      if (shouldRetry) {
+        entry.retryCount++;
+        const delay = Math.min(2000 * entry.retryCount, 15000);
+        console.log(`🔄 [${channelId}] Reiniciando FFmpeg en ${delay}ms (intento ${entry.retryCount}/${entry.maxRetries})`);
+        setTimeout(() => {
+          cleanChannelDir(channelId);
+          startFFmpegTranscoder(channelId, sourceUrl, false);
+          const newEntry = activeTranscoders.get(channelId);
+          if (newEntry) { newEntry.clients = entry.clients; }
+        }, delay);
+      } else {
+        cleanChannelDir(channelId);
+      }
     }
   });
 
