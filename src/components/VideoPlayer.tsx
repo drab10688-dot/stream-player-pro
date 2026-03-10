@@ -217,7 +217,8 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
 
     // ── Event listeners ──
     player.addEventListener('error', (event: Event) => {
-      const detail = (event as shaka.PlayerEvents.ErrorEvent).detail;
+      const shakaError = event as any;
+      const detail = shakaError.detail || {};
       console.error('Shaka error:', detail.code, detail.message);
 
       if (retryCountRef.current < MAX_RETRIES) {
