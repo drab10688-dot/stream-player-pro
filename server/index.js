@@ -1620,10 +1620,10 @@ function startHLSKeepAlivePolling(channelId, sourceUrl) {
     }
   };
 
-  // Poll immediately, then every 4 seconds (matching typical HLS segment duration)
+  // Poll immediately, then every 2 seconds (matching 2s HLS segment duration)
   poll();
-  entry.pollTimer = setInterval(poll, 4000);
-  console.log(`💚 [${channelId}] Keep-alive HLS polling activo (cada 4s)`);
+  entry.pollTimer = setInterval(poll, 2000);
+  console.log(`💚 [${channelId}] Keep-alive HLS polling activo (cada 2s)`);
 }
 
 // Obtener manifiesto m3u8 con caché y reescritura de URLs
