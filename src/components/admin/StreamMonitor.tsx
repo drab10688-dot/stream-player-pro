@@ -186,10 +186,19 @@ const StreamMonitor = () => {
                     }`}>
                       {stream.type === 'ffmpeg' ? 'TS→HLS' : 'HLS Proxy'}
                     </span>
+                    {stream.keep_alive && (
+                      <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-mono bg-green-500/20 text-green-300 ml-1">KA</span>
+                    )}
+                  </div>
+                  <div className="text-center min-w-[60px]">
+                    <p className={`text-xs font-bold font-mono ${getBandwidthColor(stream.bandwidth_in_bps || 0)}`}>
+                      ↓ {formatBandwidth(stream.bandwidth_in_bps || 0)}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">entrada</p>
                   </div>
                   <div className="text-center min-w-[60px]">
                     <p className={`text-xs font-bold font-mono ${getBandwidthColor(stream.bandwidth_bps || 0)}`}>
-                      {formatBandwidth(stream.bandwidth_bps || 0)}
+                      ↑ {formatBandwidth(stream.bandwidth_bps || 0)}
                     </p>
                     <p className="text-[10px] text-muted-foreground">salida</p>
                   </div>
