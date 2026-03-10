@@ -1808,7 +1808,7 @@ app.get('/api/restream/:channelId', async (req, res) => {
   }
 });
 
-// Servir sub-playlists adaptativas (low/med/high)
+// Servir sub-playlists adaptativas (micro/ultra/low/med/high)
 app.get('/api/hls-adaptive/:channelId/:quality/stream.m3u8', (req, res) => {
   const { channelId, quality } = req.params;
   const filePath = path.join(HLS_DIR, channelId, quality, 'stream.m3u8');
