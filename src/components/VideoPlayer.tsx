@@ -569,7 +569,7 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError, onQualityCha
           </span>
 
           {/* Quality selector */}
-          {qualityLevels.length > 1 && engineType === 'videojs' && (
+          {qualityLevels.length > 1 && (engineType === 'videojs' || isBridgeStream) && (
             <div className="relative">
               <button
                 onClick={() => setShowQualityMenu(prev => !prev)}
