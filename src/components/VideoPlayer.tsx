@@ -19,6 +19,9 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
   const hlsRef = useRef<Hls | null>(null);
   const retryTimer = useRef<ReturnType<typeof setTimeout>>();
   const retryCount = useRef(0);
+  const stallTimer = useRef<ReturnType<typeof setInterval>>();
+  const lastTimeRef = useRef(0);
+  const stallCountRef = useRef(0);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -34,6 +37,7 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
   // ── Cleanup ──
   const destroy = useCallback(() => {
     if (retryTimer.current) clearTimeout(retryTimer.current);
+    if (stallTimer.current) clearInterval(stallTimer.current);
     if (hlsRef.current) {
       try { hlsRef.current.destroy(); } catch {}
       hlsRef.current = null;
@@ -42,6 +46,8 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
       videoRef.current.removeAttribute('src');
       videoRef.current.load();
     }
+    stallCountRef.current = 0;
+    lastTimeRef.current = 0;
   }, []);
 
   // ── Start playback ──
@@ -76,10 +82,15 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
       maxBufferLength: 20,
       maxMaxBufferLength: 60,
       startLevel: -1,
-      fragLoadingMaxRetry: 6,
-      manifestLoadingMaxRetry: 6,
-      levelLoadingMaxRetry: 6,
+      fragLoadingMaxRetry: 10,
+      manifestLoadingMaxRetry: 10,
+      levelLoadingMaxRetry: 10,
       fragLoadingRetryDelay: 1000,
+      manifestLoadingRetryDelay: 1000,
+      levelLoadingRetryDelay: 1000,
+      fragLoadingMaxRetryTimeout: 15000,
+      manifestLoadingMaxRetryTimeout: 15000,
+      levelLoadingMaxRetryTimeout: 15000,
     });
 
     hlsRef.current = hls;
@@ -132,6 +143,34 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
     const onPlaying = () => { setLoading(false); setError(null); };
     video.addEventListener('playing', onPlaying, { once: true });
     video.addEventListener('timeupdate', onPlaying, { once: true });
+
+    // ── Stall detection: if currentTime doesn't advance for 6s, recover ──
+    if (stallTimer.current) clearInterval(stallTimer.current);
+    stallCountRef.current = 0;
+    lastTimeRef.current = 0;
+    stallTimer.current = setInterval(() => {
+      if (!video || video.paused || video.ended) return;
+      const ct = video.currentTime;
+      if (ct > 0 && ct === lastTimeRef.current) {
+        stallCountRef.current++;
+        if (stallCountRef.current >= 3) {
+          // Stalled for ~6 seconds
+          console.warn(`[Player] Stall detectado (${stallCountRef.current * 2}s), recuperando...`);
+          stallCountRef.current = 0;
+          if (hls) {
+            try {
+              hls.recoverMediaError();
+            } catch {
+              // If recovery fails, reload source
+              hls.loadSource(url);
+            }
+          }
+        }
+      } else {
+        stallCountRef.current = 0;
+      }
+      lastTimeRef.current = ct;
+    }, 2000);
 
   }, [muted, destroy, channelId, onError, isBridge]);
 
