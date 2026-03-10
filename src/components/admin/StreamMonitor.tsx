@@ -11,9 +11,11 @@ interface ActiveStream {
   type: 'ffmpeg' | 'hls-proxy';
   clients: number;
   ready: boolean;
+  keep_alive: boolean;
   uptime_seconds: number;
   source_url: string;
   bandwidth_bps: number;
+  bandwidth_in_bps: number;
 }
 
 interface StreamsData {
