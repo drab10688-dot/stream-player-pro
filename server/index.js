@@ -1048,7 +1048,7 @@ function cleanChannelDir(channelId) {
 // Audio: 32kbps mono en calidades bajas para ahorrar bandwidth
 // =============================================
 // Auto-detectar soporte H.265
-const { execSync } = require('child_process');
+// execSync ya importado arriba
 let USE_HEVC = true;
 try {
   const encoders = execSync('ffmpeg -encoders 2>/dev/null', { encoding: 'utf8' });
