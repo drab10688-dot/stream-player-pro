@@ -2197,6 +2197,7 @@ app.get('/api/streams/active', authAdmin, async (req, res) => {
       
       const bw = channelBandwidth.get(channelId);
       const bandwidth_bps = bw ? bw.bytesOutPrev : 0;
+      const bandwidth_in_bps = bw ? bw.bytesInPrev : 0;
 
       streams.push({
         channel_id: channelId,
@@ -2208,6 +2209,7 @@ app.get('/api/streams/active', authAdmin, async (req, res) => {
         uptime_seconds: Math.floor((Date.now() - entry.lastAccess) / 1000),
         source_url: sourceUrl.substring(0, 60) + (sourceUrl.length > 60 ? '...' : ''),
         bandwidth_bps: Math.round(bandwidth_bps),
+        bandwidth_in_bps: Math.round(bandwidth_in_bps),
       });
     }
     
