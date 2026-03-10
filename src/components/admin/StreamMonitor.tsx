@@ -178,6 +178,12 @@ const StreamMonitor = () => {
                       {stream.type === 'ffmpeg' ? 'TS→HLS' : 'HLS Proxy'}
                     </span>
                   </div>
+                  <div className="text-center min-w-[60px]">
+                    <p className={`text-xs font-bold font-mono ${getBandwidthColor(stream.bandwidth_bps || 0)}`}>
+                      {formatBandwidth(stream.bandwidth_bps || 0)}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">salida</p>
+                  </div>
                   <div className="text-center">
                     <p className="text-sm font-bold text-foreground">{stream.clients}</p>
                     <p className="text-[10px] text-muted-foreground">clientes</p>
