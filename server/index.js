@@ -1666,6 +1666,8 @@ function startHLSKeepAlivePolling(channelId, sourceUrl) {
     try {
       // Fetch and cache the manifest
       const manifest = await getCachedM3U8(channelId, sourceUrl);
+      // Track manifest fetch as input bandwidth
+      trackInputBandwidth(channelId, Buffer.byteLength(manifest, 'utf8'));
       
       // Extract segment URLs from manifest and pre-fetch them
       const segmentMatches = manifest.match(/\/api\/hls-segment\/[^\s]+/g);
@@ -1676,7 +1678,14 @@ function startHLSKeepAlivePolling(channelId, sourceUrl) {
             const segUrl = decodeURIComponent(urlMatch[1]);
             try {
               const segData = await fetchSegment(segUrl);
-              trackInputBandwidth(channelId, segData.length);
+              // fetchSegment tracks input bandwidth internally when downloading from origin
+              // For cache hits, we still need to count it as active bandwidth for this channel
+              const cached = segmentCache.get(segUrl);
+              if (cached && Date.now() - cached.timestamp < 2000) {
+                // Segment was served from cache — already tracked on first download
+              } else {
+                trackInputBandwidth(channelId, segData.length);
+              }
             } catch {}
           }
         }
@@ -1744,10 +1753,14 @@ const fetchSegment = (segmentUrl) => {
       res.on('end', () => {
       const buffer = Buffer.concat(chunks);
                 segmentCache.set(segmentUrl, { data: buffer, timestamp: Date.now() });
-                // Track segment in the channel's proxy entry
-                activeTranscoders.forEach((entry) => {
-                  if (entry.type === 'hls-proxy' && entry.cachedSegments && segmentUrl.includes(entry.sourceUrl.substring(0, entry.sourceUrl.lastIndexOf('/')))) {
-                    entry.cachedSegments.add(segmentUrl);
+                // Track input bandwidth for ALL proxy channels that match this segment's origin
+                activeTranscoders.forEach((entry, chId) => {
+                  if (entry.type === 'hls-proxy') {
+                    const baseOrigin = entry.sourceUrl.substring(0, entry.sourceUrl.lastIndexOf('/'));
+                    if (segmentUrl.startsWith(baseOrigin) || segmentUrl.includes(baseOrigin.replace(/https?:\/\//, ''))) {
+                      trackInputBandwidth(chId, buffer.length);
+                      if (entry.cachedSegments) entry.cachedSegments.add(segmentUrl);
+                    }
                   }
                 });
                 pendingSegments.delete(segmentUrl);
