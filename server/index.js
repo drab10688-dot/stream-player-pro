@@ -789,6 +789,28 @@ app.get('/api/validate-stream', async (req, res) => {
 const HLS_DIR = fs.existsSync('/opt/streambox/hls-cache') ? '/opt/streambox/hls-cache' : '/tmp/streambox-hls';
 const HLS_CACHE_DIR = fs.existsSync('/opt/streambox/hls-proxy-cache') ? '/opt/streambox/hls-proxy-cache' : '/tmp/streambox-cache';
 const activeTranscoders = new Map(); // channelId -> { ffmpeg, clients, lastAccess, type }
+// Per-channel bandwidth tracking
+const channelBandwidth = new Map(); // channelId -> { bytesOut: number, lastReset: number, bytesOutPrev: number }
+function trackBandwidth(channelId, bytes) {
+  if (!channelBandwidth.has(channelId)) {
+    channelBandwidth.set(channelId, { bytesOut: 0, lastReset: Date.now(), bytesOutPrev: 0 });
+  }
+  channelBandwidth.get(channelId).bytesOut += bytes;
+}
+// Reset bandwidth counters every 5 seconds and calculate rate
+setInterval(() => {
+  const now = Date.now();
+  channelBandwidth.forEach((bw, channelId) => {
+    const elapsed = (now - bw.lastReset) / 1000;
+    bw.bytesOutPrev = elapsed > 0 ? bw.bytesOut / elapsed : 0; // bytes per second
+    bw.bytesOut = 0;
+    bw.lastReset = now;
+  });
+  // Clean up channels no longer active
+  channelBandwidth.forEach((_, channelId) => {
+    if (!activeTranscoders.has(channelId)) channelBandwidth.delete(channelId);
+  });
+}, 5000);
 
 // Crear directorios base
 [HLS_DIR, HLS_CACHE_DIR].forEach(dir => {
