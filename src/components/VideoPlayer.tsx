@@ -351,6 +351,10 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
         hls.on(Hls.Events.BUFFER_EOS, () => {
           if (!video.ended) retryStream();
         });
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        // Fallback: native HLS (Safari without hls.js support)
+        video.src = src;
+        attemptPlay(video);
       } else {
         reportError('Tu navegador no soporta HLS');
       }
