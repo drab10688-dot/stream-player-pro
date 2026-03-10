@@ -1087,7 +1087,7 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
   const cacheConfig = isKeepAlive ? CACHE_KEEPALIVE : CACHE_NORMAL;
 
   // Create subdirectories for each quality
-  ['ultra', 'low', 'med', 'high'].forEach(q => {
+  ['micro', 'ultra', 'low', 'med', 'high'].forEach(q => {
     const qDir = path.join(channelDir, q);
     if (!fs.existsSync(qDir)) fs.mkdirSync(qDir, { recursive: true });
   });
