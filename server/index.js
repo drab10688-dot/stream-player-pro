@@ -1136,7 +1136,7 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
 
   // Common settings
   ffmpegArgs.push(
-    '-g', '48', '-keyint_min', '48', '-sc_threshold', '0',
+    '-sc_threshold', '0',
     '-f', 'hls',
     '-hls_time', String(cacheConfig.hls_time),
     '-hls_list_size', String(cacheConfig.hls_list_size),
