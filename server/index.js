@@ -1039,15 +1039,25 @@ function cleanChannelDir(channelId) {
 // =============================================
 // =============================================
 // CALIDADES ADAPTATIVAS (tipo DirecTV Go / Netflix)
-// Ultra: 360p ~400kbps (para 1-2 Mbps — conexiones lentas)
-// Low:   480p ~800kbps (para 2-3 Mbps)
-// Med:   720p ~2Mbps   (para 4-6 Mbps) 
+// Micro: 240p ~200kbps (para <1 Mbps — conexiones muy lentas)
+// Ultra: 360p ~350kbps (para 1-2 Mbps)
+// Low:   480p ~700kbps (para 2-3 Mbps)
+// Med:   720p ~1.5Mbps (para 4-6 Mbps) 
 // High:  original (copy, sin re-encode)
+// Codec: H.265 (HEVC) — ahorra ~50% de bitrate vs H.264
+// Audio: 32kbps mono en calidades bajas para ahorrar bandwidth
 // =============================================
+const USE_HEVC = true; // H.265 — reduce bandwidth ~50%. Poner false si el server no soporta libx265
+const VIDEO_CODEC = USE_HEVC ? 'libx265' : 'libx264';
+const CODEC_PARAMS = USE_HEVC 
+  ? ['-tag:v', 'hvc1', '-x265-params', 'log-level=error'] // hvc1 tag para compatibilidad con Safari/iOS
+  : [];
+
 const QUALITY_PROFILES = [
-  { name: 'ultra', width: 640, height: 360, vBitrate: '350k', maxrate: '400k', bufsize: '600k', aBitrate: '64k', bandwidth: 450000 },
-  { name: 'low', width: 854, height: 480, vBitrate: '800k', maxrate: '900k', bufsize: '1200k', aBitrate: '96k', bandwidth: 900000 },
-  { name: 'med', width: 1280, height: 720, vBitrate: '2000k', maxrate: '2200k', bufsize: '3000k', aBitrate: '128k', bandwidth: 2200000 },
+  { name: 'micro', width: 426, height: 240, vBitrate: '150k', maxrate: '200k', bufsize: '300k', aBitrate: '32k', audioChannels: 1, bandwidth: 250000 },
+  { name: 'ultra', width: 640, height: 360, vBitrate: '280k', maxrate: '350k', bufsize: '500k', aBitrate: '32k', audioChannels: 1, bandwidth: 400000 },
+  { name: 'low', width: 854, height: 480, vBitrate: '550k', maxrate: '700k', bufsize: '1000k', aBitrate: '64k', audioChannels: 1, bandwidth: 800000 },
+  { name: 'med', width: 1280, height: 720, vBitrate: '1200k', maxrate: '1500k', bufsize: '2000k', aBitrate: '96k', audioChannels: 2, bandwidth: 1600000 },
 ];
 
 // Configuración de caché según modo
