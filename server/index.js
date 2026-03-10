@@ -1752,12 +1752,8 @@ function startHLSKeepAlivePolling(channelId, sourceUrl) {
   console.log(`💚 [${channelId}] Keep-alive HLS polling activo (cada 2.5s, fetch directo al origen)`);
 }
 
-// Obtener manifiesto m3u8 con caché y reescritura de URLs
-const getCachedM3U8 = async (channelId, targetUrl) => {
-  const cacheKey = `m3u8_${channelId}`;
-  const cached = streamCache.get(cacheKey);
-  if (cached && Date.now() - cached.timestamp < 5000) return cached.data;
-
+// Fetch raw m3u8 content from a URL
+const fetchM3U8Raw = (targetUrl) => {
   return new Promise((resolve, reject) => {
     const parsedUrl = new URL(targetUrl);
     const httpClient = parsedUrl.protocol === 'https:' ? https : http;
@@ -1765,25 +1761,79 @@ const getCachedM3U8 = async (channelId, targetUrl) => {
       method: 'GET',
       headers: { 'User-Agent': 'StreamBox/1.0' },
     }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        return fetchM3U8Raw(res.headers.location).then(resolve).catch(reject);
+      }
       let body = '';
       res.on('data', chunk => { body += chunk.toString(); });
-      res.on('end', () => {
-        const baseUrl = targetUrl.substring(0, targetUrl.lastIndexOf('/') + 1);
-        const rewritten = body.replace(/^(?!#)(.+\.ts.*)$/gm, (match) => {
-          const fullUrl = match.startsWith('http') ? match : baseUrl + match;
-          return `/api/hls-segment/${channelId}?url=${encodeURIComponent(fullUrl)}`;
-        }).replace(/^(?!#)(.+\.m3u8.*)$/gm, (match) => {
-          const fullUrl = match.startsWith('http') ? match : baseUrl + match;
-          return `/api/hls-manifest/${channelId}?url=${encodeURIComponent(fullUrl)}`;
-        });
-        streamCache.set(cacheKey, { data: rewritten, timestamp: Date.now() });
-        resolve(rewritten);
-      });
+      res.on('end', () => resolve({ body, baseUrl: targetUrl.substring(0, targetUrl.lastIndexOf('/') + 1), statusCode: res.statusCode }));
     });
     req.on('error', reject);
     req.setTimeout(15000, () => { req.destroy(); reject(new Error('Timeout')); });
     req.end();
   });
+};
+
+// Obtener manifiesto m3u8 con caché y reescritura de URLs
+// Si el origen devuelve un master playlist (EXT-X-STREAM-INF), lo aplana
+// siguiendo el primer sub-manifiesto para evitar expiración de sesión
+const getCachedM3U8 = async (channelId, targetUrl) => {
+  const cacheKey = `m3u8_${channelId}`;
+  const cached = streamCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < 3000) return cached.data;
+
+  const { body, baseUrl, statusCode } = await fetchM3U8Raw(targetUrl);
+  
+  if (statusCode >= 400) {
+    throw new Error(`Origin returned ${statusCode}`);
+  }
+
+  // Check if this is a master playlist (contains EXT-X-STREAM-INF)
+  if (body.includes('#EXT-X-STREAM-INF')) {
+    // Extract the first variant URL
+    const lines = body.split('\n');
+    let variantUrl = null;
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].startsWith('#EXT-X-STREAM-INF')) {
+        // Next non-empty, non-comment line is the URL
+        for (let j = i + 1; j < lines.length; j++) {
+          const line = lines[j].trim();
+          if (line && !line.startsWith('#')) {
+            variantUrl = line.startsWith('http') ? line : baseUrl + line;
+            break;
+          }
+        }
+        break;
+      }
+    }
+
+    if (variantUrl) {
+      console.log(`🔗 [${channelId}] Master playlist detectado, siguiendo variante: ${variantUrl.substring(0, 80)}...`);
+      // Fetch the actual media playlist
+      const sub = await fetchM3U8Raw(variantUrl);
+      if (sub.statusCode >= 400) {
+        throw new Error(`Sub-manifest returned ${sub.statusCode}`);
+      }
+      // Rewrite only .ts segment URLs
+      const rewritten = sub.body.replace(/^(?!#)(.+\.ts.*)$/gm, (match) => {
+        const fullUrl = match.startsWith('http') ? match : sub.baseUrl + match;
+        return `/api/hls-segment/${channelId}?url=${encodeURIComponent(fullUrl)}`;
+      });
+      streamCache.set(cacheKey, { data: rewritten, timestamp: Date.now() });
+      return rewritten;
+    }
+  }
+
+  // Regular media playlist — rewrite .ts and .m3u8 URLs
+  const rewritten = body.replace(/^(?!#)(.+\.ts.*)$/gm, (match) => {
+    const fullUrl = match.startsWith('http') ? match : baseUrl + match;
+    return `/api/hls-segment/${channelId}?url=${encodeURIComponent(fullUrl)}`;
+  }).replace(/^(?!#)(.+\.m3u8.*)$/gm, (match) => {
+    const fullUrl = match.startsWith('http') ? match : baseUrl + match;
+    return `/api/hls-manifest/${channelId}?url=${encodeURIComponent(fullUrl)}`;
+  });
+  streamCache.set(cacheKey, { data: rewritten, timestamp: Date.now() });
+  return rewritten;
 };
 
 // Descargar segmento con caché compartido
