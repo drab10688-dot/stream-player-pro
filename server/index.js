@@ -1047,13 +1047,19 @@ function cleanChannelDir(channelId) {
 // TRANSCODIFICADOR TS → HLS con FFmpeg
 // =============================================
 // =============================================
-// MODO COPY + 480p (estilo Xtream UI)
-// Copy: passthrough del original sin transcodificar (0% CPU)
-// Low:  480p ~700kbps para conexiones lentas (mínimo CPU)
+// MODO ABR 5 CALIDADES (estilo YouTube)
+// 240p → 360p → 480p → 720p → Copy (original)
+// El reproductor cambia automáticamente según el ancho de banda
 // =============================================
-console.log('✅ Modo Copy + 480p — mínimo CPU, máxima compatibilidad');
+console.log('✅ Modo ABR YouTube — 5 calidades: 240p/360p/480p/720p/original');
 
-const LOW_PROFILE = { name: 'low', width: 854, height: 480, vBitrate: '550k', maxrate: '700k', bufsize: '1000k', aBitrate: '64k', audioChannels: 1, bandwidth: 800000 };
+const ABR_PROFILES = [
+  { name: 'micro', width: 426, height: 240, vBitrate: '250k', maxrate: '350k', bufsize: '500k', aBitrate: '32k', audioChannels: 1, bandwidth: 400000 },
+  { name: 'low',   width: 640, height: 360, vBitrate: '400k', maxrate: '550k', bufsize: '800k', aBitrate: '48k', audioChannels: 1, bandwidth: 600000 },
+  { name: 'med',   width: 854, height: 480, vBitrate: '700k', maxrate: '900k', bufsize: '1200k', aBitrate: '64k', audioChannels: 1, bandwidth: 1000000 },
+  { name: 'high',  width: 1280, height: 720, vBitrate: '1500k', maxrate: '2000k', bufsize: '3000k', aBitrate: '96k', audioChannels: 2, bandwidth: 2200000 },
+];
+// Copy profile is handled separately (no transcode, 0% CPU)
 
 // Configuración de caché según modo — segmentos de 2s para switching rápido estilo DirecTV Go
 const CACHE_NORMAL = { hls_list_size: 60, hls_time: 2 };       // 60×2s = 2 min
@@ -1081,51 +1087,59 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
   const copyManifestPath = path.join(channelDir, 'high', 'stream.m3u8');
   const cacheConfig = isKeepAlive ? CACHE_KEEPALIVE : CACHE_NORMAL;
 
-  // Create subdirectories: copy (original) + low (480p)
-  ['copy', 'low'].forEach(q => {
+  // Create subdirectories for all ABR profiles + copy
+  [...ABR_PROFILES.map(p => p.name), 'copy'].forEach(q => {
     const qDir = path.join(channelDir, q);
     if (!fs.existsSync(qDir)) fs.mkdirSync(qDir, { recursive: true });
   });
 
   const cacheLabel = isKeepAlive ? `${cacheConfig.hls_list_size}seg ≈ ${Math.round(cacheConfig.hls_list_size * cacheConfig.hls_time / 60)}min` : '2min';
-  console.log(`🎬 [${channelId}] FFmpeg Copy+480p (2 calidades: original+480p, caché: ${cacheLabel}): ${sourceUrl}`);
+  console.log(`🎬 [${channelId}] FFmpeg ABR YouTube (5 calidades: 240p/360p/480p/720p/original, caché: ${cacheLabel}): ${sourceUrl}`);
 
-  // Build FFmpeg command: 2 outputs — copy (passthrough) + 480p (light transcode)
+  // Build FFmpeg command: 4 transcoded outputs + 1 copy
   const ffmpegArgs = [
     '-reconnect', '1',
     '-reconnect_streamed', '1',
     '-reconnect_delay_max', '10',
     '-rw_timeout', '10000000',
     '-i', sourceUrl,
+  ];
 
-    // --- Output 0: LOW (480p ~700kbps) — para conexiones lentas ---
+  // Add transcoded outputs (0-3: micro, low, med, high)
+  ABR_PROFILES.forEach((profile, i) => {
+    ffmpegArgs.push(
+      '-map', '0:v:0', '-map', '0:a:0?',
+      `-c:v:${i}`, 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency',
+      `-b:v:${i}`, profile.vBitrate,
+      `-maxrate:v:${i}`, profile.maxrate,
+      `-bufsize:v:${i}`, profile.bufsize,
+      `-vf:${i}`, `scale=${profile.width}:${profile.height}`,
+      `-c:a:${i}`, 'aac', `-b:a:${i}`, profile.aBitrate, `-ac:${i}`, String(profile.audioChannels),
+    );
+  });
+
+  // Output 4: COPY (original passthrough — 0% CPU)
+  ffmpegArgs.push(
     '-map', '0:v:0', '-map', '0:a:0?',
-    '-c:v:0', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency',
-    '-b:v:0', LOW_PROFILE.vBitrate,
-    '-maxrate:v:0', LOW_PROFILE.maxrate,
-    '-bufsize:v:0', LOW_PROFILE.bufsize,
-    '-vf:0', `scale=${LOW_PROFILE.width}:${LOW_PROFILE.height}`,
-    '-c:a:0', 'aac', '-b:a:0', LOW_PROFILE.aBitrate, '-ac:0', String(LOW_PROFILE.audioChannels),
-    '-g', '24', '-keyint_min', '24', '-sc_threshold', '0',
+    '-c:v:4', 'copy',
+    '-c:a:4', 'aac', '-b:a:4', '128k',
+  );
 
-    // --- Output 1: COPY (original passthrough — 0% CPU) ---
-    '-map', '0:v:0', '-map', '0:a:0?',
-    '-c:v:1', 'copy',
-    '-c:a:1', 'aac', '-b:a:1', '128k',
-
-    // --- HLS output ---
+  // Common settings
+  ffmpegArgs.push(
+    '-g', '48', '-keyint_min', '48', '-sc_threshold', '0',
     '-f', 'hls',
     '-hls_time', String(cacheConfig.hls_time),
     '-hls_list_size', String(cacheConfig.hls_list_size),
     '-hls_flags', isKeepAlive ? 'append_list+delete_segments+temp_file' : 'append_list+temp_file',
     '-hls_segment_type', 'mpegts',
     '-hls_allow_cache', '1',
-    '-var_stream_map', 'v:0,a:0,name:low v:1,a:1,name:copy',
+    '-var_stream_map', ABR_PROFILES.map((p, i) => `v:${i},a:${i},name:${p.name}`).join(' ') + ' v:4,a:4,name:copy',
     '-master_pl_name', 'master.m3u8',
     '-hls_segment_filename', path.join(channelDir, '%v', 'seg_%05d.ts'),
     '-y',
     path.join(channelDir, '%v', 'stream.m3u8'),
-  ];
+  );
 
   // Try adaptive first, fallback to single-quality if FFmpeg doesn't support var_stream_map
   let ffmpeg;
@@ -1183,7 +1197,7 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
 
     if (!entry.ready && (msg.includes('Opening') || msg.includes('muxing'))) {
       entry.ready = true;
-      console.log(`✅ [${channelId}] FFmpeg Copy+480p listo (original+480p)`);
+      console.log(`✅ [${channelId}] FFmpeg ABR YouTube listo (240p/360p/480p/720p/original)`);
     }
   });
 
@@ -1823,7 +1837,7 @@ app.get('/api/restream/:channelId', async (req, res) => {
         if (manifestFile) {
           let manifest = fs.readFileSync(manifestFile, 'utf8');
           if (manifestFile.includes('master.m3u8')) {
-            manifest = manifest.replace(/(copy|low)\/stream\.m3u8/g, (match, quality) => {
+            manifest = manifest.replace(/(copy|micro|low|med|high)\/stream\.m3u8/g, (match, quality) => {
               return `/api/hls-adaptive/${channelId}/${quality}/stream.m3u8`;
             });
           } else {
@@ -1854,7 +1868,7 @@ app.get('/api/restream/:channelId', async (req, res) => {
         if (manifestFile) {
           let manifest = fs.readFileSync(manifestFile, 'utf8');
           if (manifestFile.includes('master.m3u8')) {
-            manifest = manifest.replace(/(copy|low)\/stream\.m3u8/g, (match, quality) => {
+            manifest = manifest.replace(/(copy|micro|low|med|high)\/stream\.m3u8/g, (match, quality) => {
               return `/api/hls-adaptive/${channelId}/${quality}/stream.m3u8`;
             });
           } else {
