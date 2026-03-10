@@ -546,15 +546,68 @@ cat > .env.production << EOF
 VITE_LOCAL_API_URL=${API_URL}
 EOF
 
-npm install --legacy-peer-deps > /dev/null 2>&1
-if ! npm run build > /dev/null 2>&1; then
-  log_warn "Error en build, reintentando con limpieza..."
-  rm -rf node_modules/.vite
-  npm run build > /dev/null 2>&1
-  if [ $? -ne 0 ]; then
-    log_err "Error compilando frontend. Revisa errores con: cd ${PROJECT_DIR} && npm run build"
+# Instalar dependencias del frontend
+log_info "Instalando dependencias del frontend (esto puede tardar)..."
+if ! npm install --legacy-peer-deps 2>&1 | tail -3; then
+  log_warn "npm install con --legacy-peer-deps falló, intentando sin flag..."
+  if ! npm install 2>&1 | tail -3; then
+    log_err "No se pudieron instalar las dependencias del frontend"
+    log_info "Intenta manualmente: cd ${PROJECT_DIR} && npm install"
     exit 1
   fi
+fi
+log_ok "Dependencias del frontend instaladas"
+
+# Compilar frontend - intentar múltiples métodos
+log_info "Compilando frontend..."
+BUILD_SUCCESS=false
+
+# Método 1: npm run build (usa el script de package.json)
+if npm run build 2>&1 | tail -5; then
+  if [ -f "dist/index.html" ]; then
+    BUILD_SUCCESS=true
+    log_ok "Build exitoso con npm run build"
+  fi
+fi
+
+# Método 2: npx vite build (ejecuta vite directamente)
+if [ "$BUILD_SUCCESS" = false ]; then
+  log_warn "Reintentando con npx vite build..."
+  rm -rf dist node_modules/.vite
+  if npx vite build 2>&1 | tail -5; then
+    if [ -f "dist/index.html" ]; then
+      BUILD_SUCCESS=true
+      log_ok "Build exitoso con npx vite build"
+    fi
+  fi
+fi
+
+# Método 3: Limpiar todo y reintentar
+if [ "$BUILD_SUCCESS" = false ]; then
+  log_warn "Reintentando con limpieza completa..."
+  rm -rf node_modules dist
+  npm install --legacy-peer-deps 2>&1 | tail -3
+  npx vite build 2>&1 | tail -5
+  if [ -f "dist/index.html" ]; then
+    BUILD_SUCCESS=true
+    log_ok "Build exitoso después de limpieza completa"
+  fi
+fi
+
+if [ "$BUILD_SUCCESS" = false ]; then
+  log_err "No se pudo compilar el frontend después de 3 intentos"
+  log_info "Ejecuta manualmente para ver el error completo:"
+  echo "   cd ${PROJECT_DIR}"
+  echo "   npm install"
+  echo "   npx vite build"
+  exit 1
+fi
+
+# Verificar que el build tiene contenido
+FILE_COUNT=$(find dist -type f | wc -l)
+if [ "$FILE_COUNT" -lt 3 ]; then
+  log_err "El build parece incompleto (solo $FILE_COUNT archivos)"
+  exit 1
 fi
 
 # Copiar build
@@ -562,7 +615,13 @@ mkdir -p /var/www/streambox
 rm -rf /var/www/streambox/*
 cp -r dist/* /var/www/streambox/
 
-log_ok "Frontend compilado y desplegado"
+# Verificación final
+if [ -f "/var/www/streambox/index.html" ]; then
+  log_ok "Frontend compilado y desplegado ($FILE_COUNT archivos)"
+else
+  log_err "Error: index.html no se copió a /var/www/streambox/"
+  exit 1
+fi
 
 # =============================================
 # PASO 7: Configurar Nginx
