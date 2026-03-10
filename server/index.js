@@ -1257,28 +1257,46 @@ app.get('/api/channels/cache-status', authAdmin, async (req, res) => {
       const entry = activeTranscoders.get(ch.id);
       let cacheSize = 0;
       let segmentCount = 0;
-      if (entry && entry.channelDir && fs.existsSync(entry.channelDir)) {
-        try {
-          const countFiles = (dir) => {
-            let count = 0, size = 0;
-            fs.readdirSync(dir).forEach(f => {
-              const fp = path.join(dir, f);
-              const stat = fs.statSync(fp);
-              if (stat.isDirectory()) {
-                const sub = countFiles(fp);
-                count += sub.count;
-                size += sub.size;
-              } else if (f.endsWith('.ts')) {
-                count++;
-                size += stat.size;
+      if (entry) {
+        if (entry.type === 'hls-proxy') {
+          // Count in-memory cached segments for HLS proxy channels
+          if (entry.cachedSegments) {
+            entry.cachedSegments.forEach(url => {
+              const seg = segmentCache.get(url);
+              if (seg) {
+                segmentCount++;
+                cacheSize += seg.data.length;
+              } else {
+                entry.cachedSegments.delete(url); // Clean stale refs
               }
             });
-            return { count, size };
-          };
-          const result = countFiles(entry.channelDir);
-          segmentCount = result.count;
-          cacheSize = result.size;
-        } catch {}
+          }
+          // Also count manifest cache
+          const manifestKey = `m3u8_${ch.id}`;
+          if (streamCache.has(manifestKey)) segmentCount++;
+        } else if (entry.channelDir && fs.existsSync(entry.channelDir)) {
+          try {
+            const countFiles = (dir) => {
+              let count = 0, size = 0;
+              fs.readdirSync(dir).forEach(f => {
+                const fp = path.join(dir, f);
+                const stat = fs.statSync(fp);
+                if (stat.isDirectory()) {
+                  const sub = countFiles(fp);
+                  count += sub.count;
+                  size += sub.size;
+                } else if (f.endsWith('.ts')) {
+                  count++;
+                  size += stat.size;
+                }
+              });
+              return { count, size };
+            };
+            const result = countFiles(entry.channelDir);
+            segmentCount = result.count;
+            cacheSize = result.size;
+          } catch {}
+        }
       }
       return {
         id: ch.id,
