@@ -31,6 +31,22 @@ const formatUptime = (seconds: number) => {
   return `${h}h ${m}m`;
 };
 
+const formatBandwidth = (bytesPerSec: number) => {
+  const mbps = (bytesPerSec * 8) / (1024 * 1024);
+  if (mbps >= 1) return `${mbps.toFixed(1)} Mbps`;
+  const kbps = (bytesPerSec * 8) / 1024;
+  if (kbps >= 1) return `${kbps.toFixed(0)} Kbps`;
+  return '0 Kbps';
+};
+
+const getBandwidthColor = (bytesPerSec: number) => {
+  const mbps = (bytesPerSec * 8) / (1024 * 1024);
+  if (mbps >= 10) return 'text-red-400';
+  if (mbps >= 5) return 'text-orange-400';
+  if (mbps >= 1) return 'text-yellow-300';
+  return 'text-emerald-400';
+};
+
 const StreamMonitor = () => {
   const { toast } = useToast();
   const [data, setData] = useState<StreamsData | null>(null);
