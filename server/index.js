@@ -1398,9 +1398,15 @@ const fetchSegment = (segmentUrl) => {
       const chunks = [];
       res.on('data', chunk => chunks.push(chunk));
       res.on('end', () => {
-        const buffer = Buffer.concat(chunks);
-        segmentCache.set(segmentUrl, { data: buffer, timestamp: Date.now() });
-        pendingSegments.delete(segmentUrl);
+      const buffer = Buffer.concat(chunks);
+                segmentCache.set(segmentUrl, { data: buffer, timestamp: Date.now() });
+                // Track segment in the channel's proxy entry
+                activeTranscoders.forEach((entry) => {
+                  if (entry.type === 'hls-proxy' && entry.cachedSegments && segmentUrl.includes(entry.sourceUrl.substring(0, entry.sourceUrl.lastIndexOf('/')))) {
+                    entry.cachedSegments.add(segmentUrl);
+                  }
+                });
+                pendingSegments.delete(segmentUrl);
         resolve(buffer);
       });
       res.on('error', (err) => { pendingSegments.delete(segmentUrl); reject(err); });
