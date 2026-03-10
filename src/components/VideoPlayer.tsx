@@ -253,40 +253,41 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
         const hls = new Hls({
           enableWorker: true,
           lowLatencyMode: true,
-          // ABR: aggressive downshift for slow connections (DirecTV Go style)
-          abrEwmaDefaultEstimate: 300000,       // Start assuming 300kbps — forces 240p first (HEVC needs less)
-          abrEwmaFastLive: 2,                    // React faster to bandwidth drops (was 3)
-          abrEwmaSlowLive: 6,                    // Shorter averaging window (was 9)
-          abrEwmaFastVoD: 2,
-          abrEwmaSlowVoD: 6,
-          abrBandWidthFactor: 0.7,               // More conservative — only upgrade at 70% capacity (was 0.8)
-          abrBandWidthUpFactor: 0.5,             // Even more conservative for upgrading (was 0.6)
-          // Buffer: small for fast start, reasonable for stability
-          maxBufferLength: 30,                   // 30s buffer (was 120s) — less memory, faster adaptation
-          maxMaxBufferLength: 60,                // 1 min max (was 300s)
-          maxBufferSize: 30 * 1000 * 1000,       // 30MB (was 60MB) — less memory on mobile
-          maxBufferHole: 0.3,                    // Tighter hole tolerance (was 0.5)
-          backBufferLength: 10,                  // 10s back (was 30s) — save memory
-          // Live sync — stay close to live edge
-          liveSyncDurationCount: 2,
-          liveMaxLatencyDurationCount: 4,        // Tighter (was 5)
+          // === DirecTV Go style ABR ===
+          // Start at minimum quality, upgrade only when bandwidth is confirmed
+          abrEwmaDefaultEstimate: 200000,       // Assume 200kbps — forces 240p first
+          abrEwmaFastLive: 1.5,                  // Very fast reaction to bandwidth drops
+          abrEwmaSlowLive: 4,                    // Short averaging window
+          abrEwmaFastVoD: 1.5,
+          abrEwmaSlowVoD: 4,
+          abrBandWidthFactor: 0.65,              // Only upgrade at 65% of measured bandwidth
+          abrBandWidthUpFactor: 0.45,            // Very conservative upgrades
+          // === Instant playback: tiny initial buffer ===
+          maxBufferLength: 8,                    // 8s buffer (4 segments of 2s)
+          maxMaxBufferLength: 20,                // 20s max buffer
+          maxBufferSize: 10 * 1000 * 1000,       // 10MB — minimal memory
+          maxBufferHole: 0.2,                    // Tight hole tolerance
+          backBufferLength: 4,                   // 4s back-buffer only
+          // === Live sync: stay very close to live edge ===
+          liveSyncDurationCount: 1,              // 1 segment behind live (2s)
+          liveMaxLatencyDurationCount: 3,        // Max 3 segments (6s)
           liveDurationInfinity: true,
-          // Retries
-          fragLoadingMaxRetry: 15,
-          fragLoadingRetryDelay: 800,            // Faster retry (was 1000)
-          fragLoadingMaxRetryTimeout: 20000,     // Faster give-up (was 30000)
-          manifestLoadingMaxRetry: 10,
-          manifestLoadingRetryDelay: 800,
-          manifestLoadingMaxRetryTimeout: 20000,
-          levelLoadingMaxRetry: 10,
-          levelLoadingRetryDelay: 800,
-          levelLoadingMaxRetryTimeout: 20000,
-          startLevel: 0,                         // Always start at lowest quality (360p)
-          startFragPrefetch: true,
+          // === Fast retries for 2s segments ===
+          fragLoadingMaxRetry: 20,
+          fragLoadingRetryDelay: 500,            // 500ms retry (half a segment)
+          fragLoadingMaxRetryTimeout: 10000,
+          manifestLoadingMaxRetry: 15,
+          manifestLoadingRetryDelay: 500,
+          manifestLoadingMaxRetryTimeout: 10000,
+          levelLoadingMaxRetry: 15,
+          levelLoadingRetryDelay: 500,
+          levelLoadingMaxRetryTimeout: 10000,
+          startLevel: 0,                         // Always start at lowest (240p)
+          startFragPrefetch: true,               // Pre-fetch first fragment immediately
           testBandwidth: true,
           progressive: true,
-          // Segments: prefer smaller for faster switching
-          maxFragLookUpTolerance: 0.2,
+          // === 2s segments: tighter tolerance ===
+          maxFragLookUpTolerance: 0.1,
         });
         hlsRef.current = hls;
         hls.loadSource(src);
