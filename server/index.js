@@ -1802,16 +1802,22 @@ const getCachedM3U8 = async (channelId, targetUrl) => {
         const bw = bwMatch ? parseInt(bwMatch[1]) : 0;
         const codecsMatch = line.match(/CODECS="([^"]+)"/);
         const codecs = codecsMatch ? codecsMatch[1].toLowerCase() : '';
-        const isH264 = !codecs || codecs.includes('avc1');
+        const resMatch = line.match(/RESOLUTION=(\d+)x(\d+)/);
+        const height = resMatch ? parseInt(resMatch[2]) : 0;
+        // Only mark as H.264 if CODECS explicitly contains avc1
+        const isH264 = codecs ? codecs.includes('avc1') : false;
         const isHEVC = codecs.includes('hev1') || codecs.includes('hvc1') || codecs.includes('hevc');
+        const isUnknown = !codecs;
         for (let j = i + 1; j < lines.length; j++) {
           const urlLine = lines[j].trim();
           if (urlLine && !urlLine.startsWith('#')) {
             variants.push({
               url: urlLine.startsWith('http') ? urlLine : baseUrl + urlLine,
               bandwidth: bw,
+              height,
               isH264,
               isHEVC,
+              isUnknown,
               codecs,
             });
             break;
@@ -1820,18 +1826,30 @@ const getCachedM3U8 = async (channelId, targetUrl) => {
       }
     }
 
-    // Prefer: H.264 with highest bandwidth, then unknown codec, then HEVC as last resort
+    console.log(`📋 [${channelId}] Variantes encontradas: ${variants.map(v => `${v.height}p ${v.isH264 ? 'H264' : v.isHEVC ? 'HEVC' : 'unknown'} ${v.bandwidth}bps ${v.codecs || 'no-codecs'}`).join(' | ')}`);
+
+    // Priority: explicit H.264 > unknown codec (pick LOWEST resolution = safer) > HEVC last
     variants.sort((a, b) => {
+      // Explicit H.264 always first
       if (a.isH264 && !b.isH264) return -1;
       if (!a.isH264 && b.isH264) return 1;
+      // HEVC always last
       if (a.isHEVC && !b.isHEVC) return 1;
       if (!a.isHEVC && b.isHEVC) return -1;
+      // Among same codec type:
+      // - For H.264: prefer highest bandwidth
+      // - For unknown: prefer LOWEST resolution (more likely H.264 compatible)
+      if (a.isUnknown && b.isUnknown) {
+        // Pick lowest resolution for unknown codecs (safer for browser compatibility)
+        if (a.height && b.height) return a.height - b.height;
+        return a.bandwidth - b.bandwidth;
+      }
       return b.bandwidth - a.bandwidth;
     });
 
     const best = variants[0];
     if (best) {
-      console.log(`🔗 [${channelId}] Aplanando master → ${best.isH264 ? 'H.264' : best.isHEVC ? 'HEVC' : 'unknown'} ${best.bandwidth}bps ${best.codecs ? `(${best.codecs})` : ''}: ${best.url.substring(0, 80)}...`);
+      console.log(`🔗 [${channelId}] Aplanando master → ${best.isH264 ? 'H.264' : best.isHEVC ? 'HEVC' : 'unknown'} ${best.height}p ${best.bandwidth}bps ${best.codecs ? `(${best.codecs})` : '(no codecs)'}: ${best.url.substring(0, 80)}...`);
       const sub = await fetchM3U8Raw(best.url);
       if (sub.statusCode >= 400) {
         console.error(`❌ [${channelId}] Sub-manifest returned ${sub.statusCode}, falling back to master rewrite`);
