@@ -1469,6 +1469,12 @@ function releaseTranscoder(channelId) {
 // KEEP ALIVE: Iniciar canal persistente
 // =============================================
 function startKeepAliveChannel(channelId, sourceUrl) {
+  // Validar URL antes de iniciar
+  if (!sourceUrl || typeof sourceUrl !== 'string' || !sourceUrl.startsWith('http')) {
+    console.warn(`⚠️ [${channelId}] Keep-alive omitido: URL inválida → "${sourceUrl}"`);
+    return;
+  }
+
   const isHLS = /\.m3u8?(\?|$)/i.test(sourceUrl);
   const isYouTube = /youtube\.com|youtu\.be/.test(sourceUrl);
   
