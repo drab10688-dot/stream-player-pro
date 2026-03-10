@@ -926,6 +926,51 @@ app.get('/api/validate-stream', async (req, res) => {
 // =============================================
 // child_process, fs, path ya importados arriba
 
+// ── ffprobe codec detection for streams without CODECS attribute ──
+const codecProbeCache = new Map(); // url -> { codec, timestamp }
+const CODEC_PROBE_TTL = 300000; // 5 min cache
+
+function probeStreamCodec(url) {
+  const cached = codecProbeCache.get(url);
+  if (cached && Date.now() - cached.timestamp < CODEC_PROBE_TTL) {
+    return Promise.resolve(cached.codec);
+  }
+  return new Promise((resolve) => {
+    try {
+      const probe = spawn('ffprobe', [
+        '-v', 'error',
+        '-select_streams', 'v:0',
+        '-show_entries', 'stream=codec_name',
+        '-of', 'csv=p=0',
+        '-rw_timeout', '8000000',
+        url
+      ], { stdio: ['pipe', 'pipe', 'pipe'] });
+
+      let output = '';
+      let errOutput = '';
+      probe.stdout.on('data', d => { output += d.toString(); });
+      probe.stderr.on('data', d => { errOutput += d.toString(); });
+
+      const timeout = setTimeout(() => {
+        probe.kill('SIGKILL');
+        console.warn(`⏱️ ffprobe timeout for ${url.substring(0, 60)}...`);
+        resolve('unknown');
+      }, 10000);
+
+      probe.on('close', (code) => {
+        clearTimeout(timeout);
+        const codec = output.trim().split('\n')[0]?.trim().toLowerCase() || 'unknown';
+        console.log(`🔍 ffprobe: ${url.substring(0, 60)}... → codec: ${codec}`);
+        codecProbeCache.set(url, { codec, timestamp: Date.now() });
+        resolve(codec);
+      });
+    } catch (err) {
+      console.error('ffprobe spawn error:', err.message);
+      resolve('unknown');
+    }
+  });
+}
+
 // Directorios de caché HLS - SSD por defecto (soporta 100+ canales)
 // El instalador configura /opt/streambox/hls-cache en SSD
 // Fallback a /tmp si no existe (compatibilidad con instalaciones anteriores)
