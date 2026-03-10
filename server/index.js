@@ -1368,14 +1368,23 @@ function releaseTranscoder(channelId) {
     // Keep alive channels NEVER stop
     if (entry.keepAlive) {
       entry.clients = 0; // Floor at 0
-      console.log(`💚 [${channelId}] Keep-alive activo, FFmpeg permanece encendido`);
+      console.log(`💚 [${channelId}] Keep-alive activo, permanece encendido`);
       return;
+    }
+    // Stop HLS polling if active
+    if (entry.pollTimer) {
+      clearInterval(entry.pollTimer);
+      entry.pollTimer = null;
     }
     // Esperar 30 segundos antes de matar, por si alguien vuelve
     setTimeout(() => {
       const current = activeTranscoders.get(channelId);
       if (current && current.clients <= 0 && !current.keepAlive) {
-        console.log(`🔴 [${channelId}] Sin clientes, deteniendo FFmpeg`);
+        console.log(`🔴 [${channelId}] Sin clientes, deteniendo`);
+        if (current.pollTimer) {
+          clearInterval(current.pollTimer);
+          current.pollTimer = null;
+        }
         if ((current.type === 'ffmpeg' || current.type === 'ffmpeg-adaptive') && current.ffmpeg) {
           current.ffmpeg.kill('SIGTERM');
         }
