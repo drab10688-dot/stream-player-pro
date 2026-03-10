@@ -1201,8 +1201,8 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
     const msg = data.toString();
 
     // If var_stream_map fails, fallback to single quality optimized for slow internet
-    if (!fallbackTriggered && (msg.includes('var_stream_map') && msg.includes('Error')) || 
-        (msg.includes('Option var_stream_map not found'))) {
+    if (!fallbackTriggered && ((msg.includes('var_stream_map') && msg.includes('Error')) || 
+        msg.includes('Option var_stream_map not found'))) {
       fallbackTriggered = true;
       console.log(`⚠️ [${channelId}] var_stream_map no soportado, usando calidad única optimizada`);
       ffmpeg.kill('SIGTERM');
