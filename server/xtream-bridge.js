@@ -218,64 +218,111 @@ app.post('/api/client/heartbeat', (req, res) => {
 // PROXY DE STREAMS — Oculta IP de Xtream UI
 // =============================================
 
+// Detect format from Accept header or query param
 app.get('/api/restream/:streamId', (req, res) => {
   const { streamId } = req.params;
+  const format = req.query.format; // 'ts' to force MPEG-TS
   const creds = getActiveCreds();
 
   if (!creds) {
     return res.status(403).json({ error: 'No hay sesión activa. Inicia sesión de nuevo.' });
   }
 
-  // Renovar actividad de la sesión con cada petición de stream
+  // Renovar actividad de la sesión
   if (activeSessions.has(creds.username)) {
     activeSessions.get(creds.username).lastActivity = Date.now();
   }
 
+  // If format=ts requested, go straight to TS
+  if (format === 'ts') {
+    return proxyTsStream(streamId, creds, req, res);
+  }
+
+  // Try m3u8 first
   const streamUrl = `${XTREAM_HOST}:${XTREAM_PORT}/live/${creds.username}/${creds.password}/${streamId}.m3u8`;
   const client = streamUrl.startsWith('https') ? https : http;
   
-  const proxyReq = client.get(streamUrl, { timeout: 20000 }, (proxyRes) => {
+  const proxyReq = client.get(streamUrl, { timeout: 10000 }, (proxyRes) => {
     if (proxyRes.statusCode !== 200) {
-      // Fallback: .ts directo
-      const tsUrl = `${XTREAM_HOST}:${XTREAM_PORT}/live/${creds.username}/${creds.password}/${streamId}.ts`;
-      const tsReq = client.get(tsUrl, { timeout: 60000 }, (tsRes) => {
-        res.writeHead(tsRes.statusCode, {
-          'Content-Type': 'video/mp2t',
-          'Cache-Control': 'no-cache',
-          'Access-Control-Allow-Origin': '*',
-          'Connection': 'keep-alive',
-        });
-        tsRes.pipe(res);
-      });
-      tsReq.on('error', (err) => {
-        console.error(`TS proxy error [${streamId}]:`, err.message);
-        if (!res.headersSent) res.status(502).json({ error: 'Stream no disponible' });
-      });
-      req.on('close', () => tsReq.destroy());
-      return;
+      // Consume response to free socket
+      proxyRes.resume();
+      console.log(`📺 Canal ${streamId}: m3u8 no disponible (${proxyRes.statusCode}), usando TS directo`);
+      return proxyTsStream(streamId, creds, req, res);
     }
 
-    // Leer m3u8 y reescribir URLs
+    // Check if response is actually m3u8 (not just a TS redirect)
     let m3u8Data = '';
     proxyRes.on('data', chunk => m3u8Data += chunk);
     proxyRes.on('end', () => {
-      const rewritten = rewriteM3U8(m3u8Data, creds);
-      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-      res.setHeader('Cache-Control', 'no-cache, no-store');
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      res.send(rewritten);
+      if (m3u8Data.trim().startsWith('#EXTM3U')) {
+        const rewritten = rewriteM3U8(m3u8Data, creds);
+        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+        res.setHeader('Cache-Control', 'no-cache, no-store');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.send(rewritten);
+      } else {
+        // Not a valid m3u8, probably TS data
+        console.log(`📺 Canal ${streamId}: respuesta no es m3u8, usando TS directo`);
+        proxyTsStream(streamId, creds, req, res);
+      }
     });
   });
 
   proxyReq.on('error', (err) => {
     console.error(`Stream proxy error [${streamId}]:`, err.message);
-    if (!res.headersSent) {
-      res.status(502).json({ error: 'Error al conectar con el stream' });
-    }
+    // Fallback to TS on any error
+    proxyTsStream(streamId, creds, req, res);
   });
 
   req.on('close', () => proxyReq.destroy());
 });
+
+// Dedicated TS stream proxy — keeps connection alive for mpegts.js
+function proxyTsStream(streamId, creds, req, res) {
+  const tsUrl = `${XTREAM_HOST}:${XTREAM_PORT}/live/${creds.username}/${creds.password}/${streamId}.ts`;
+  const client = tsUrl.startsWith('https') ? https : http;
+  
+  console.log(`📡 Proxy TS: ${streamId}`);
+  
+  const tsReq = client.get(tsUrl, { 
+    timeout: 0, // No timeout for live TS streams
+    headers: {
+      'Connection': 'keep-alive',
+    }
+  }, (tsRes) => {
+    if (tsRes.statusCode !== 200) {
+      console.error(`TS error [${streamId}]: status ${tsRes.statusCode}`);
+      if (!res.headersSent) {
+        res.status(502).json({ error: 'Stream no disponible en ningún formato' });
+      }
+      return;
+    }
+    
+    res.writeHead(200, {
+      'Content-Type': 'video/mp2t',
+      'Cache-Control': 'no-cache, no-store',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Headers': '*',
+      'Connection': 'keep-alive',
+      'Transfer-Encoding': 'chunked',
+    });
+    
+    tsRes.pipe(res);
+    
+    tsRes.on('error', (err) => {
+      console.error(`TS stream error [${streamId}]:`, err.message);
+    });
+  });
+  
+  tsReq.on('error', (err) => {
+    console.error(`TS proxy error [${streamId}]:`, err.message);
+    if (!res.headersSent) res.status(502).json({ error: 'Stream no disponible' });
+  });
+  
+  req.on('close', () => {
+    tsReq.destroy();
+  });
+}
 
 // Helper: reescribir URLs en m3u8
 function rewriteM3U8(data, creds) {
