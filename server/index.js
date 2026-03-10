@@ -1593,10 +1593,8 @@ app.get('/api/hls-local/:channelId/:qualityOrFile/:filename?', (req, res) => {
   const { channelId, qualityOrFile, filename } = req.params;
   let filePath;
   if (filename) {
-    // /api/hls-local/:channelId/:quality/:filename
     filePath = path.join(HLS_DIR, channelId, qualityOrFile, filename);
   } else {
-    // /api/hls-local/:channelId/:filename (legacy single quality)
     filePath = path.join(HLS_DIR, channelId, qualityOrFile);
   }
   if (!fs.existsSync(filePath)) {
@@ -1605,7 +1603,9 @@ app.get('/api/hls-local/:channelId/:qualityOrFile/:filename?', (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Content-Type', 'video/mp2t');
   res.setHeader('Cache-Control', 'public, max-age=10');
-  fs.createReadStream(filePath).pipe(res);
+  const stream = fs.createReadStream(filePath);
+  stream.on('data', (chunk) => trackBandwidth(channelId, chunk.length));
+  stream.pipe(res);
 });
 
 // Proxy de segmentos HLS remotos (para canales que ya son HLS)
