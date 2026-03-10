@@ -1768,9 +1768,11 @@ function startHLSKeepAlivePolling(channelId, sourceUrl) {
         try {
           const segData = await fetchSegment(segUrl);
           seenSegments.add(segUrl);
-          // Track input bandwidth (fetchSegment also tracks, but only on fresh downloads
-          // which is what we want — it deduplicates via pendingSegments)
-          // We DON'T double-track here; fetchSegment handles it
+          // Always track input bandwidth for THIS channel when we see a new segment
+          // fetchSegment may not match the URL pattern, so we explicitly track here
+          if (segData && segData.length) {
+            trackInputBandwidth(channelId, segData.length);
+          }
         } catch {}
       }
 
