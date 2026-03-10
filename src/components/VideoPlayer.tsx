@@ -204,9 +204,9 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError, onQualityCha
     });
 
     hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => {
-      const level = hls.levels[data.level];
+      const level = hls.levels[data.level] as any;
       if (level) {
-        console.log(`📊 Calidad: ${level.height}p @ ${formatBitrate(level.bandwidth)}`);
+        console.log(`📊 Calidad: ${level.height}p @ ${formatBitrate(level.bitrate || level.bandwidth || 0)}`);
       }
     });
 
