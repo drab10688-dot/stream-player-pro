@@ -68,7 +68,11 @@ const StreamDiagnostics = () => {
     } catch (err: any) {
       toast({ title: 'Error', description: err.message, variant: 'destructive' });
     }
-  };
+  }, [toast]);
+
+  useEffect(() => {
+    fetchChannels();
+  }, [fetchChannels]);
 
   const testChannel = async (channel: Channel): Promise<DiagResult> => {
     const startTime = Date.now();
