@@ -22,6 +22,7 @@ interface Channel {
   keep_alive: boolean;
   sort_order: number;
   logo_url: string | null;
+  stream_mode: 'direct' | 'buffer' | 'transcode';
 }
 
 interface CacheStatus {

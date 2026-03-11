@@ -466,10 +466,11 @@ app.put('/api/channels/:id', authAdmin, async (req, res) => {
     const is_active = req.body.is_active !== undefined ? req.body.is_active : c.is_active;
     const keep_alive = req.body.keep_alive !== undefined ? req.body.keep_alive : c.keep_alive;
     const logo_url = req.body.logo_url !== undefined ? req.body.logo_url : c.logo_url;
+    const stream_mode = req.body.stream_mode !== undefined ? req.body.stream_mode : (c.stream_mode || 'direct');
 
     const { rows } = await pool.query(
-      'UPDATE channels SET name=$1, url=$2, category=$3, sort_order=$4, is_active=$5, keep_alive=$6, logo_url=$7 WHERE id=$8 RETURNING *',
-      [name, url, category, sort_order, is_active, keep_alive, logo_url, req.params.id]
+      'UPDATE channels SET name=$1, url=$2, category=$3, sort_order=$4, is_active=$5, keep_alive=$6, logo_url=$7, stream_mode=$8 WHERE id=$9 RETURNING *',
+      [name, url, category, sort_order, is_active, keep_alive, logo_url, stream_mode, req.params.id]
     );
 
     // If keep_alive was toggled ON, start the transcoder immediately
