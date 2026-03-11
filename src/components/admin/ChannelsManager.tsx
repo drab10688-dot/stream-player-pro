@@ -130,7 +130,7 @@ const ChannelsManager = () => {
   };
 
   const handleEdit = (ch: Channel) => {
-    setForm({ name: ch.name, url: ch.url, category: ch.category, sort_order: ch.sort_order, logo_url: ch.logo_url || '' });
+    setForm({ name: ch.name, url: ch.url, category: ch.category, sort_order: ch.sort_order, logo_url: ch.logo_url || '', stream_mode: ch.stream_mode || 'direct' });
     setLogoPreview(ch.logo_url || null);
     setEditingId(ch.id);
     setShowForm(true);
