@@ -130,7 +130,7 @@ const AdminDashboard = () => {
           <TabsContent value="resellers" forceMount className="data-[state=inactive]:hidden"><ResellersManager /></TabsContent>
           <TabsContent value="ads" forceMount className="data-[state=inactive]:hidden"><AdsManager /></TabsContent>
           <TabsContent value="alerts" forceMount className="data-[state=inactive]:hidden"><ExpirationAlerts /></TabsContent>
-          <TabsContent value="monitor" forceMount className="data-[state=inactive]:hidden"><ChannelMonitor /></TabsContent>
+          
           <TabsContent value="tunnel" forceMount className="data-[state=inactive]:hidden"><TunnelManager /></TabsContent>
           <TabsContent value="streams" forceMount className="data-[state=inactive]:hidden"><StreamMonitor /></TabsContent>
           <TabsContent value="diagnostics" forceMount className="data-[state=inactive]:hidden"><StreamDiagnostics /></TabsContent>
