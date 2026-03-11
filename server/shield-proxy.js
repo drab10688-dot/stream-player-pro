@@ -28,6 +28,61 @@ const NGINX_PORT = process.env.NGINX_PORT || '8880';
 let XTREAM_HOST = process.env.XTREAM_HOST || 'http://localhost';
 let XTREAM_PORT = process.env.XTREAM_PORT || '25461';
 
+// Master Xtream credentials (used by Shield to proxy streams for local clients)
+const MASTER_CREDS_FILE = '/opt/omnisync-shield/master-creds.json';
+
+const loadMasterCreds = () => {
+  try {
+    if (fs.existsSync(MASTER_CREDS_FILE)) {
+      return JSON.parse(fs.readFileSync(MASTER_CREDS_FILE, 'utf8'));
+    }
+  } catch (err) {
+    console.error('Error loading master creds:', err.message);
+  }
+  return null;
+};
+
+const saveMasterCreds = (creds) => {
+  const dir = require('path').dirname(MASTER_CREDS_FILE);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(MASTER_CREDS_FILE, JSON.stringify(creds, null, 2));
+};
+
+// Validate Shield client credentials against clients.json
+const validateShieldClient = (username, password) => {
+  const clients = loadClients();
+  const client = clients.find(c => c.username === username && c.password === password);
+  if (!client) return { valid: false, error: 'Credenciales inválidas' };
+  if (client.is_banned) return { valid: false, error: 'Cliente bloqueado' };
+  if (!client.admin_enabled) return { valid: false, error: 'Cliente deshabilitado' };
+  if (client.exp_date) {
+    const expiry = new Date(client.exp_date);
+    if (!isNaN(expiry.getTime()) && expiry < new Date()) {
+      return { valid: false, error: 'Suscripción expirada' };
+    }
+  }
+  // Check max connections
+  const activeCons = Array.from(activeConnections.values()).filter(conn => conn.username === username).length;
+  if (client.max_connections && activeCons >= client.max_connections) {
+    return { valid: false, error: `Máximo de conexiones alcanzado (${client.max_connections})` };
+  }
+  return { valid: true, client };
+};
+
+// Load clients.json (forward declaration for use in validateShieldClient)
+const loadClients = () => {
+  try {
+    if (fs.existsSync(CLIENTS_FILE)) {
+      return JSON.parse(fs.readFileSync(CLIENTS_FILE, 'utf8'));
+    }
+  } catch (err) {
+    console.error('Error loading clients:', err.message);
+  }
+  return [];
+};
+
+const CLIENTS_FILE = '/opt/omnisync-shield/clients.json';
+
 // Tunnel state - Shield (main)
 let tunnelProcess = null;
 let tunnelUrl = null;
@@ -238,6 +293,25 @@ app.post('/api/xtream/config', authAdmin, (req, res) => {
   res.json({ success: true, message: 'Configuración actualizada' });
 });
 
+// Master credentials endpoints
+app.get('/api/xtream/master-creds', authAdmin, (req, res) => {
+  const creds = loadMasterCreds();
+  res.json({
+    configured: !!creds,
+    username: creds?.username || '',
+    // Don't send password back for security
+  });
+});
+
+app.post('/api/xtream/master-creds', authAdmin, (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Usuario y contraseña requeridos' });
+  }
+  saveMasterCreds({ username, password });
+  res.json({ success: true, message: 'Credenciales maestras guardadas' });
+});
+
 app.post('/api/xtream/test', authAdmin, (req, res) => {
   const { host, port, username, password } = req.body;
   const testHost = host || XTREAM_HOST;
@@ -437,19 +511,8 @@ app.get('/api/proxy/status', authAdmin, (req, res) => {
 
 // =============================================
 // SHIELD CLIENTS MANAGEMENT (local JSON storage)
+// Note: loadClients, CLIENTS_FILE defined at top
 // =============================================
-const CLIENTS_FILE = '/opt/omnisync-shield/clients.json';
-
-const loadClients = () => {
-  try {
-    if (fs.existsSync(CLIENTS_FILE)) {
-      return JSON.parse(fs.readFileSync(CLIENTS_FILE, 'utf8'));
-    }
-  } catch (err) {
-    console.error('Error loading clients:', err.message);
-  }
-  return [];
-};
 
 const saveClients = (clients) => {
   const dir = require('path').dirname(CLIENTS_FILE);
@@ -552,20 +615,59 @@ app.post('/api/shield/viewers/kick-user', authAdmin, (req, res) => {
 
 // =============================================
 // XTREAM CODES PROXY ENDPOINTS
+// Shield validates local clients, then uses master Xtream credentials
 // =============================================
+
+// Helper: validate Shield client and get master creds
+const getProxyCredentials = (username, password) => {
+  // Validate against Shield local clients
+  const validation = validateShieldClient(username, password);
+  if (!validation.valid) return { error: validation.error };
+
+  // Get master Xtream credentials
+  const masterCreds = loadMasterCreds();
+  if (!masterCreds) return { error: 'Credenciales maestras no configuradas. Configúralas en Xtream Config.' };
+
+  return { masterUser: masterCreds.username, masterPass: masterCreds.password, shieldClient: validation.client };
+};
 
 // player_api.php - Main API endpoint
 app.all('/player_api.php', (req, res) => {
   const params = { ...req.query, ...req.body };
+  const { username, password } = params;
+
+  if (username && password) {
+    const creds = getProxyCredentials(username, password);
+    if (creds.error) {
+      return res.status(403).json({ user_info: { auth: 0, status: 'Disabled', message: creds.error } });
+    }
+    // Replace with master credentials
+    params.username = creds.masterUser;
+    params.password = creds.masterPass;
+  }
+
   const qs = Object.entries(params).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
   proxyToXtream(`/player_api.php?${qs}`, req, res);
 });
 
 // get.php - M3U playlist
 app.get('/get.php', (req, res) => {
-  const qs = Object.entries(req.query).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+  const params = { ...req.query };
+  const { username, password } = params;
+  const shieldUser = username; // Keep original for URL rewriting
 
-  // For M3U playlists, we need to rewrite ALL URLs
+  if (username && password) {
+    const creds = getProxyCredentials(username, password);
+    if (creds.error) {
+      return res.status(403).send(`# ERROR: ${creds.error}`);
+    }
+    // Replace with master credentials for upstream
+    params.username = creds.masterUser;
+    params.password = creds.masterPass;
+  }
+
+  const qs = Object.entries(params).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+
   totalRequests++;
   const url = `${getXtreamUrl()}/get.php?${qs}`;
   const isHttps = url.startsWith('https');
@@ -588,6 +690,14 @@ app.get('/get.php', (req, res) => {
         rewritten = rewritten.replace(new RegExp(escapeRegex(`http://${serverIp}`), 'g'), publicHost);
       }
 
+      // Replace master credentials in M3U with Shield client credentials
+      const masterCreds = loadMasterCreds();
+      if (masterCreds && shieldUser) {
+        rewritten = rewritten.replace(new RegExp(`/${masterCreds.username}/${masterCreds.password}/`, 'g'), `/${shieldUser}/${password}/`);
+        rewritten = rewritten.replace(new RegExp(`username=${escapeRegex(masterCreds.username)}`, 'g'), `username=${shieldUser}`);
+        rewritten = rewritten.replace(new RegExp(`password=${escapeRegex(masterCreds.password)}`, 'g'), `password=${password}`);
+      }
+
       // Also handle localhost references
       rewritten = rewritten.replace(new RegExp(escapeRegex(`http://localhost:${XTREAM_PORT}`), 'g'), publicHost);
 
@@ -602,16 +712,35 @@ app.get('/get.php', (req, res) => {
 
 // xmltv.php - EPG
 app.get('/xmltv.php', (req, res) => {
-  const qs = Object.entries(req.query).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+  const params = { ...req.query };
+  const { username, password } = params;
+
+  if (username && password) {
+    const creds = getProxyCredentials(username, password);
+    if (creds.error) {
+      return res.status(403).json({ error: creds.error });
+    }
+    params.username = creds.masterUser;
+    params.password = creds.masterPass;
+  }
+
+  const qs = Object.entries(params).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
   proxyToXtream(`/xmltv.php?${qs}`, req, res);
 });
 
 // Live streams - /live/user/pass/stream_id.ts
 app.get('/live/:user/:pass/:stream', (req, res) => {
   const { user, pass, stream } = req.params;
+
+  // Validate Shield client
+  const creds = getProxyCredentials(user, pass);
+  if (creds.error) {
+    return res.status(403).json({ error: creds.error });
+  }
+
   totalRequests++;
 
-  // Track connection
+  // Track connection with Shield username
   const connId = `${req.ip}-${user}-${stream}`;
   activeConnections.set(connId, {
     id: connId,
@@ -623,7 +752,8 @@ app.get('/live/:user/:pass/:stream', (req, res) => {
     country: null,
   });
 
-  const url = `${getXtreamUrl()}/live/${user}/${pass}/${stream}`;
+  // Use master credentials to connect to Xtream
+  const url = `${getXtreamUrl()}/live/${creds.masterUser}/${creds.masterPass}/${stream}`;
   const isHttps = url.startsWith('https');
   const mod = isHttps ? https : http;
 
@@ -651,9 +781,14 @@ app.get('/live/:user/:pass/:stream', (req, res) => {
 // Movie/Series streams
 app.get('/movie/:user/:pass/:stream', (req, res) => {
   const { user, pass, stream } = req.params;
-  totalRequests++;
 
-  const url = `${getXtreamUrl()}/movie/${user}/${pass}/${stream}`;
+  const creds = getProxyCredentials(user, pass);
+  if (creds.error) {
+    return res.status(403).json({ error: creds.error });
+  }
+
+  totalRequests++;
+  const url = `${getXtreamUrl()}/movie/${creds.masterUser}/${creds.masterPass}/${stream}`;
   const isHttps = url.startsWith('https');
   const mod = isHttps ? https : http;
 
@@ -670,9 +805,14 @@ app.get('/movie/:user/:pass/:stream', (req, res) => {
 
 app.get('/series/:user/:pass/:stream', (req, res) => {
   const { user, pass, stream } = req.params;
-  totalRequests++;
 
-  const url = `${getXtreamUrl()}/series/${user}/${pass}/${stream}`;
+  const creds = getProxyCredentials(user, pass);
+  if (creds.error) {
+    return res.status(403).json({ error: creds.error });
+  }
+
+  totalRequests++;
+  const url = `${getXtreamUrl()}/series/${creds.masterUser}/${creds.masterPass}/${stream}`;
   const isHttps = url.startsWith('https');
   const mod = isHttps ? https : http;
 
