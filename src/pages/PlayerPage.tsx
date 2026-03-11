@@ -8,6 +8,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import VideoPlayer from '@/components/VideoPlayer';
 import { useLocation } from 'react-router-dom';
 import omnisyncLogo from '@/assets/omnisync-logo.png';
+import { playWithVlc, isNativeAndroid } from '@/lib/native-player';
 
 const PlayerPage = () => {
   const navigate = useNavigate();
