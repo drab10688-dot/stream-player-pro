@@ -1,6 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { apiGet, apiPost } from '@/lib/api';
+import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+
+const isLovablePreview = () => {
+  const host = window.location.hostname;
+  return host.includes('lovable.app') || host.includes('lovable.dev') || host === 'localhost';
+};
 import { Bug, Play, RefreshCw, AlertTriangle, CheckCircle, XCircle, Search, Wifi, Clock, FileText, Copy, ClipboardCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -49,18 +55,24 @@ const StreamDiagnostics = () => {
   const [copied, setCopied] = useState(false);
   const [reportText, setReportText] = useState('');
   const [showReport, setShowReport] = useState(false);
-  useEffect(() => {
-    fetchChannels();
-  }, []);
-
-  const fetchChannels = async () => {
+  const fetchChannels = useCallback(async () => {
     try {
-      const data = await apiGet('/api/channels');
-      setChannels(data);
+      if (isLovablePreview()) {
+        const { data, error } = await supabase.from('channels').select('id, name, url, category, logo_url, is_active');
+        if (error) throw error;
+        setChannels(data || []);
+      } else {
+        const data = await apiGet('/api/channels');
+        setChannels(data);
+      }
     } catch (err: any) {
       toast({ title: 'Error', description: err.message, variant: 'destructive' });
     }
-  };
+  }, [toast]);
+
+  useEffect(() => {
+    fetchChannels();
+  }, [fetchChannels]);
 
   const testChannel = async (channel: Channel): Promise<DiagResult> => {
     const startTime = Date.now();
@@ -84,11 +96,27 @@ const StreamDiagnostics = () => {
     setResults(prev => new Map(prev).set(channel.id, testingResult));
 
     try {
-      // Try server-side diagnostic endpoint first
-      const diagData = await apiPost('/api/channels/diagnose', { 
-        channel_id: channel.id,
-        url: channel.url 
-      });
+      let diagData: any;
+      if (isLovablePreview()) {
+        // Use edge function in preview
+        const { data, error } = await supabase.functions.invoke('channel-ping', {
+          body: { channel_ids: [channel.id] }
+        });
+        if (error) throw error;
+        const result = data?.results?.[0];
+        diagData = result ? {
+          status: result.status === 'online' ? 'ok' : 'error',
+          http_code: result.status_code,
+          response_time_ms: result.response_time,
+          error_message: result.error,
+          details: result.status === 'online' ? 'Stream accesible' : result.error,
+        } : { status: 'error', error_message: 'Sin resultado' };
+      } else {
+        diagData = await apiPost('/api/channels/diagnose', { 
+          channel_id: channel.id,
+          url: channel.url 
+        });
+      }
 
       const elapsed = Date.now() - startTime;
       const result: DiagResult = {
