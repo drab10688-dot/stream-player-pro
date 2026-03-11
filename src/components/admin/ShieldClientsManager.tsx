@@ -336,7 +336,7 @@ const ShieldClientsManager = () => {
                       </span>
                       <span className="flex items-center gap-1">
                         <Calendar className="w-3 h-3" />
-                        {c.expiry_date ? format(c.expiry_date, 'dd/MM/yyyy') : 'Sin fecha'}
+                        {c.expiry_date && !isNaN(c.expiry_date.getTime()) ? format(c.expiry_date, 'dd/MM/yyyy') : 'Sin fecha'}
                       </span>
                       {c.days_left !== undefined && c.days_left >= 0 && c.days_left <= 30 && (
                         <Badge variant={c.days_left <= 3 ? 'destructive' : 'secondary'}
