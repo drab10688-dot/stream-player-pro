@@ -123,7 +123,7 @@ const ShieldClientsManager = () => {
   };
 
   const handleEdit = (c: XtreamClient) => {
-    const expStr = c.expiry_date ? format(c.expiry_date, 'yyyy-MM-dd') : '';
+    const expStr = c.expiry_date && !isNaN(c.expiry_date.getTime()) ? format(c.expiry_date, 'yyyy-MM-dd') : '';
     setForm({
       username: c.username,
       password: c.password,
