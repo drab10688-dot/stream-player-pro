@@ -399,7 +399,7 @@ const ChannelTester = () => {
               </CardHeader>
               <CardContent>
                 <div className="aspect-video rounded-lg overflow-hidden bg-black">
-                  <VideoPlayer src={playingChannel.url} channelId={playingChannel.id} />
+                  <VideoPlayer src={playingChannel.url} channelId={playingChannel.id} streamMode={(playingChannel as any).stream_mode} />
                 </div>
               </CardContent>
             </Card>
