@@ -295,7 +295,7 @@ const ChannelsManager = () => {
           <Button onClick={() => { setShowM3UImport(!showM3UImport); setShowForm(false); }} variant="outline" className="gap-2 border-border text-foreground" size="sm">
             <Upload className="w-4 h-4" /> Importar M3U
           </Button>
-          <Button onClick={() => { setShowForm(true); setShowM3UImport(false); setEditingId(null); setLogoPreview(null); setForm({ name: '', url: '', category: 'General', sort_order: 0, logo_url: '' }); }} className="gradient-primary text-primary-foreground gap-2" size="sm">
+          <Button onClick={() => { setShowForm(true); setShowM3UImport(false); setEditingId(null); setLogoPreview(null); setForm({ name: '', url: '', category: 'General', sort_order: 0, logo_url: '', stream_mode: 'direct' }); }} className="gradient-primary text-primary-foreground gap-2" size="sm">
             <Plus className="w-4 h-4" /> Agregar Canal
           </Button>
         </div>
