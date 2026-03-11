@@ -246,12 +246,11 @@ const AccessLinks = () => {
     { label: 'Panel Admin', path: '/admin', icon: AlertTriangle, color: 'text-destructive' },
   ];
 
-  const copyLink = (path: string) => {
+  const copyLink = async (path: string) => {
     const url = `${baseUrl}${path}`;
-    navigator.clipboard.writeText(url).then(() => {
-      setCopiedLink(path);
-      setTimeout(() => setCopiedLink(null), 2000);
-    });
+    await copyToClipboard(url);
+    setCopiedLink(path);
+    setTimeout(() => setCopiedLink(null), 2000);
   };
 
   return (

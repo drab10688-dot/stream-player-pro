@@ -84,9 +84,9 @@ const TunnelManager = () => {
     setActionLoading(null);
   };
 
-  const copyUrl = () => {
+  const copyUrl = async () => {
     if (tunnel?.url) {
-      navigator.clipboard.writeText(tunnel.url);
+      await copyToClipboard(tunnel.url);
       toast({ title: 'Copiado', description: 'URL copiada al portapapeles' });
     }
   };

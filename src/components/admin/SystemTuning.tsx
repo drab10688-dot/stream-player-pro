@@ -103,9 +103,9 @@ const SystemTuning = () => {
 
   const toggleCat = (cat: string) => setExpandedCats(prev => ({ ...prev, [cat]: !prev[cat] }));
 
-  const copyFixCommand = () => {
+  const copyFixCommand = async () => {
     const cmd = `sudo curl -sL https://raw.githubusercontent.com/tu-repo/main/server/install.sh | grep -A100 'sysctl.d/99-streambox' | head -80 > /etc/sysctl.d/99-streambox.conf && sudo sysctl -p /etc/sysctl.d/99-streambox.conf`;
-    navigator.clipboard.writeText(cmd);
+    await copyToClipboard(cmd);
     toast({ title: 'Copiado', description: 'Comando copiado al portapapeles' });
   };
 

@@ -255,18 +255,11 @@ const StreamDiagnostics = () => {
     setShowReport(true);
   };
 
-  const copyReport = () => {
-    navigator.clipboard.writeText(reportText).then(() => {
-      setCopied(true);
-      toast({ title: 'Reporte copiado', description: 'Pégalo en el chat para que lo revise' });
-      setTimeout(() => setCopied(false), 3000);
-    }).catch(() => {
-      // Select all text in textarea as fallback
-      const textarea = document.querySelector('#report-textarea') as HTMLTextAreaElement;
-      if (textarea) { textarea.select(); document.execCommand('copy'); }
-      setCopied(true);
-      setTimeout(() => setCopied(false), 3000);
-    });
+  const copyReport = async () => {
+    await copyToClipboard(reportText);
+    setCopied(true);
+    toast({ title: 'Reporte copiado', description: 'Pégalo en el chat para que lo revise' });
+    setTimeout(() => setCopied(false), 3000);
   };
 
   const filteredChannels = channels.filter(c => 
