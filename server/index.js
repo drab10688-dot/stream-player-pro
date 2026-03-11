@@ -2010,7 +2010,7 @@ const fetchSegment = (segmentUrl) => {
       res.on('error', (err) => { pendingSegments.delete(segmentUrl); reject(err); });
     });
     req.on('error', (err) => { pendingSegments.delete(segmentUrl); reject(err); });
-    req.setTimeout(15000, () => { req.destroy(); pendingSegments.delete(segmentUrl); reject(new Error('Timeout')); });
+    req.setTimeout(5000, () => { req.destroy(); pendingSegments.delete(segmentUrl); reject(new Error('Timeout 5s')); });
     req.end();
   });
   pendingSegments.set(segmentUrl, promise);
