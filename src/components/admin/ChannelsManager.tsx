@@ -100,7 +100,7 @@ const ChannelsManager = () => {
       return;
     }
     try {
-      const payload = { ...form, logo_url: form.logo_url.trim() || null };
+      const payload = { ...form, logo_url: form.logo_url.trim() || null, stream_mode: form.stream_mode };
       if (isLovablePreview()) {
         if (editingId) {
           const { error } = await supabase.from('channels').update(payload).eq('id', editingId);
