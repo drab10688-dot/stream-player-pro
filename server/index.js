@@ -208,7 +208,7 @@ async function runAutoPing() {
         const parsedUrl = new URL(ch.url);
         const httpClient = parsedUrl.protocol === 'https:' ? https : http;
         const result = await new Promise((resolve) => {
-          const req = httpClient.request(ch.url, { method: 'GET', headers: { 'User-Agent': 'StreamBox-HealthCheck/1.0', 'Range': 'bytes=0-1024' } }, (response) => {
+           const req = httpClient.request(ch.url, { method: 'GET', headers: { 'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18', 'Range': 'bytes=0-1024' } }, (response) => {
             response.destroy();
             const isOk = response.statusCode >= 200 && response.statusCode < 400;
             resolve({ id: ch.id, name: ch.name, status: isOk ? 'online' : 'offline', consecutive_failures: ch.consecutive_failures, was_auto_disabled: ch.auto_disabled, error: isOk ? null : `HTTP ${response.statusCode}` });
@@ -334,7 +334,7 @@ app.post('/api/channels/ping', authAdmin, async (req, res) => {
         const httpClient = parsedUrl.protocol === 'https:' ? https : http;
 
         const result = await new Promise((resolve) => {
-          const req = httpClient.request(ch.url, { method: 'GET', headers: { 'User-Agent': 'StreamBox-HealthCheck/1.0', 'Range': 'bytes=0-1024' } }, (response) => {
+          const req = httpClient.request(ch.url, { method: 'GET', headers: { 'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18', 'Range': 'bytes=0-1024' } }, (response) => {
             response.destroy();
             const responseTime = Date.now() - start;
             const isOk = response.statusCode >= 200 && response.statusCode < 400;
@@ -939,6 +939,7 @@ function probeStreamCodec(url) {
     try {
       const probe = spawn('ffprobe', [
         '-v', 'error',
+        '-user_agent', 'VLC/3.0.18 LibVLC/3.0.18',
         '-select_streams', 'v:0',
         '-show_entries', 'stream=codec_name',
         '-of', 'csv=p=0',
@@ -1150,6 +1151,11 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
 
   // Build FFmpeg command: 4 transcoded outputs + 1 copy
   const ffmpegArgs = [
+    '-user_agent', 'VLC/3.0.18 LibVLC/3.0.18',
+    '-analyzeduration', '1000000',
+    '-probesize', '1000000',
+    '-fflags', '+nobuffer',
+    '-flags', '+low_delay',
     '-reconnect', '1',
     '-reconnect_streamed', '1',
     '-reconnect_delay_max', '10',
@@ -1172,11 +1178,12 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
     );
   });
 
-  // Output 4: COPY (original passthrough — 0% CPU, NO filters, NO encoder params)
+  // Output 4: COPY video, but ALWAYS transcode audio to AAC for browser compatibility
+  // Many IPTV sources use AC3/EAC3 audio which browsers cannot decode
   ffmpegArgs.push(
     '-map', '0:v:0', '-map', '0:a:0?',
     '-c:v:4', 'copy',
-    '-c:a:4', 'copy',
+    '-c:a:4', 'aac', '-b:a:4', '128k',
   );
 
   // Common settings
@@ -1355,6 +1362,11 @@ function startSingleQualityTranscoder(channelId, sourceUrl, channelDir, isKeepAl
   console.log(`🎬 [${channelId}] FFmpeg calidad única (caché: ${cacheLabel}): ${sourceUrl}`);
 
   const ffmpeg = spawn('ffmpeg', [
+    '-user_agent', 'VLC/3.0.18 LibVLC/3.0.18',
+    '-analyzeduration', '1000000',
+    '-probesize', '1000000',
+    '-fflags', '+nobuffer',
+    '-flags', '+low_delay',
     '-reconnect', '1',
     '-reconnect_streamed', '1',
     '-reconnect_delay_max', '10',
@@ -1730,7 +1742,7 @@ function startHLSKeepAlivePolling(channelId, sourceUrl) {
       const httpClient = parsedUrl.protocol === 'https:' ? https : http;
       const req = httpClient.request(sourceUrl, {
         method: 'GET',
-        headers: { 'User-Agent': 'StreamBox/1.0' },
+        headers: { 'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18' },
       }, (res) => {
         let body = '';
         res.on('data', chunk => { body += chunk.toString(); });
@@ -1738,7 +1750,7 @@ function startHLSKeepAlivePolling(channelId, sourceUrl) {
         res.on('error', reject);
       });
       req.on('error', reject);
-      req.setTimeout(10000, () => { req.destroy(); reject(new Error('Timeout')); });
+      req.setTimeout(5000, () => { req.destroy(); reject(new Error('Timeout 5s')); });
       req.end();
     });
   };
@@ -1774,7 +1786,7 @@ function startHLSKeepAlivePolling(channelId, sourceUrl) {
             const httpClient = parsedUrl.protocol === 'https:' ? https : http;
             const req = httpClient.request(subUrl, {
               method: 'GET',
-              headers: { 'User-Agent': 'StreamBox/1.0' },
+        headers: { 'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18' },
             }, (res) => {
               let body = '';
               res.on('data', chunk => { body += chunk.toString(); });
@@ -1782,7 +1794,7 @@ function startHLSKeepAlivePolling(channelId, sourceUrl) {
               res.on('error', reject);
             });
             req.on('error', reject);
-            req.setTimeout(10000, () => { req.destroy(); reject(new Error('Timeout')); });
+            req.setTimeout(5000, () => { req.destroy(); reject(new Error('Timeout 5s')); });
             req.end();
           });
           rawManifest = subManifest;
@@ -1850,7 +1862,7 @@ const fetchM3U8Raw = (targetUrl) => {
     const httpClient = parsedUrl.protocol === 'https:' ? https : http;
     const req = httpClient.request(targetUrl, {
       method: 'GET',
-      headers: { 'User-Agent': 'StreamBox/1.0' },
+      headers: { 'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18' },
     }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         return fetchM3U8Raw(res.headers.location).then(resolve).catch(reject);
@@ -1860,7 +1872,7 @@ const fetchM3U8Raw = (targetUrl) => {
       res.on('end', () => resolve({ body, baseUrl: targetUrl.substring(0, targetUrl.lastIndexOf('/') + 1), statusCode: res.statusCode }));
     });
     req.on('error', reject);
-    req.setTimeout(15000, () => { req.destroy(); reject(new Error('Timeout')); });
+    req.setTimeout(5000, () => { req.destroy(); reject(new Error('Timeout 5s')); });
     req.end();
   });
 };
@@ -1975,7 +1987,7 @@ const fetchSegment = (segmentUrl) => {
     const httpClient = parsedUrl.protocol === 'https:' ? https : http;
     const req = httpClient.request(segmentUrl, {
       method: 'GET',
-      headers: { 'User-Agent': 'StreamBox/1.0' },
+      headers: { 'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18' },
     }, (res) => {
       const chunks = [];
       res.on('data', chunk => chunks.push(chunk));
@@ -1998,7 +2010,7 @@ const fetchSegment = (segmentUrl) => {
       res.on('error', (err) => { pendingSegments.delete(segmentUrl); reject(err); });
     });
     req.on('error', (err) => { pendingSegments.delete(segmentUrl); reject(err); });
-    req.setTimeout(15000, () => { req.destroy(); pendingSegments.delete(segmentUrl); reject(new Error('Timeout')); });
+    req.setTimeout(5000, () => { req.destroy(); pendingSegments.delete(segmentUrl); reject(new Error('Timeout 5s')); });
     req.end();
   });
   pendingSegments.set(segmentUrl, promise);
@@ -2144,12 +2156,14 @@ app.get('/api/restream/:channelId', async (req, res) => {
         // Normal HLS proxy (H.264 or compatible)
         startHLSProxy(channelId, targetUrl);
         try {
-          const manifest = await getCachedM3U8(channelId, targetUrl);
+          const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout 5s')), 5000));
+          const manifest = await Promise.race([getCachedM3U8(channelId, targetUrl), timeoutPromise]);
           res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
           res.send(manifest);
         } catch (err) {
           console.error('HLS proxy error:', err.message);
-          res.status(502).json({ error: 'No se pudo obtener el manifiesto HLS' });
+          const status = err.message.includes('Timeout') ? 504 : 502;
+          res.status(status).json({ error: status === 504 ? 'Canal no respondió en 5 segundos' : 'No se pudo obtener el manifiesto HLS' });
         }
         res.on('finish', () => releaseTranscoder(channelId));
       }
