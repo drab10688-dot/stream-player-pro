@@ -1872,7 +1872,7 @@ const fetchM3U8Raw = (targetUrl) => {
       res.on('end', () => resolve({ body, baseUrl: targetUrl.substring(0, targetUrl.lastIndexOf('/') + 1), statusCode: res.statusCode }));
     });
     req.on('error', reject);
-    req.setTimeout(15000, () => { req.destroy(); reject(new Error('Timeout')); });
+    req.setTimeout(5000, () => { req.destroy(); reject(new Error('Timeout 5s')); });
     req.end();
   });
 };
