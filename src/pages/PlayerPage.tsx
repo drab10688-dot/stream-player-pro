@@ -54,6 +54,12 @@ const PlayerPage = () => {
     setSearch('');
     const idx = channels.findIndex(ch => ch.id === channel.id);
     showChannelChange(channel, idx);
+
+    // On native Android, launch VLC player
+    if (isNativeAndroid()) {
+      playWithVlc(channel.url, channel.name);
+    }
+
     // Auto-hide controls after channel selection
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     hideTimerRef.current = setTimeout(() => setShowControls(false), 2500);
