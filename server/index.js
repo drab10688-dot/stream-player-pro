@@ -2156,12 +2156,14 @@ app.get('/api/restream/:channelId', async (req, res) => {
         // Normal HLS proxy (H.264 or compatible)
         startHLSProxy(channelId, targetUrl);
         try {
-          const manifest = await getCachedM3U8(channelId, targetUrl);
+          const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout 5s')), 5000));
+          const manifest = await Promise.race([getCachedM3U8(channelId, targetUrl), timeoutPromise]);
           res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
           res.send(manifest);
         } catch (err) {
           console.error('HLS proxy error:', err.message);
-          res.status(502).json({ error: 'No se pudo obtener el manifiesto HLS' });
+          const status = err.message.includes('Timeout') ? 504 : 502;
+          res.status(status).json({ error: status === 504 ? 'Canal no respondió en 5 segundos' : 'No se pudo obtener el manifiesto HLS' });
         }
         res.on('finish', () => releaseTranscoder(channelId));
       }
