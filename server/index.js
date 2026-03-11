@@ -1742,7 +1742,7 @@ function startHLSKeepAlivePolling(channelId, sourceUrl) {
       const httpClient = parsedUrl.protocol === 'https:' ? https : http;
       const req = httpClient.request(sourceUrl, {
         method: 'GET',
-        headers: { 'User-Agent': 'StreamBox/1.0' },
+        headers: { 'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18' },
       }, (res) => {
         let body = '';
         res.on('data', chunk => { body += chunk.toString(); });
@@ -1750,7 +1750,7 @@ function startHLSKeepAlivePolling(channelId, sourceUrl) {
         res.on('error', reject);
       });
       req.on('error', reject);
-      req.setTimeout(10000, () => { req.destroy(); reject(new Error('Timeout')); });
+      req.setTimeout(5000, () => { req.destroy(); reject(new Error('Timeout 5s')); });
       req.end();
     });
   };
