@@ -115,7 +115,13 @@ const getPublicHost = (req) => {
   const fwdHost = req.headers['x-forwarded-host'];
   const fwdProto = req.headers['x-forwarded-proto'] || 'http';
   if (fwdHost) return `${fwdProto}://${fwdHost}`;
-  return `http://${req.headers.host}`;
+  // Ensure host includes the Nginx port if not already present
+  const host = req.headers.host || `localhost:${NGINX_PORT}`;
+  // If host doesn't have a port and we're not on standard port 80, add NGINX_PORT
+  if (!host.includes(':') && NGINX_PORT !== '80') {
+    return `http://${host}:${NGINX_PORT}`;
+  }
+  return `http://${host}`;
 };
 
 const proxyToXtream = (targetPath, req, res) => {
@@ -824,6 +830,63 @@ app.get('/series/:user/:pass/:stream', (req, res) => {
     proxyRes.pipe(res);
   }).on('error', () => {
     if (!res.headersSent) res.status(502).end();
+  });
+});
+
+// =============================================
+// SHORT URL FORMAT - Xtream uses /:user/:pass/:streamId without /live/ prefix
+// =============================================
+app.get('/:user/:pass/:stream', (req, res, next) => {
+  const { user, pass, stream } = req.params;
+  
+  // Skip if it looks like an API/admin route
+  if (['api', 'admin', 'static', 'assets', 'favicon.ico'].includes(user)) return next();
+  // Skip if stream doesn't look like a stream ID (number or number.ext)
+  if (!/^\d+(\.\w+)?$/.test(stream)) return next();
+
+  // Validate Shield client
+  const creds = getProxyCredentials(user, pass);
+  if (creds.error) {
+    return res.status(403).json({ error: creds.error });
+  }
+
+  totalRequests++;
+
+  // Track connection
+  const connId = `${req.ip}-${user}-${stream}`;
+  activeConnections.set(connId, {
+    id: connId,
+    client_ip: req.ip || req.headers['x-real-ip'] || 'unknown',
+    username: user,
+    connected_at: new Date().toISOString(),
+    last_activity: new Date().toISOString(),
+    target: `/live/${stream}`,
+    country: null,
+  });
+
+  // Use master credentials - try /live/ path first (standard Xtream format)
+  const url = `${getXtreamUrl()}/${creds.masterUser}/${creds.masterPass}/${stream}`;
+  const isHttps = url.startsWith('https');
+  const mod = isHttps ? https : http;
+
+  const proxyReq = mod.get(url, {
+    headers: { 'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18' },
+    timeout: 30000,
+  }, (proxyRes) => {
+    res.writeHead(proxyRes.statusCode, {
+      'Content-Type': proxyRes.headers['content-type'] || 'video/mp2t',
+      'Access-Control-Allow-Origin': '*',
+    });
+    proxyRes.pipe(res);
+  });
+
+  proxyReq.on('error', () => {
+    activeConnections.delete(connId);
+    if (!res.headersSent) res.status(502).end();
+  });
+
+  res.on('close', () => {
+    activeConnections.delete(connId);
   });
 });
 
