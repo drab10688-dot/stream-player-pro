@@ -4,6 +4,7 @@ import { useAdminAuth } from '@/contexts/AdminAuthContext';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { LayoutDashboard, Globe, Settings, Activity, LogOut, Users, Eye } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import ErrorBoundary from '@/components/ErrorBoundary';
 import DashboardOverview from '@/components/admin/DashboardOverview';
 import TunnelManager from '@/components/admin/TunnelManager';
 import XtreamConfig from '@/components/admin/XtreamConfig';
