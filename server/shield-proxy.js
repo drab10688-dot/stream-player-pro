@@ -28,6 +28,61 @@ const NGINX_PORT = process.env.NGINX_PORT || '8880';
 let XTREAM_HOST = process.env.XTREAM_HOST || 'http://localhost';
 let XTREAM_PORT = process.env.XTREAM_PORT || '25461';
 
+// Master Xtream credentials (used by Shield to proxy streams for local clients)
+const MASTER_CREDS_FILE = '/opt/omnisync-shield/master-creds.json';
+
+const loadMasterCreds = () => {
+  try {
+    if (fs.existsSync(MASTER_CREDS_FILE)) {
+      return JSON.parse(fs.readFileSync(MASTER_CREDS_FILE, 'utf8'));
+    }
+  } catch (err) {
+    console.error('Error loading master creds:', err.message);
+  }
+  return null;
+};
+
+const saveMasterCreds = (creds) => {
+  const dir = require('path').dirname(MASTER_CREDS_FILE);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(MASTER_CREDS_FILE, JSON.stringify(creds, null, 2));
+};
+
+// Validate Shield client credentials against clients.json
+const validateShieldClient = (username, password) => {
+  const clients = loadClients();
+  const client = clients.find(c => c.username === username && c.password === password);
+  if (!client) return { valid: false, error: 'Credenciales inválidas' };
+  if (client.is_banned) return { valid: false, error: 'Cliente bloqueado' };
+  if (!client.admin_enabled) return { valid: false, error: 'Cliente deshabilitado' };
+  if (client.exp_date) {
+    const expiry = new Date(client.exp_date);
+    if (!isNaN(expiry.getTime()) && expiry < new Date()) {
+      return { valid: false, error: 'Suscripción expirada' };
+    }
+  }
+  // Check max connections
+  const activeCons = Array.from(activeConnections.values()).filter(conn => conn.username === username).length;
+  if (client.max_connections && activeCons >= client.max_connections) {
+    return { valid: false, error: `Máximo de conexiones alcanzado (${client.max_connections})` };
+  }
+  return { valid: true, client };
+};
+
+// Load clients.json (forward declaration for use in validateShieldClient)
+const loadClients = () => {
+  try {
+    if (fs.existsSync(CLIENTS_FILE)) {
+      return JSON.parse(fs.readFileSync(CLIENTS_FILE, 'utf8'));
+    }
+  } catch (err) {
+    console.error('Error loading clients:', err.message);
+  }
+  return [];
+};
+
+const CLIENTS_FILE = '/opt/omnisync-shield/clients.json';
+
 // Tunnel state - Shield (main)
 let tunnelProcess = null;
 let tunnelUrl = null;
