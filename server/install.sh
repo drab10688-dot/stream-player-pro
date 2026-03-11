@@ -862,7 +862,7 @@ cd /opt/streambox/server
 # Asegurar que el puerto está libre antes de iniciar
 kill_port $API_PORT 2>/dev/null
 
-pm2 start index.js --name streambox-api --max-restarts 10 --restart-delay 3000 > /dev/null 2>&1
+DB_PASS="${DB_PASS}" pm2 start index.js --name streambox-api --max-restarts 10 --restart-delay 3000 --update-env > /dev/null 2>&1
 pm2 startup systemd -u root --hp /root > /dev/null 2>&1 || true
 pm2 save > /dev/null 2>&1
 
