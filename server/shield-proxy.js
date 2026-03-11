@@ -712,10 +712,12 @@ app.listen(PORT, () => {
 // Cleanup on exit
 process.on('SIGTERM', () => {
   if (tunnelProcess) tunnelProcess.kill('SIGTERM');
+  if (xtreamTunnelProcess) xtreamTunnelProcess.kill('SIGTERM');
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
   if (tunnelProcess) tunnelProcess.kill('SIGTERM');
+  if (xtreamTunnelProcess) xtreamTunnelProcess.kill('SIGTERM');
   process.exit(0);
 });
