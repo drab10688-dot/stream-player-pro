@@ -1862,7 +1862,7 @@ const fetchM3U8Raw = (targetUrl) => {
     const httpClient = parsedUrl.protocol === 'https:' ? https : http;
     const req = httpClient.request(targetUrl, {
       method: 'GET',
-      headers: { 'User-Agent': 'StreamBox/1.0' },
+      headers: { 'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18' },
     }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         return fetchM3U8Raw(res.headers.location).then(resolve).catch(reject);
