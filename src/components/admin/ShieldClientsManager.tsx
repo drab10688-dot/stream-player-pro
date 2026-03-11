@@ -50,9 +50,19 @@ const ShieldClientsManager = () => {
 
   const processClients = (raw: any[]): XtreamClient[] => {
     return raw.map(c => {
-      const expDate = c.exp_date
-        ? (String(c.exp_date).length > 10 ? new Date(c.exp_date) : new Date(Number(c.exp_date) * 1000))
-        : null;
+      let expDate: Date | null = null;
+      try {
+        if (c.exp_date) {
+          const parsed = String(c.exp_date).length > 10
+            ? new Date(c.exp_date)
+            : new Date(Number(c.exp_date) * 1000);
+          if (!isNaN(parsed.getTime())) {
+            expDate = parsed;
+          }
+        }
+      } catch {
+        expDate = null;
+      }
       const daysLeft = expDate ? differenceInDays(expDate, new Date()) : 999;
       return {
         ...c,
@@ -113,7 +123,7 @@ const ShieldClientsManager = () => {
   };
 
   const handleEdit = (c: XtreamClient) => {
-    const expStr = c.expiry_date ? format(c.expiry_date, 'yyyy-MM-dd') : '';
+    const expStr = c.expiry_date && !isNaN(c.expiry_date.getTime()) ? format(c.expiry_date, 'yyyy-MM-dd') : '';
     setForm({
       username: c.username,
       password: c.password,
@@ -326,7 +336,7 @@ const ShieldClientsManager = () => {
                       </span>
                       <span className="flex items-center gap-1">
                         <Calendar className="w-3 h-3" />
-                        {c.expiry_date ? format(c.expiry_date, 'dd/MM/yyyy') : 'Sin fecha'}
+                        {c.expiry_date && !isNaN(c.expiry_date.getTime()) ? format(c.expiry_date, 'dd/MM/yyyy') : 'Sin fecha'}
                       </span>
                       {c.days_left !== undefined && c.days_left >= 0 && c.days_left <= 30 && (
                         <Badge variant={c.days_left <= 3 ? 'destructive' : 'secondary'}
