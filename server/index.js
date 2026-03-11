@@ -334,7 +334,7 @@ app.post('/api/channels/ping', authAdmin, async (req, res) => {
         const httpClient = parsedUrl.protocol === 'https:' ? https : http;
 
         const result = await new Promise((resolve) => {
-          const req = httpClient.request(ch.url, { method: 'GET', headers: { 'User-Agent': 'StreamBox-HealthCheck/1.0', 'Range': 'bytes=0-1024' } }, (response) => {
+          const req = httpClient.request(ch.url, { method: 'GET', headers: { 'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18', 'Range': 'bytes=0-1024' } }, (response) => {
             response.destroy();
             const responseTime = Date.now() - start;
             const isOk = response.statusCode >= 200 && response.statusCode < 400;
