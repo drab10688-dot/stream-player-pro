@@ -4,6 +4,7 @@ import { useAdminAuth } from '@/contexts/AdminAuthContext';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { LayoutDashboard, Globe, Settings, Activity, LogOut, Users, Eye } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import ErrorBoundary from '@/components/ErrorBoundary';
 import DashboardOverview from '@/components/admin/DashboardOverview';
 import TunnelManager from '@/components/admin/TunnelManager';
 import XtreamConfig from '@/components/admin/XtreamConfig';
@@ -83,12 +84,12 @@ const AdminDashboard = () => {
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="overview" forceMount className="data-[state=inactive]:hidden"><DashboardOverview /></TabsContent>
-          <TabsContent value="tunnel" forceMount className="data-[state=inactive]:hidden"><TunnelManager /></TabsContent>
-          <TabsContent value="clients" forceMount className="data-[state=inactive]:hidden"><ShieldClientsManager /></TabsContent>
-          <TabsContent value="viewers" forceMount className="data-[state=inactive]:hidden"><ShieldViewers /></TabsContent>
-          <TabsContent value="proxy" forceMount className="data-[state=inactive]:hidden"><ProxyStatus /></TabsContent>
-          <TabsContent value="xtream" forceMount className="data-[state=inactive]:hidden"><XtreamConfig /></TabsContent>
+          <TabsContent value="overview" forceMount className="data-[state=inactive]:hidden"><ErrorBoundary><DashboardOverview /></ErrorBoundary></TabsContent>
+          <TabsContent value="tunnel" forceMount className="data-[state=inactive]:hidden"><ErrorBoundary><TunnelManager /></ErrorBoundary></TabsContent>
+          <TabsContent value="clients" forceMount className="data-[state=inactive]:hidden"><ErrorBoundary><ShieldClientsManager /></ErrorBoundary></TabsContent>
+          <TabsContent value="viewers" forceMount className="data-[state=inactive]:hidden"><ErrorBoundary><ShieldViewers /></ErrorBoundary></TabsContent>
+          <TabsContent value="proxy" forceMount className="data-[state=inactive]:hidden"><ErrorBoundary><ProxyStatus /></ErrorBoundary></TabsContent>
+          <TabsContent value="xtream" forceMount className="data-[state=inactive]:hidden"><ErrorBoundary><XtreamConfig /></ErrorBoundary></TabsContent>
         </Tabs>
       </main>
     </div>
