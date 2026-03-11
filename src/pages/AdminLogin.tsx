@@ -14,7 +14,13 @@ const AdminLogin = () => {
   const [isSignup, setIsSignup] = useState(false);
   const { toast } = useToast();
   const navigate = useNavigate();
-  const { login, setup } = useAdminAuth();
+  const { login, setup, isAdmin, loading: authLoading } = useAdminAuth();
+
+  useEffect(() => {
+    if (!authLoading && isAdmin) {
+      navigate('/admin/panel');
+    }
+  }, [authLoading, isAdmin, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
