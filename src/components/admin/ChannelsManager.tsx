@@ -120,7 +120,7 @@ const ChannelsManager = () => {
           toast({ title: 'Canal creado' });
         }
       }
-      setForm({ name: '', url: '', category: 'General', sort_order: 0, logo_url: '' });
+      setForm({ name: '', url: '', category: 'General', sort_order: 0, logo_url: '', stream_mode: 'direct' });
       setShowForm(false);
       setEditingId(null);
       fetchChannels();
