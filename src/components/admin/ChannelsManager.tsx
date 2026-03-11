@@ -415,6 +415,33 @@ const ChannelsManager = () => {
             )}
           </div>
           <Input type="number" placeholder="Orden" value={form.sort_order} onChange={e => setForm({ ...form, sort_order: parseInt(e.target.value) || 0 })} className="bg-secondary border-border text-foreground w-32" />
+          <div className="space-y-2">
+            <label className="text-xs text-muted-foreground block">Modo de Transmisión</label>
+            <div className="flex gap-2 flex-wrap">
+              {([
+                { value: 'direct' as const, label: 'Directo (Proxy HLS)', icon: Radio, desc: 'Ideal para deportes' },
+                { value: 'buffer' as const, label: 'Buffer de Estabilidad', icon: Disc, desc: 'Grabación circular 10min' },
+                { value: 'transcode' as const, label: 'Transcodificación Activa', icon: Cpu, desc: 'H.264/AAC permanente' },
+              ]).map(mode => (
+                <button
+                  key={mode.value}
+                  type="button"
+                  onClick={() => setForm({ ...form, stream_mode: mode.value })}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition-all ${
+                    form.stream_mode === mode.value
+                      ? 'border-primary bg-primary/10 text-primary'
+                      : 'border-border bg-secondary text-muted-foreground hover:border-primary/50'
+                  }`}
+                >
+                  <mode.icon className="w-4 h-4 shrink-0" />
+                  <div className="text-left">
+                    <div className="font-medium text-xs">{mode.label}</div>
+                    <div className="text-[10px] opacity-70">{mode.desc}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="flex gap-2 justify-end">
             <Button variant="ghost" onClick={() => { setShowForm(false); setEditingId(null); }} className="text-muted-foreground"><X className="w-4 h-4 mr-1" /> Cancelar</Button>
             <Button onClick={handleSave} className="gradient-primary text-primary-foreground"><Save className="w-4 h-4 mr-1" /> {editingId ? 'Actualizar' : 'Guardar'}</Button>
