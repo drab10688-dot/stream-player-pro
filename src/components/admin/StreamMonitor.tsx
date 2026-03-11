@@ -1,14 +1,17 @@
 import { useState, useEffect, useRef } from 'react';
 import { apiGet, apiPost } from '@/lib/api';
 import { useToast } from '@/hooks/use-toast';
-import { Radio, Wifi, Server, Users, RefreshCw, Activity, ArrowDown, Play, Square, Eye, EyeOff } from 'lucide-react';
+import { Radio, Wifi, Server, Users, RefreshCw, Activity, ArrowDown, Play, Square, Eye, EyeOff, RotateCcw, AlertTriangle, Cpu, HardDrive, Disc } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { motion } from 'framer-motion';
+import { Progress } from '@/components/ui/progress';
+import { Badge } from '@/components/ui/badge';
+import { motion, AnimatePresence } from 'framer-motion';
 
 interface ActiveStream {
   channel_id: string;
   channel_name: string;
-  type: 'ffmpeg' | 'hls-proxy';
+  type: string;
+  stream_mode: string;
   clients: number;
   ready: boolean;
   keep_alive: boolean;
@@ -16,6 +19,26 @@ interface ActiveStream {
   source_url: string;
   bandwidth_bps: number;
   bandwidth_in_bps: number;
+  cpu_percent: number;
+  mem_mb: number;
+  retry_count: number;
+  max_retries: number;
+}
+
+interface SystemStats {
+  cpu_percent: number;
+  cpu_cores: number;
+  load_avg: number[];
+  mem_total_mb: number;
+  mem_used_mb: number;
+  mem_percent: number;
+}
+
+interface FailureAlert {
+  channel_id: string;
+  channel_name: string;
+  retry_count: number;
+  type: string;
 }
 
 interface StreamsData {
@@ -23,6 +46,8 @@ interface StreamsData {
   total_clients_watching: number;
   origin_connections: number;
   streams: ActiveStream[];
+  system?: SystemStats;
+  alerts?: FailureAlert[];
 }
 
 interface AllChannel {
@@ -65,6 +90,30 @@ const getBandwidthColor = (bytesPerSec: number) => {
   return 'text-emerald-400';
 };
 
+const getModeIcon = (mode: string) => {
+  switch (mode) {
+    case 'buffer': return <Disc className="w-3 h-3" />;
+    case 'transcode': return <Cpu className="w-3 h-3" />;
+    default: return <Radio className="w-3 h-3" />;
+  }
+};
+
+const getModeLabel = (mode: string) => {
+  switch (mode) {
+    case 'buffer': return 'Buffer';
+    case 'transcode': return 'Transcode';
+    default: return 'Directo';
+  }
+};
+
+const getModeColor = (mode: string) => {
+  switch (mode) {
+    case 'buffer': return 'border-amber-500/30 text-amber-400';
+    case 'transcode': return 'border-cyan-500/30 text-cyan-400';
+    default: return 'border-primary/30 text-primary';
+  }
+};
+
 const StreamMonitor = () => {
   const { toast } = useToast();
   const [data, setData] = useState<StreamsData | null>(null);
@@ -74,6 +123,7 @@ const StreamMonitor = () => {
   const [showAll, setShowAll] = useState(false);
   const [startingChannels, setStartingChannels] = useState<Set<string>>(new Set());
   const [stoppingChannels, setStoppingChannels] = useState<Set<string>>(new Set());
+  const [restartingChannels, setRestartingChannels] = useState<Set<string>>(new Set());
   const intervalRef = useRef<ReturnType<typeof setInterval>>();
 
   const fetchStreams = async () => {
@@ -116,6 +166,18 @@ const StreamMonitor = () => {
     setStoppingChannels(prev => { const s = new Set(prev); s.delete(channelId); return s; });
   };
 
+  const handleRestart = async (channelId: string) => {
+    setRestartingChannels(prev => new Set(prev).add(channelId));
+    try {
+      const result = await apiPost(`/api/streams/restart/${channelId}`, {});
+      toast({ title: '🔄 Proceso Reiniciado', description: result.message });
+      await fetchStreams();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+    setRestartingChannels(prev => { const s = new Set(prev); s.delete(channelId); return s; });
+  };
+
   useEffect(() => {
     fetchStreams();
     if (autoRefresh) {
@@ -123,6 +185,9 @@ const StreamMonitor = () => {
     }
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, [autoRefresh, showAll]);
+
+  const sys = data?.system;
+  const alerts = data?.alerts || [];
 
   return (
     <div className="space-y-4">
@@ -155,6 +220,71 @@ const StreamMonitor = () => {
           </Button>
         </div>
       </div>
+
+      {/* ── Failure Alerts ── */}
+      <AnimatePresence>
+        {alerts.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            className="rounded-xl border border-destructive/50 bg-destructive/10 p-4 space-y-2"
+          >
+            <div className="flex items-center gap-2 text-destructive">
+              <AlertTriangle className="w-5 h-5" />
+              <h3 className="font-semibold text-sm">Alertas de Fallos ({alerts.length})</h3>
+            </div>
+            {alerts.map(a => (
+              <div key={a.channel_id} className="flex items-center justify-between gap-3 text-sm">
+                <span className="text-destructive font-medium">{a.channel_name}</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground">{a.retry_count} reintentos fallidos</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleRestart(a.channel_id)}
+                    disabled={restartingChannels.has(a.channel_id)}
+                    className="gap-1 text-xs border-destructive/30 text-destructive hover:bg-destructive/10 h-7 px-2"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    {restartingChannels.has(a.channel_id) ? '...' : 'Reiniciar'}
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Global System Load ── */}
+      {sys && (
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="glass rounded-xl p-4 space-y-3">
+          <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+            <Server className="w-4 h-4 text-primary" /> Carga Global del VPS
+          </h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <div className="flex justify-between text-xs">
+                <span className="text-muted-foreground flex items-center gap-1"><Cpu className="w-3 h-3" /> CPU ({sys.cpu_cores} núcleos)</span>
+                <span className={`font-bold ${sys.cpu_percent > 80 ? 'text-red-400' : sys.cpu_percent > 50 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                  {sys.cpu_percent}%
+                </span>
+              </div>
+              <Progress value={sys.cpu_percent} className="h-2.5" />
+              <p className="text-[10px] text-muted-foreground">Load: {sys.load_avg.map(l => l.toFixed(2)).join(' / ')}</p>
+            </div>
+            <div className="space-y-1.5">
+              <div className="flex justify-between text-xs">
+                <span className="text-muted-foreground flex items-center gap-1"><HardDrive className="w-3 h-3" /> RAM</span>
+                <span className={`font-bold ${sys.mem_percent > 85 ? 'text-red-400' : sys.mem_percent > 60 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                  {sys.mem_used_mb} / {sys.mem_total_mb} MB ({sys.mem_percent}%)
+                </span>
+              </div>
+              <Progress value={sys.mem_percent} className="h-2.5" />
+            </div>
+          </div>
+        </motion.div>
+      )}
 
       {/* Summary Cards */}
       {data && (
@@ -312,29 +442,44 @@ const StreamMonitor = () => {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ delay: i * 0.03 }}
-                className="glass rounded-xl p-4"
+                className={`glass rounded-xl p-4 ${stream.retry_count >= 3 ? 'ring-1 ring-destructive/50' : ''}`}
               >
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3 min-w-0 flex-1">
                     <div className={`w-3 h-3 rounded-full shrink-0 ${stream.ready ? 'bg-emerald-400 animate-pulse' : 'bg-yellow-400'}`} />
                     <div className="min-w-0">
-                      <p className="font-semibold text-foreground text-sm truncate">{stream.channel_name}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="font-semibold text-foreground text-sm truncate">{stream.channel_name}</p>
+                        <Badge variant="outline" className={`text-[10px] py-0 px-1.5 gap-0.5 ${getModeColor(stream.stream_mode)}`}>
+                          {getModeIcon(stream.stream_mode)}
+                          {getModeLabel(stream.stream_mode)}
+                        </Badge>
+                      </div>
                       <p className="text-xs text-muted-foreground truncate">{stream.source_url}</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-4 shrink-0">
+                  <div className="flex items-center gap-3 shrink-0 flex-wrap justify-end">
                     <div className="text-center">
                       <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-mono ${
-                        stream.type === 'ffmpeg' 
+                        stream.type?.includes('ffmpeg')
                           ? 'bg-purple-500/20 text-purple-300' 
                           : 'bg-blue-500/20 text-blue-300'
                       }`}>
-                        {stream.type === 'ffmpeg' ? 'TS→HLS' : 'HLS Proxy'}
+                        {stream.type?.includes('ffmpeg') ? (stream.type === 'ffmpeg-buffer' ? 'Buffer' : 'FFmpeg') : 'HLS Proxy'}
                       </span>
                       {stream.keep_alive && (
                         <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-mono bg-green-500/20 text-green-300 ml-1">KA</span>
                       )}
                     </div>
+                    {/* Per-process CPU/RAM */}
+                    {(stream.cpu_percent > 0 || stream.mem_mb > 0) && (
+                      <div className="text-center min-w-[70px]">
+                        <p className={`text-[10px] font-mono ${stream.cpu_percent > 80 ? 'text-red-400' : stream.cpu_percent > 40 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                          CPU {stream.cpu_percent.toFixed(1)}%
+                        </p>
+                        <p className="text-[10px] font-mono text-muted-foreground">{stream.mem_mb} MB</p>
+                      </div>
+                    )}
                     <div className="text-center min-w-[60px]">
                       <p className={`text-xs font-bold font-mono ${getBandwidthColor(stream.bandwidth_in_bps || 0)}`}>
                         ↓ {formatBandwidth(stream.bandwidth_in_bps || 0)}
@@ -354,18 +499,37 @@ const StreamMonitor = () => {
                     <div className="text-center">
                       <p className="text-xs text-muted-foreground font-mono">{formatUptime(stream.uptime_seconds)}</p>
                     </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleStop(stream.channel_id)}
-                      disabled={stoppingChannels.has(stream.channel_id)}
-                      className="gap-1 text-xs border-red-500/30 text-red-400 hover:bg-red-500/10 h-7 px-2"
-                    >
-                      <Square className="w-3 h-3" />
-                      {stoppingChannels.has(stream.channel_id) ? '...' : 'Stop'}
-                    </Button>
+                    <div className="flex gap-1">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleRestart(stream.channel_id)}
+                        disabled={restartingChannels.has(stream.channel_id)}
+                        className="gap-1 text-xs border-amber-500/30 text-amber-400 hover:bg-amber-500/10 h-7 px-2"
+                        title="Reiniciar proceso"
+                      >
+                        <RotateCcw className={`w-3 h-3 ${restartingChannels.has(stream.channel_id) ? 'animate-spin' : ''}`} />
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleStop(stream.channel_id)}
+                        disabled={stoppingChannels.has(stream.channel_id)}
+                        className="gap-1 text-xs border-red-500/30 text-red-400 hover:bg-red-500/10 h-7 px-2"
+                      >
+                        <Square className="w-3 h-3" />
+                        {stoppingChannels.has(stream.channel_id) ? '...' : 'Stop'}
+                      </Button>
+                    </div>
                   </div>
                 </div>
+                {/* Retry warning */}
+                {stream.retry_count >= 3 && (
+                  <div className="mt-2 flex items-center gap-2 text-xs text-destructive">
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    <span>{stream.retry_count} reintentos fallidos — considere reiniciar manualmente</span>
+                  </div>
+                )}
               </motion.div>
             ))}
           </div>

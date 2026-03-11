@@ -2831,18 +2831,34 @@ app.get('/api/streams/active', authAdmin, async (req, res) => {
   try {
     const streams = [];
     for (const [channelId, entry] of activeTranscoders) {
-      const { rows } = await pool.query('SELECT name, url FROM channels WHERE id = $1', [channelId]);
+      const { rows } = await pool.query('SELECT name, url, stream_mode FROM channels WHERE id = $1', [channelId]);
       const channelName = rows.length > 0 ? rows[0].name : 'Desconocido';
       const sourceUrl = rows.length > 0 ? rows[0].url : entry.sourceUrl || 'N/A';
+      const streamMode = rows.length > 0 ? (rows[0].stream_mode || 'direct') : 'direct';
       
       const bw = channelBandwidth.get(channelId);
       const bandwidth_bps = bw ? bw.bpsOut : 0;
       const bandwidth_in_bps = bw ? bw.bpsIn : 0;
 
+      // Per-process resource usage via /proc (Linux)
+      let cpu_percent = 0;
+      let mem_mb = 0;
+      if (entry.ffmpeg && entry.ffmpeg.pid) {
+        try {
+          const pidStat = execSync(`ps -p ${entry.ffmpeg.pid} -o %cpu=,%mem=,rss= 2>/dev/null`, { timeout: 2000 }).toString().trim();
+          const parts = pidStat.split(/\s+/);
+          if (parts.length >= 3) {
+            cpu_percent = parseFloat(parts[0]) || 0;
+            mem_mb = Math.round((parseInt(parts[2]) || 0) / 1024);
+          }
+        } catch { /* process may have exited */ }
+      }
+
       streams.push({
         channel_id: channelId,
         channel_name: channelName,
         type: entry.type,
+        stream_mode: streamMode,
         clients: Math.max(0, entry.clients),
         ready: entry.ready !== undefined ? entry.ready : true,
         keep_alive: entry.keepAlive || false,
@@ -2850,14 +2866,44 @@ app.get('/api/streams/active', authAdmin, async (req, res) => {
         source_url: sourceUrl.substring(0, 60) + (sourceUrl.length > 60 ? '...' : ''),
         bandwidth_bps: Math.round(bandwidth_bps),
         bandwidth_in_bps: Math.round(bandwidth_in_bps),
+        cpu_percent,
+        mem_mb,
+        retry_count: entry.retryCount || entry.restartCount || 0,
+        max_retries: entry.maxRetries || 10,
       });
     }
+
+    // Global system stats
+    const os = require('os');
+    const totalMemMB = Math.round(os.totalmem() / (1024 * 1024));
+    const freeMemMB = Math.round(os.freemem() / (1024 * 1024));
+    const usedMemMB = totalMemMB - freeMemMB;
+    const cpuCount = os.cpus().length;
+    const loadAvg = os.loadavg();
+    const cpuUsagePercent = Math.min(100, Math.round((loadAvg[0] / cpuCount) * 100));
+
+    // Failure alerts: streams with 3+ retries
+    const failedStreams = streams.filter(s => s.retry_count >= 3);
     
     res.json({
       total_streams: streams.length,
       total_clients_watching: streams.reduce((sum, s) => sum + s.clients, 0),
       origin_connections: streams.length,
       streams,
+      system: {
+        cpu_percent: cpuUsagePercent,
+        cpu_cores: cpuCount,
+        load_avg: loadAvg,
+        mem_total_mb: totalMemMB,
+        mem_used_mb: usedMemMB,
+        mem_percent: Math.round((usedMemMB / totalMemMB) * 100),
+      },
+      alerts: failedStreams.map(s => ({
+        channel_id: s.channel_id,
+        channel_name: s.channel_name,
+        retry_count: s.retry_count,
+        type: s.type,
+      })),
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2934,6 +2980,53 @@ app.post('/api/streams/stop/:channelId', authAdmin, async (req, res) => {
     
     console.log(`⏹️ [${channelId}] Stream detenido manualmente: ${name}`);
     res.json({ success: true, message: `Stream detenido: ${name}` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// =============================================
+// RUTA: REINICIAR PROCESO DE STREAM INDIVIDUAL
+// =============================================
+app.post('/api/streams/restart/:channelId', authAdmin, async (req, res) => {
+  try {
+    const channelId = req.params.channelId;
+    const entry = activeTranscoders.get(channelId);
+    const wasKeepAlive = entry ? entry.keepAlive : false;
+
+    // Kill existing
+    if (entry) {
+      if (entry.pollTimer) { clearInterval(entry.pollTimer); entry.pollTimer = null; }
+      if (entry.ffmpeg) entry.ffmpeg.kill('SIGTERM');
+      activeTranscoders.delete(channelId);
+      channelBandwidth.delete(channelId);
+      cleanChannelDir(channelId);
+    }
+
+    const { rows } = await pool.query('SELECT url, name, stream_mode FROM channels WHERE id = $1 AND is_active = true', [channelId]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Canal no encontrado o inactivo' });
+
+    const sourceUrl = rows[0].url;
+    const streamMode = rows[0].stream_mode || 'direct';
+    const isHLS = /\.m3u8?(\?|$)/i.test(sourceUrl);
+
+    // Re-start based on stream_mode
+    if (streamMode === 'buffer') {
+      const newEntry = startBufferTranscoder(channelId, sourceUrl);
+      newEntry.keepAlive = wasKeepAlive;
+      newEntry.restartCount = 0;
+    } else if (streamMode === 'transcode' || !isHLS) {
+      const newEntry = startFFmpegTranscoder(channelId, sourceUrl);
+      newEntry.keepAlive = wasKeepAlive;
+    } else {
+      const newEntry = startHLSProxy(channelId, sourceUrl);
+      newEntry.keepAlive = wasKeepAlive;
+      newEntry.clients = 0;
+      startHLSKeepAlivePolling(channelId, sourceUrl);
+    }
+
+    console.log(`🔄 [${channelId}] Stream reiniciado manualmente: ${rows[0].name}`);
+    res.json({ success: true, message: `Stream reiniciado: ${rows[0].name}` });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -3256,7 +3349,7 @@ async function resolvePlaylistClient(token, res) {
 
 async function getFilteredChannels(client) {
   const { rows: channels } = await pool.query(
-    'SELECT id, name, url, category, logo_url, sort_order FROM channels WHERE is_active = true ORDER BY sort_order'
+    'SELECT id, name, url, category, logo_url, sort_order, stream_mode FROM channels WHERE is_active = true ORDER BY sort_order'
   );
   if (client.plan_categories && client.plan_categories.length > 0) {
     return channels.filter(ch => client.plan_categories.includes(ch.category));
@@ -3272,54 +3365,45 @@ function getBaseUrl(req) {
 
 function generateM3U(channels, client, baseUrl, format) {
   const isYouTube = (url) => /youtube\.com|youtu\.be/.test(url);
+  
+  // Smart URL: always use /api/restream for buffer/transcode modes
+  // For direct mode, also use /api/restream (it handles proxy pass-through)
+  const getChannelUrl = (ch, forceTs = false) => {
+    if (isYouTube(ch.url)) return ch.url;
+    if (forceTs) return `${baseUrl}/api/restream/${ch.id}.ts`;
+    return `${baseUrl}/api/restream/${ch.id}`;
+  };
 
   let m3u = '#EXTM3U\n';
 
   if (format === 'simple') {
-    // Formato simple: solo URLs, sin metadatos
     m3u += `# Lista simple para ${client.username} - ${channels.length} canales\n\n`;
     for (const ch of channels) {
-      if (isYouTube(ch.url)) {
-        m3u += `${ch.url}\n`;
-      } else {
-        m3u += `${baseUrl}/api/restream/${ch.id}\n`;
-      }
+      m3u += `${getChannelUrl(ch)}\n`;
     }
     return m3u;
   }
 
   if (format === 'ts') {
-    // Formato MPEG-TS: fuerza extensión .ts para reproductores que lo requieren
     m3u += `#PLAYLIST:${client.username}\n`;
     m3u += `# StreamBox MPEG-TS - ${client.username}\n`;
     m3u += `# Canales: ${channels.length}\n\n`;
     for (const ch of channels) {
       const logoAttr = ch.logo_url ? ` tvg-logo="${ch.logo_url.startsWith('http') ? ch.logo_url : baseUrl + ch.logo_url}"` : '';
       m3u += `#EXTINF:-1 group-title="${ch.category}"${logoAttr},${ch.name}\n`;
-      if (isYouTube(ch.url)) {
-        m3u += `${ch.url}\n`;
-      } else {
-        m3u += `${baseUrl}/api/restream/${ch.id}.ts\n`;
-      }
+      m3u += `${getChannelUrl(ch, true)}\n`;
     }
     return m3u;
   }
 
   if (format === 'ott') {
-    // Formato OTT: optimizado para Smart TV, sin HLS dinámico
-    // Usa URLs directas con pipe de User-Agent para compatibilidad
     m3u += `#PLAYLIST:${client.username}\n`;
     m3u += `# Optimizado para Smart TV / OTT Player\n`;
     m3u += `# Canales: ${channels.length}\n\n`;
     for (const ch of channels) {
       const logoAttr = ch.logo_url ? ` tvg-logo="${ch.logo_url.startsWith('http') ? ch.logo_url : baseUrl + ch.logo_url}"` : '';
       m3u += `#EXTINF:-1 group-title="${ch.category}"${logoAttr} tvg-name="${ch.name}",${ch.name}\n`;
-      if (isYouTube(ch.url)) {
-        m3u += `${ch.url}\n`;
-      } else {
-        // OTT: restream con formato ts para máxima compatibilidad con Smart TVs
-        m3u += `${baseUrl}/api/restream/${ch.id}.ts\n`;
-      }
+      m3u += `${getChannelUrl(ch, true)}\n`;
     }
     return m3u;
   }
@@ -3331,11 +3415,7 @@ function generateM3U(channels, client, baseUrl, format) {
   for (const ch of channels) {
     const logoAttr = ch.logo_url ? ` tvg-logo="${ch.logo_url.startsWith('http') ? ch.logo_url : baseUrl + ch.logo_url}"` : '';
     m3u += `#EXTINF:-1 group-title="${ch.category}"${logoAttr},${ch.name}\n`;
-    if (isYouTube(ch.url)) {
-      m3u += `${ch.url}\n`;
-    } else {
-      m3u += `${baseUrl}/api/restream/${ch.id}\n`;
-    }
+    m3u += `${getChannelUrl(ch)}\n`;
   }
   return m3u;
 }
