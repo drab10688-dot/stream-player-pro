@@ -3302,7 +3302,7 @@ async function resolvePlaylistClient(token, res) {
 
 async function getFilteredChannels(client) {
   const { rows: channels } = await pool.query(
-    'SELECT id, name, url, category, logo_url, sort_order FROM channels WHERE is_active = true ORDER BY sort_order'
+    'SELECT id, name, url, category, logo_url, sort_order, stream_mode FROM channels WHERE is_active = true ORDER BY sort_order'
   );
   if (client.plan_categories && client.plan_categories.length > 0) {
     return channels.filter(ch => client.plan_categories.includes(ch.category));
