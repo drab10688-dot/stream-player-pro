@@ -115,7 +115,13 @@ const getPublicHost = (req) => {
   const fwdHost = req.headers['x-forwarded-host'];
   const fwdProto = req.headers['x-forwarded-proto'] || 'http';
   if (fwdHost) return `${fwdProto}://${fwdHost}`;
-  return `http://${req.headers.host}`;
+  // Ensure host includes the Nginx port if not already present
+  const host = req.headers.host || `localhost:${NGINX_PORT}`;
+  // If host doesn't have a port and we're not on standard port 80, add NGINX_PORT
+  if (!host.includes(':') && NGINX_PORT !== '80') {
+    return `http://${host}:${NGINX_PORT}`;
+  }
+  return `http://${host}`;
 };
 
 const proxyToXtream = (targetPath, req, res) => {
