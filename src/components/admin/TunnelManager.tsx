@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { apiGet, apiPost } from '@/lib/api';
+import { copyToClipboard } from '@/lib/clipboard';
 import { useToast } from '@/hooks/use-toast';
 import { Globe, Shield, ShieldCheck, Play, Square, Download, RefreshCw, Copy, ExternalLink, Loader2, Monitor, Split } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -84,9 +85,9 @@ const TunnelManager = () => {
     setActionLoading(null);
   };
 
-  const copyUrl = () => {
+  const copyUrl = async () => {
     if (tunnel?.url) {
-      navigator.clipboard.writeText(tunnel.url);
+      await copyToClipboard(tunnel.url);
       toast({ title: 'Copiado', description: 'URL copiada al portapapeles' });
     }
   };

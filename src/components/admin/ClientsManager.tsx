@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
+import { copyToClipboard } from '@/lib/clipboard';
 import { supabase } from '@/integrations/supabase/client';
 import { isLovablePreview } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
@@ -167,10 +168,10 @@ const ClientsManager = () => {
     return format ? `${base}/api/playlist/${token}/${format}` : `${base}/api/playlist/${token}`;
   };
 
-  const copyPlaylistUrl = (token: string | null, format?: string, label?: string) => {
+  const copyPlaylistUrl = async (token: string | null, format?: string, label?: string) => {
     const url = getPlaylistUrl(token, format);
     if (!url) return;
-    navigator.clipboard.writeText(url);
+    await copyToClipboard(url);
     toast({ title: '📋 URL copiada', description: `Link ${label || 'M3U Plus'} copiado al portapapeles` });
   };
 
