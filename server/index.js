@@ -88,7 +88,7 @@ const pool = new Pool({
   port: 5432,
   database: 'streambox',
   user: 'streambox_user',
-  password: process.env.DB_PASS || 'StreamBox2024',
+  password: 'tu_password_seguro',
 });
 
 // Verificar conexión a la base de datos al iniciar
