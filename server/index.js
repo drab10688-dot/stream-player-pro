@@ -3318,54 +3318,45 @@ function getBaseUrl(req) {
 
 function generateM3U(channels, client, baseUrl, format) {
   const isYouTube = (url) => /youtube\.com|youtu\.be/.test(url);
+  
+  // Smart URL: always use /api/restream for buffer/transcode modes
+  // For direct mode, also use /api/restream (it handles proxy pass-through)
+  const getChannelUrl = (ch, forceTs = false) => {
+    if (isYouTube(ch.url)) return ch.url;
+    if (forceTs) return `${baseUrl}/api/restream/${ch.id}.ts`;
+    return `${baseUrl}/api/restream/${ch.id}`;
+  };
 
   let m3u = '#EXTM3U\n';
 
   if (format === 'simple') {
-    // Formato simple: solo URLs, sin metadatos
     m3u += `# Lista simple para ${client.username} - ${channels.length} canales\n\n`;
     for (const ch of channels) {
-      if (isYouTube(ch.url)) {
-        m3u += `${ch.url}\n`;
-      } else {
-        m3u += `${baseUrl}/api/restream/${ch.id}\n`;
-      }
+      m3u += `${getChannelUrl(ch)}\n`;
     }
     return m3u;
   }
 
   if (format === 'ts') {
-    // Formato MPEG-TS: fuerza extensión .ts para reproductores que lo requieren
     m3u += `#PLAYLIST:${client.username}\n`;
     m3u += `# StreamBox MPEG-TS - ${client.username}\n`;
     m3u += `# Canales: ${channels.length}\n\n`;
     for (const ch of channels) {
       const logoAttr = ch.logo_url ? ` tvg-logo="${ch.logo_url.startsWith('http') ? ch.logo_url : baseUrl + ch.logo_url}"` : '';
       m3u += `#EXTINF:-1 group-title="${ch.category}"${logoAttr},${ch.name}\n`;
-      if (isYouTube(ch.url)) {
-        m3u += `${ch.url}\n`;
-      } else {
-        m3u += `${baseUrl}/api/restream/${ch.id}.ts\n`;
-      }
+      m3u += `${getChannelUrl(ch, true)}\n`;
     }
     return m3u;
   }
 
   if (format === 'ott') {
-    // Formato OTT: optimizado para Smart TV, sin HLS dinámico
-    // Usa URLs directas con pipe de User-Agent para compatibilidad
     m3u += `#PLAYLIST:${client.username}\n`;
     m3u += `# Optimizado para Smart TV / OTT Player\n`;
     m3u += `# Canales: ${channels.length}\n\n`;
     for (const ch of channels) {
       const logoAttr = ch.logo_url ? ` tvg-logo="${ch.logo_url.startsWith('http') ? ch.logo_url : baseUrl + ch.logo_url}"` : '';
       m3u += `#EXTINF:-1 group-title="${ch.category}"${logoAttr} tvg-name="${ch.name}",${ch.name}\n`;
-      if (isYouTube(ch.url)) {
-        m3u += `${ch.url}\n`;
-      } else {
-        // OTT: restream con formato ts para máxima compatibilidad con Smart TVs
-        m3u += `${baseUrl}/api/restream/${ch.id}.ts\n`;
-      }
+      m3u += `${getChannelUrl(ch, true)}\n`;
     }
     return m3u;
   }
@@ -3377,11 +3368,7 @@ function generateM3U(channels, client, baseUrl, format) {
   for (const ch of channels) {
     const logoAttr = ch.logo_url ? ` tvg-logo="${ch.logo_url.startsWith('http') ? ch.logo_url : baseUrl + ch.logo_url}"` : '';
     m3u += `#EXTINF:-1 group-title="${ch.category}"${logoAttr},${ch.name}\n`;
-    if (isYouTube(ch.url)) {
-      m3u += `${ch.url}\n`;
-    } else {
-      m3u += `${baseUrl}/api/restream/${ch.id}\n`;
-    }
+    m3u += `${getChannelUrl(ch)}\n`;
   }
   return m3u;
 }
