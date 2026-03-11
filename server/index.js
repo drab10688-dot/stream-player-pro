@@ -3043,83 +3043,145 @@ app.post('/api/clients/generate-tokens', authAdmin, async (req, res) => {
   }
 });
 
-// Endpoint público: M3U playlist por token
-// GET /api/playlist/:token
+// Endpoint público: M3U playlist por token con soporte multi-formato
+// GET /api/playlist/:token           → M3U Plus (default, con metadatos)
+// GET /api/playlist/:token/m3u_plus  → M3U Plus (con #EXTINF, logo, grupo)
+// GET /api/playlist/:token/ts        → MPEG-TS (extensión .ts, fuerza mpegts)
+// GET /api/playlist/:token/simple    → M3U simple (sin metadatos extra)
+// GET /api/playlist/:token/ott       → Optimizado para Smart TV / OTT Player
 // Compatible con OTT Player, Smart IPTV, SS IPTV, etc.
-app.get('/api/playlist/:token', async (req, res) => {
-  try {
-    const { token } = req.params;
-    
-    // Buscar cliente por token
-    const { rows: clients } = await pool.query(
-      'SELECT c.*, p.categories as plan_categories FROM clients c LEFT JOIN plans p ON c.plan_id = p.id WHERE c.playlist_token = $1',
-      [token]
-    );
-    
-    if (clients.length === 0) {
-      return res.status(404).send('#EXTM3U\n#EXTINF:-1,Token inválido\nhttp://invalid');
-    }
-    
-    const client = clients[0];
-    
-    // Verificar que el cliente esté activo
-    if (!client.is_active) {
-      return res.status(403).send('#EXTM3U\n#EXTINF:-1,Cuenta suspendida\nhttp://suspended');
-    }
-    
-    // Verificar expiración
-    if (new Date(client.expiry_date) < new Date()) {
-      await pool.query('UPDATE clients SET is_active = false WHERE id = $1', [client.id]);
-      return res.status(403).send('#EXTM3U\n#EXTINF:-1,Suscripción expirada\nhttp://expired');
-    }
-    
-    // Obtener canales activos
-    let channelsQuery = 'SELECT id, name, url, category, logo_url, sort_order FROM channels WHERE is_active = true ORDER BY sort_order';
-    const { rows: channels } = await pool.query(channelsQuery);
-    
-    // Filtrar por plan si tiene uno asignado
-    let filteredChannels = channels;
-    if (client.plan_categories && client.plan_categories.length > 0) {
-      filteredChannels = channels.filter(ch => client.plan_categories.includes(ch.category));
-    }
-    
-    // Determinar base URL para los streams
-    // Cloudflare tunnel pone el dominio en Host header y proto en X-Forwarded-Proto
-    // X-Forwarded-Host tiene prioridad si existe, luego Host header
-    const proto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
-    const host = req.headers['x-forwarded-host'] || req.headers.host || `localhost:${PORT}`;
-    const baseUrl = `${proto}://${host}`;
-    
-    // Generar M3U
-    let m3u = '#EXTM3U\n';
-    m3u += `#PLAYLIST:${client.username}\n`;
-    m3u += `# StreamBox - Generado para ${client.username}\n`;
-    m3u += `# Canales: ${filteredChannels.length}\n\n`;
-    
-    for (const ch of filteredChannels) {
-      const isYouTube = /youtube\.com|youtu\.be/.test(ch.url);
-      
-      // Logo attribute
-      const logoAttr = ch.logo_url ? ` tvg-logo="${ch.logo_url.startsWith('http') ? ch.logo_url : baseUrl + ch.logo_url}"` : '';
-      
-      m3u += `#EXTINF:-1 group-title="${ch.category}"${logoAttr},${ch.name}\n`;
-      
-      if (isYouTube) {
-        // YouTube: URL directa (no se puede restream)
+
+async function resolvePlaylistClient(token, res) {
+  const { rows: clients } = await pool.query(
+    'SELECT c.*, p.categories as plan_categories FROM clients c LEFT JOIN plans p ON c.plan_id = p.id WHERE c.playlist_token = $1',
+    [token]
+  );
+  if (clients.length === 0) {
+    res.status(404).send('#EXTM3U\n#EXTINF:-1,Token inválido\nhttp://invalid');
+    return null;
+  }
+  const client = clients[0];
+  if (!client.is_active) {
+    res.status(403).send('#EXTM3U\n#EXTINF:-1,Cuenta suspendida\nhttp://suspended');
+    return null;
+  }
+  if (new Date(client.expiry_date) < new Date()) {
+    await pool.query('UPDATE clients SET is_active = false WHERE id = $1', [client.id]);
+    res.status(403).send('#EXTM3U\n#EXTINF:-1,Suscripción expirada\nhttp://expired');
+    return null;
+  }
+  return client;
+}
+
+async function getFilteredChannels(client) {
+  const { rows: channels } = await pool.query(
+    'SELECT id, name, url, category, logo_url, sort_order FROM channels WHERE is_active = true ORDER BY sort_order'
+  );
+  if (client.plan_categories && client.plan_categories.length > 0) {
+    return channels.filter(ch => client.plan_categories.includes(ch.category));
+  }
+  return channels;
+}
+
+function getBaseUrl(req) {
+  const proto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+  const host = req.headers['x-forwarded-host'] || req.headers.host || `localhost:${PORT}`;
+  return `${proto}://${host}`;
+}
+
+function generateM3U(channels, client, baseUrl, format) {
+  const isYouTube = (url) => /youtube\.com|youtu\.be/.test(url);
+
+  let m3u = '#EXTM3U\n';
+
+  if (format === 'simple') {
+    // Formato simple: solo URLs, sin metadatos
+    m3u += `# Lista simple para ${client.username} - ${channels.length} canales\n\n`;
+    for (const ch of channels) {
+      if (isYouTube(ch.url)) {
         m3u += `${ch.url}\n`;
       } else {
-        // Todo lo demás: via restream para ocultar origen
         m3u += `${baseUrl}/api/restream/${ch.id}\n`;
       }
     }
-    
+    return m3u;
+  }
+
+  if (format === 'ts') {
+    // Formato MPEG-TS: fuerza extensión .ts para reproductores que lo requieren
+    m3u += `#PLAYLIST:${client.username}\n`;
+    m3u += `# StreamBox MPEG-TS - ${client.username}\n`;
+    m3u += `# Canales: ${channels.length}\n\n`;
+    for (const ch of channels) {
+      const logoAttr = ch.logo_url ? ` tvg-logo="${ch.logo_url.startsWith('http') ? ch.logo_url : baseUrl + ch.logo_url}"` : '';
+      m3u += `#EXTINF:-1 group-title="${ch.category}"${logoAttr},${ch.name}\n`;
+      if (isYouTube(ch.url)) {
+        m3u += `${ch.url}\n`;
+      } else {
+        m3u += `${baseUrl}/api/restream/${ch.id}.ts\n`;
+      }
+    }
+    return m3u;
+  }
+
+  if (format === 'ott') {
+    // Formato OTT: optimizado para Smart TV, sin HLS dinámico
+    // Usa URLs directas con pipe de User-Agent para compatibilidad
+    m3u += `#PLAYLIST:${client.username}\n`;
+    m3u += `# Optimizado para Smart TV / OTT Player\n`;
+    m3u += `# Canales: ${channels.length}\n\n`;
+    for (const ch of channels) {
+      const logoAttr = ch.logo_url ? ` tvg-logo="${ch.logo_url.startsWith('http') ? ch.logo_url : baseUrl + ch.logo_url}"` : '';
+      m3u += `#EXTINF:-1 group-title="${ch.category}"${logoAttr} tvg-name="${ch.name}",${ch.name}\n`;
+      if (isYouTube(ch.url)) {
+        m3u += `${ch.url}\n`;
+      } else {
+        // OTT: restream con formato ts para máxima compatibilidad con Smart TVs
+        m3u += `${baseUrl}/api/restream/${ch.id}.ts\n`;
+      }
+    }
+    return m3u;
+  }
+
+  // Formato m3u_plus (default): con todos los metadatos
+  m3u += `#PLAYLIST:${client.username}\n`;
+  m3u += `# StreamBox - Generado para ${client.username}\n`;
+  m3u += `# Canales: ${channels.length}\n\n`;
+  for (const ch of channels) {
+    const logoAttr = ch.logo_url ? ` tvg-logo="${ch.logo_url.startsWith('http') ? ch.logo_url : baseUrl + ch.logo_url}"` : '';
+    m3u += `#EXTINF:-1 group-title="${ch.category}"${logoAttr},${ch.name}\n`;
+    if (isYouTube(ch.url)) {
+      m3u += `${ch.url}\n`;
+    } else {
+      m3u += `${baseUrl}/api/restream/${ch.id}\n`;
+    }
+  }
+  return m3u;
+}
+
+app.get('/api/playlist/:token/:format?', async (req, res) => {
+  try {
+    const { token, format: rawFormat } = req.params;
+    const format = rawFormat || 'm3u_plus';
+    const validFormats = ['m3u_plus', 'ts', 'simple', 'ott'];
+    if (!validFormats.includes(format)) {
+      return res.status(400).send('#EXTM3U\n#EXTINF:-1,Formato inválido\nhttp://invalid-format');
+    }
+
+    const client = await resolvePlaylistClient(token, res);
+    if (!client) return;
+
+    const filteredChannels = await getFilteredChannels(client);
+    const baseUrl = getBaseUrl(req);
+    const m3u = generateM3U(filteredChannels, client, baseUrl, format);
+
+    const ext = format === 'ts' ? 'ts.m3u' : 'm3u';
     res.set({
       'Content-Type': 'audio/mpegurl',
-      'Content-Disposition': `inline; filename="${client.username}.m3u"`,
+      'Content-Disposition': `inline; filename="${client.username}_${format}.${ext}"`,
       'Cache-Control': 'no-cache',
     });
     res.send(m3u);
-    
   } catch (err) {
     console.error('Playlist error:', err);
     res.status(500).send('#EXTM3U\n#EXTINF:-1,Error del servidor\nhttp://error');
