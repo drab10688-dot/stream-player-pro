@@ -143,6 +143,7 @@ const AdminDashboard = () => {
           <TabsContent value="series" forceMount className="data-[state=inactive]:hidden"><SeriesManager /></TabsContent>
           <TabsContent value="viewers" forceMount className="data-[state=inactive]:hidden"><ActiveViewers /></TabsContent>
           <TabsContent value="system" forceMount className="data-[state=inactive]:hidden"><SystemTuning /></TabsContent>
+          <TabsContent value="tester" forceMount className="data-[state=inactive]:hidden"><ChannelTester /></TabsContent>
         </Tabs>
       </main>
     </div>
