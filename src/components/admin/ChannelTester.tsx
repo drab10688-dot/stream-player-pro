@@ -4,9 +4,12 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import { motion, AnimatePresence } from 'framer-motion';
 import VideoPlayer from '@/components/VideoPlayer';
@@ -15,7 +18,7 @@ import {
   Play, Trash2, Download, Search, CheckCircle2, XCircle,
   Loader2, RefreshCw, AlertTriangle, Circle, Zap, Filter,
   Timer, ShieldCheck, ShieldAlert, PowerOff, RotateCcw,
-  Activity, Clock, WifiOff, Wifi
+  Activity, Clock, WifiOff, Wifi, Upload, FileText, Plus
 } from 'lucide-react';
 import { apiPost, apiGet, apiDelete } from '@/lib/api';
 
@@ -73,8 +76,50 @@ interface PingResult {
   consecutive_failures?: number;
 }
 
+// --- M3U Parser ---
+const parseM3U = (content: string): Channel[] => {
+  const lines = content.split('\n').map(l => l.trim()).filter(Boolean);
+  const channels: Channel[] = [];
+  let currentName = '';
+  let currentCategory = 'General';
+  let currentLogo = '';
+
+  for (const line of lines) {
+    if (line.startsWith('#EXTINF:')) {
+      const nameMatch = line.match(/,(.+)$/);
+      currentName = nameMatch ? nameMatch[1].trim() : 'Sin nombre';
+      const groupMatch = line.match(/group-title="([^"]*)"/i);
+      currentCategory = groupMatch ? groupMatch[1] : 'General';
+      const logoMatch = line.match(/tvg-logo="([^"]*)"/i);
+      currentLogo = logoMatch ? logoMatch[1] : '';
+    } else if (!line.startsWith('#') && (line.startsWith('http://') || line.startsWith('https://'))) {
+      channels.push({
+        id: crypto.randomUUID(),
+        name: currentName || line.split('/').pop() || 'Canal',
+        url: line,
+        category: currentCategory || 'General',
+        logo_url: currentLogo || null,
+        is_active: true,
+      });
+      currentName = '';
+      currentCategory = 'General';
+      currentLogo = '';
+    }
+  }
+  return channels;
+};
+
 const ChannelTester = () => {
+  const [activeTab, setActiveTab] = useState<string>('external');
+  // Server channels
   const [channels, setChannels] = useState<Channel[]>([]);
+  // External channels (uploaded M3U)
+  const [externalChannels, setExternalChannels] = useState<Channel[]>([]);
+  const [showUploadDialog, setShowUploadDialog] = useState(false);
+  const [m3uInput, setM3uInput] = useState('');
+  const [m3uUrl, setM3uUrl] = useState('');
+  const [loadingM3u, setLoadingM3u] = useState(false);
+
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [pingStatus, setPingStatus] = useState<Record<string, PingStatus>>({});
@@ -84,7 +129,7 @@ const ChannelTester = () => {
   const [filterDown, setFilterDown] = useState(false);
   const { toast } = useToast();
 
-  // --- Monitor state (merged from ChannelMonitor) ---
+  // --- Monitor state ---
   const [autoActions, setAutoActions] = useState<AutoActions | null>(null);
   const [autoPing, setAutoPing] = useState(false);
   const [autoPingInterval, setAutoPingInterval] = useState<ReturnType<typeof setInterval> | null>(null);
@@ -95,7 +140,10 @@ const ChannelTester = () => {
   const [pingResults, setPingResults] = useState<PingResult[]>([]);
   const [showHistory, setShowHistory] = useState(false);
 
-  // --- Fetch channels ---
+  // Current channel list based on active tab
+  const currentChannels = activeTab === 'external' ? externalChannels : channels;
+
+  // --- Fetch server channels ---
   const fetchChannels = useCallback(async () => {
     setLoading(true);
     try {
@@ -108,11 +156,13 @@ const ChannelTester = () => {
         setChannels(data);
       }
     } catch (err: any) {
-      toast({ title: 'Error cargando canales', description: err.message, variant: 'destructive' });
+      // In preview, may fail silently - external mode still works
+      console.warn('Error cargando canales del servidor:', err.message);
+      setChannels([]);
     } finally {
       setLoading(false);
     }
-  }, [toast]);
+  }, []);
 
   // --- Fetch health logs ---
   const fetchLogs = useCallback(async () => {
@@ -167,59 +217,196 @@ const ChannelTester = () => {
     };
   }, [fetchChannels, fetchLogs, fetchServerAutoPingStatus]);
 
-  // Cleanup auto-ping interval
   useEffect(() => {
     return () => {
       if (autoPingInterval) clearInterval(autoPingInterval);
     };
   }, [autoPingInterval]);
 
-  // --- Health check (ping all) ---
-  const runHealthCheck = useCallback(async () => {
-    setChecking(true);
-    const initial: Record<string, PingStatus> = {};
-    channels.forEach(ch => { initial[ch.id] = 'checking'; });
-    setPingStatus(initial);
+  // --- Upload M3U ---
+  const handleUploadM3U = async () => {
+    setLoadingM3u(true);
+    try {
+      let content = m3uInput;
+
+      if (m3uUrl && !content) {
+        // Try to fetch the URL
+        try {
+          const resp = await fetch(m3uUrl);
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          content = await resp.text();
+        } catch (err: any) {
+          // Try via edge function proxy
+          try {
+            const { data, error } = await supabase.functions.invoke('import-m3u', {
+              body: { m3u_url: m3uUrl, dry_run: true }
+            });
+            if (error) throw error;
+            // If edge function returns parsed channels directly
+            if (data?.channels) {
+              const parsed = data.channels.map((ch: any) => ({
+                id: crypto.randomUUID(),
+                name: ch.name || 'Sin nombre',
+                url: ch.url,
+                category: ch.category || 'General',
+                logo_url: ch.logo_url || null,
+                is_active: true,
+              }));
+              setExternalChannels(prev => [...prev, ...parsed]);
+              toast({ title: `${parsed.length} canales cargados desde URL` });
+              setShowUploadDialog(false);
+              setM3uInput('');
+              setM3uUrl('');
+              setLoadingM3u(false);
+              return;
+            }
+          } catch {
+            throw new Error(`No se pudo descargar la URL: ${err.message}. Pega el contenido directamente.`);
+          }
+        }
+      }
+
+      if (!content) {
+        toast({ title: 'Pega el contenido M3U o ingresa una URL', variant: 'destructive' });
+        setLoadingM3u(false);
+        return;
+      }
+
+      const parsed = parseM3U(content);
+      if (parsed.length === 0) {
+        toast({ title: 'No se encontraron canales en el M3U', variant: 'destructive' });
+        setLoadingM3u(false);
+        return;
+      }
+
+      setExternalChannels(prev => [...prev, ...parsed]);
+      toast({ title: `${parsed.length} canales cargados para prueba` });
+      setShowUploadDialog(false);
+      setM3uInput('');
+      setM3uUrl('');
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+    setLoadingM3u(false);
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      setM3uInput(ev.target?.result as string || '');
+    };
+    reader.readAsText(file);
+  };
+
+  // --- Test a single channel directly from browser ---
+  const testSingleChannel = async (channel: Channel): Promise<void> => {
+    setPingStatus(prev => ({ ...prev, [channel.id]: 'checking' }));
+    const startTime = Date.now();
 
     try {
-      let data: any;
-      if (isLovablePreview()) {
-        const { data: fnData, error } = await supabase.functions.invoke('channel-ping', {
-          body: { auto_manage: true }
-        });
-        if (error) throw error;
-        data = fnData;
-      } else {
-        data = await apiPost('/api/channels/ping', { auto_manage: true });
-      }
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000);
 
-      const newStatus: Record<string, PingStatus> = {};
-      const results: PingResult[] = data.results || [];
-      results.forEach((r: any) => {
-        newStatus[r.id] = r.status === 'online' ? 'up' : 'down';
+      const response = await fetch(channel.url, {
+        method: 'HEAD',
+        signal: controller.signal,
+        mode: 'no-cors',
       });
-      setPingStatus(newStatus);
-      setPingResults(results);
-      setAutoActions(data.auto_actions || null);
+      clearTimeout(timeout);
 
-      const offline = results.filter(r => r.status === 'offline').length;
-      const actions = data.auto_actions;
-      let description = '';
-      if (actions?.disabled?.length > 0) description += `Desactivados: ${actions.disabled.join(', ')}. `;
-      if (actions?.reactivated?.length > 0) description += `Reactivados: ${actions.reactivated.join(', ')}`;
-
-      if (offline > 0) {
-        toast({ title: `${offline} canal(es) caído(s)`, description: description || undefined, variant: 'destructive' });
-      } else {
-        toast({ title: `Todos los canales online (${results.length})`, description: description || undefined });
-      }
-      fetchLogs();
+      const elapsed = Date.now() - startTime;
+      setPingStatus(prev => ({ ...prev, [channel.id]: 'up' }));
+      setPingResults(prev => {
+        const filtered = prev.filter(r => r.id !== channel.id);
+        return [...filtered, {
+          id: channel.id,
+          name: channel.name,
+          status: 'online' as const,
+          response_time: elapsed,
+          error: null,
+        }];
+      });
     } catch (err: any) {
-      toast({ title: 'Error en health check', description: err.message, variant: 'destructive' });
-    } finally {
-      setChecking(false);
+      const elapsed = Date.now() - startTime;
+      setPingStatus(prev => ({ ...prev, [channel.id]: 'down' }));
+      setPingResults(prev => {
+        const filtered = prev.filter(r => r.id !== channel.id);
+        return [...filtered, {
+          id: channel.id,
+          name: channel.name,
+          status: 'offline' as const,
+          response_time: elapsed,
+          error: err.name === 'AbortError' ? 'Timeout (10s)' : err.message,
+        }];
+      });
     }
-  }, [channels, toast, fetchLogs]);
+  };
+
+  // --- Health check (ping all) ---
+  const runHealthCheck = useCallback(async () => {
+    const targetChannels = activeTab === 'external' ? externalChannels : channels;
+    if (targetChannels.length === 0) {
+      toast({ title: 'No hay canales para probar', variant: 'destructive' });
+      return;
+    }
+
+    setChecking(true);
+    const initial: Record<string, PingStatus> = {};
+    targetChannels.forEach(ch => { initial[ch.id] = 'checking'; });
+    setPingStatus(initial);
+
+    if (activeTab === 'external') {
+      // For external channels, test directly from browser in batches
+      for (let i = 0; i < targetChannels.length; i += 5) {
+        const batch = targetChannels.slice(i, i + 5);
+        await Promise.all(batch.map(ch => testSingleChannel(ch)));
+      }
+      const finalStatus = { ...pingStatus };
+      const upCount = targetChannels.filter(ch => finalStatus[ch.id] === 'up' || pingStatus[ch.id] === 'up').length;
+      toast({ title: `Prueba completada`, description: `${targetChannels.length} canales probados` });
+    } else {
+      // Server channels - use edge function or API
+      try {
+        let data: any;
+        if (isLovablePreview()) {
+          const { data: fnData, error } = await supabase.functions.invoke('channel-ping', {
+            body: { auto_manage: true }
+          });
+          if (error) throw error;
+          data = fnData;
+        } else {
+          data = await apiPost('/api/channels/ping', { auto_manage: true });
+        }
+
+        const newStatus: Record<string, PingStatus> = {};
+        const results: PingResult[] = data.results || [];
+        results.forEach((r: any) => {
+          newStatus[r.id] = r.status === 'online' ? 'up' : 'down';
+        });
+        setPingStatus(newStatus);
+        setPingResults(results);
+        setAutoActions(data.auto_actions || null);
+
+        const offline = results.filter(r => r.status === 'offline').length;
+        const actions = data.auto_actions;
+        let description = '';
+        if (actions?.disabled?.length > 0) description += `Desactivados: ${actions.disabled.join(', ')}. `;
+        if (actions?.reactivated?.length > 0) description += `Reactivados: ${actions.reactivated.join(', ')}`;
+
+        if (offline > 0) {
+          toast({ title: `${offline} canal(es) caído(s)`, description: description || undefined, variant: 'destructive' });
+        } else {
+          toast({ title: `Todos los canales online (${results.length})`, description: description || undefined });
+        }
+        fetchLogs();
+      } catch (err: any) {
+        toast({ title: 'Error en health check', description: err.message, variant: 'destructive' });
+      }
+    }
+    setChecking(false);
+  }, [activeTab, externalChannels, channels, toast, fetchLogs]);
 
   // --- Toggle auto-ping ---
   const toggleAutoPing = useCallback(async (enabled: boolean) => {
@@ -281,6 +468,12 @@ const ChannelTester = () => {
     });
   };
 
+  const filteredChannels = currentChannels.filter(ch => {
+    const matchSearch = !search || ch.name.toLowerCase().includes(search.toLowerCase()) || ch.category.toLowerCase().includes(search.toLowerCase());
+    const matchDown = !filterDown || pingStatus[ch.id] === 'down';
+    return matchSearch && matchDown;
+  });
+
   const toggleSelectAll = () => {
     const visible = filteredChannels.map(c => c.id);
     const allSelected = visible.every(id => selected.has(id));
@@ -292,13 +485,21 @@ const ChannelTester = () => {
   };
 
   const selectDownChannels = () => {
-    const downIds = channels.filter(ch => pingStatus[ch.id] === 'down').map(ch => ch.id);
+    const downIds = currentChannels.filter(ch => pingStatus[ch.id] === 'down').map(ch => ch.id);
     setSelected(new Set(downIds));
   };
 
   // --- Delete channels ---
   const deleteChannels = async (ids: string[]) => {
     if (!ids.length) return;
+    if (activeTab === 'external') {
+      setExternalChannels(prev => prev.filter(ch => !ids.includes(ch.id)));
+      setSelected(prev => { const n = new Set(prev); ids.forEach(id => n.delete(id)); return n; });
+      if (playingChannel && ids.includes(playingChannel.id)) setPlayingChannel(null);
+      toast({ title: `${ids.length} canal(es) eliminado(s)` });
+      return;
+    }
+
     if (!confirm(`¿Eliminar ${ids.length} canal(es)? Esta acción no se puede deshacer.`)) return;
     try {
       if (isLovablePreview()) {
@@ -319,7 +520,7 @@ const ChannelTester = () => {
   };
 
   const deleteDownChannels = () => {
-    const downIds = channels.filter(ch => pingStatus[ch.id] === 'down').map(ch => ch.id);
+    const downIds = currentChannels.filter(ch => pingStatus[ch.id] === 'down').map(ch => ch.id);
     if (!downIds.length) {
       toast({ title: 'No hay canales caídos para eliminar' });
       return;
@@ -330,8 +531,8 @@ const ChannelTester = () => {
   // --- Export M3U ---
   const exportM3U = (onlySelected: boolean) => {
     const list = onlySelected
-      ? channels.filter(ch => selected.has(ch.id))
-      : channels.filter(ch => pingStatus[ch.id] !== 'down');
+      ? currentChannels.filter(ch => selected.has(ch.id))
+      : currentChannels.filter(ch => pingStatus[ch.id] !== 'down');
 
     if (!list.length) {
       toast({ title: 'No hay canales para exportar' });
@@ -349,21 +550,14 @@ const ChannelTester = () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `canales_limpios_${new Date().toISOString().slice(0, 10)}.m3u`;
+    a.download = `canales_${activeTab === 'external' ? 'externos_verificados' : 'limpios'}_${new Date().toISOString().slice(0, 10)}.m3u`;
     a.click();
     URL.revokeObjectURL(url);
     toast({ title: `Exportados ${list.length} canales` });
   };
 
-  // --- Filtering ---
-  const filteredChannels = channels.filter(ch => {
-    const matchSearch = !search || ch.name.toLowerCase().includes(search.toLowerCase()) || ch.category.toLowerCase().includes(search.toLowerCase());
-    const matchDown = !filterDown || pingStatus[ch.id] === 'down';
-    return matchSearch && matchDown;
-  });
-
-  const upCount = channels.filter(ch => pingStatus[ch.id] === 'up').length;
-  const downCount = channels.filter(ch => pingStatus[ch.id] === 'down').length;
+  const upCount = currentChannels.filter(ch => pingStatus[ch.id] === 'up').length;
+  const downCount = currentChannels.filter(ch => pingStatus[ch.id] === 'down').length;
   const checkedCount = upCount + downCount;
 
   const getStatusIcon = (id: string) => {
@@ -381,8 +575,32 @@ const ChannelTester = () => {
     return acc;
   }, {} as Record<string, HealthLog[]>);
 
+  // Reset selection when switching tabs
+  useEffect(() => {
+    setSelected(new Set());
+    setPingStatus({});
+    setPingResults([]);
+    setPlayingChannel(null);
+    setFilterDown(false);
+    setSearch('');
+  }, [activeTab]);
+
   return (
     <div className="space-y-6">
+      {/* Tabs: External vs Server */}
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList className="w-full">
+          <TabsTrigger value="external" className="flex-1 gap-2">
+            <Upload className="w-4 h-4" />
+            Probar Externos
+          </TabsTrigger>
+          <TabsTrigger value="server" className="flex-1 gap-2">
+            <Wifi className="w-4 h-4" />
+            Canales del Servidor
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
+
       {/* Player */}
       <AnimatePresence>
         {playingChannel && (
@@ -407,75 +625,121 @@ const ChannelTester = () => {
         )}
       </AnimatePresence>
 
-      {/* Auto-ping controls */}
-      <div className="glass-strong rounded-2xl p-4 border border-border/30">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center">
-              <Activity className="w-4 h-4 text-primary" />
+      {/* External mode: Upload button and info */}
+      {activeTab === 'external' && (
+        <div className="glass-strong rounded-2xl p-4 border border-primary/20">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center">
+                <Upload className="w-4 h-4 text-primary" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-sm text-foreground">Probar canales externos</h3>
+                <p className="text-[11px] text-muted-foreground">
+                  Sube un M3U para verificar canales antes de agregarlos al servidor
+                </p>
+              </div>
             </div>
-            <div>
-              <h3 className="font-semibold text-sm text-foreground">Auto-gestión de canales</h3>
+            <div className="flex items-center gap-2">
+              <Button onClick={() => setShowUploadDialog(true)} className="gap-2" size="sm">
+                <Upload className="w-4 h-4" />
+                Cargar M3U
+              </Button>
+              {externalChannels.length > 0 && (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => {
+                    setExternalChannels([]);
+                    setPingStatus({});
+                    setPingResults([]);
+                    setSelected(new Set());
+                  }}
+                  className="gap-2"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Limpiar
+                </Button>
+              )}
+            </div>
+          </div>
+          {externalChannels.length > 0 && (
+            <p className="text-xs text-muted-foreground mt-2">
+              {externalChannels.length} canales cargados — Haz click en "Check Masivo" para verificarlos
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Server mode: Auto-ping controls */}
+      {activeTab === 'server' && (
+        <div className="glass-strong rounded-2xl p-4 border border-border/30">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center">
+                <Activity className="w-4 h-4 text-primary" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-sm text-foreground">Auto-gestión de canales</h3>
+                <p className="text-[11px] text-muted-foreground">
+                  Canales con 3 fallos consecutivos se desactivan automáticamente
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border ${autoPing ? 'bg-primary/10 border-primary/30' : 'bg-secondary/30 border-border/20'}`}>
+                <Timer className={`w-4 h-4 ${autoPing ? 'text-primary' : 'text-muted-foreground'}`} />
+                <span className={`text-xs ${autoPing ? 'text-primary font-semibold' : 'text-muted-foreground'}`}>
+                  {autoPing ? 'Auto-ping activo' : 'Auto (5min)'}
+                </span>
+                {autoPing && !isLovablePreview() && (
+                  <span className="text-[10px] text-primary/70">24/7</span>
+                )}
+                <Switch checked={autoPing} onCheckedChange={toggleAutoPing} disabled={togglingServer} />
+              </div>
+            </div>
+          </div>
+
+          {serverAutoPing?.running && serverAutoPing.last_result && (
+            <div className="flex items-center gap-3 px-3 py-2 rounded-xl bg-primary/5 border border-primary/20 mt-3">
+              <CheckCircle2 className="w-4 h-4 text-primary shrink-0 animate-pulse" />
               <p className="text-[11px] text-muted-foreground">
-                Canales con 3 fallos consecutivos se desactivan automáticamente
+                Último: {new Date(serverAutoPing.last_result.timestamp).toLocaleTimeString()} —{' '}
+                {serverAutoPing.last_result.online}/{serverAutoPing.last_result.total} online
+                {serverAutoPing.last_result.disabled.length > 0 && ` · ${serverAutoPing.last_result.disabled.length} desactivados`}
+                {serverAutoPing.last_result.reactivated.length > 0 && ` · ${serverAutoPing.last_result.reactivated.length} reactivados`}
               </p>
             </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border ${autoPing ? 'bg-primary/10 border-primary/30' : 'bg-secondary/30 border-border/20'}`}>
-              <Timer className={`w-4 h-4 ${autoPing ? 'text-primary' : 'text-muted-foreground'}`} />
-              <span className={`text-xs ${autoPing ? 'text-primary font-semibold' : 'text-muted-foreground'}`}>
-                {autoPing ? 'Auto-ping activo' : 'Auto (5min)'}
-              </span>
-              {autoPing && !isLovablePreview() && (
-                <span className="text-[10px] text-primary/70">24/7</span>
-              )}
-              <Switch checked={autoPing} onCheckedChange={toggleAutoPing} disabled={togglingServer} />
-            </div>
-          </div>
-        </div>
-
-        {/* Server auto-ping status */}
-        {serverAutoPing?.running && serverAutoPing.last_result && (
-          <div className="flex items-center gap-3 px-3 py-2 rounded-xl bg-primary/5 border border-primary/20 mt-3">
-            <CheckCircle2 className="w-4 h-4 text-primary shrink-0 animate-pulse" />
-            <p className="text-[11px] text-muted-foreground">
-              Último: {new Date(serverAutoPing.last_result.timestamp).toLocaleTimeString()} —{' '}
-              {serverAutoPing.last_result.online}/{serverAutoPing.last_result.total} online
-              {serverAutoPing.last_result.disabled.length > 0 && ` · ${serverAutoPing.last_result.disabled.length} desactivados`}
-              {serverAutoPing.last_result.reactivated.length > 0 && ` · ${serverAutoPing.last_result.reactivated.length} reactivados`}
-            </p>
-          </div>
-        )}
-
-        {/* Auto-actions feedback */}
-        <AnimatePresence>
-          {autoActions && (autoActions.disabled.length > 0 || autoActions.reactivated.length > 0) && (
-            <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="mt-3 space-y-2">
-              {autoActions.disabled.length > 0 && (
-                <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-destructive/10 border border-destructive/20 text-sm">
-                  <PowerOff className="w-4 h-4 text-destructive shrink-0" />
-                  <span className="text-destructive text-xs">
-                    <strong>Auto-desactivados:</strong> {autoActions.disabled.join(', ')}
-                  </span>
-                </div>
-              )}
-              {autoActions.reactivated.length > 0 && (
-                <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-green-500/10 border border-green-500/20 text-sm">
-                  <RotateCcw className="w-4 h-4 text-green-500 shrink-0" />
-                  <span className="text-green-500 text-xs">
-                    <strong>Reactivados:</strong> {autoActions.reactivated.join(', ')}
-                  </span>
-                </div>
-              )}
-            </motion.div>
           )}
-        </AnimatePresence>
-      </div>
+
+          <AnimatePresence>
+            {autoActions && (autoActions.disabled.length > 0 || autoActions.reactivated.length > 0) && (
+              <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="mt-3 space-y-2">
+                {autoActions.disabled.length > 0 && (
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-destructive/10 border border-destructive/20 text-sm">
+                    <PowerOff className="w-4 h-4 text-destructive shrink-0" />
+                    <span className="text-destructive text-xs">
+                      <strong>Auto-desactivados:</strong> {autoActions.disabled.join(', ')}
+                    </span>
+                  </div>
+                )}
+                {autoActions.reactivated.length > 0 && (
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-green-500/10 border border-green-500/20 text-sm">
+                    <RotateCcw className="w-4 h-4 text-green-500 shrink-0" />
+                    <span className="text-green-500 text-xs">
+                      <strong>Reactivados:</strong> {autoActions.reactivated.join(', ')}
+                    </span>
+                  </div>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      )}
 
       {/* Actions bar */}
       <div className="flex flex-wrap gap-2">
-        <Button onClick={runHealthCheck} disabled={checking} className="gap-2">
+        <Button onClick={runHealthCheck} disabled={checking || currentChannels.length === 0} className="gap-2">
           {checking ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
           {checking ? 'Verificando...' : 'Check Masivo'}
         </Button>
@@ -495,12 +759,14 @@ const ChannelTester = () => {
           </Button>
         )}
         <div className="flex-1" />
-        <Button variant="outline" onClick={() => setShowHistory(!showHistory)} className="gap-2">
-          <Clock className="w-4 h-4" />
-          {showHistory ? 'Ocultar historial' : 'Historial errores'}
-          {logs.length > 0 && <Badge variant="secondary" className="text-[10px] ml-1">{logs.length}</Badge>}
-        </Button>
-        <Button variant="outline" onClick={() => exportM3U(selected.size > 0)} className="gap-2">
+        {activeTab === 'server' && (
+          <Button variant="outline" onClick={() => setShowHistory(!showHistory)} className="gap-2">
+            <Clock className="w-4 h-4" />
+            {showHistory ? 'Ocultar historial' : 'Historial errores'}
+            {logs.length > 0 && <Badge variant="secondary" className="text-[10px] ml-1">{logs.length}</Badge>}
+          </Button>
+        )}
+        <Button variant="outline" onClick={() => exportM3U(selected.size > 0)} disabled={currentChannels.length === 0} className="gap-2">
           <Download className="w-4 h-4" />
           Exportar M3U {selected.size > 0 ? `(${selected.size})` : '(limpios)'}
         </Button>
@@ -531,7 +797,7 @@ const ChannelTester = () => {
             <CardContent className="p-4 flex items-center gap-3">
               <RefreshCw className="w-6 h-6 text-primary" />
               <div>
-                <p className="text-2xl font-bold">{channels.length}</p>
+                <p className="text-2xl font-bold">{currentChannels.length}</p>
                 <p className="text-xs text-muted-foreground">Total</p>
               </div>
             </CardContent>
@@ -539,73 +805,75 @@ const ChannelTester = () => {
         </div>
       )}
 
-      {/* Error History (collapsible) */}
-      <AnimatePresence>
-        {showHistory && (
-          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
-            <div className="glass-strong rounded-2xl p-5 border border-border/30">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-destructive/10 flex items-center justify-center">
-                    <AlertTriangle className="w-4 h-4 text-destructive" />
-                  </div>
-                  <div>
-                    <h3 className="font-semibold text-sm text-foreground">Historial de Errores</h3>
-                    <span className="text-xs text-muted-foreground">{logs.length} reportes</span>
-                  </div>
-                </div>
-                <div className="flex gap-2">
-                  <Button variant="outline" size="sm" onClick={fetchLogs} disabled={loadingLogs}>
-                    <RefreshCw className={`w-4 h-4 mr-1 ${loadingLogs ? 'animate-spin' : ''}`} />
-                    Actualizar
-                  </Button>
-                  {logs.length > 0 && (
-                    <Button variant="destructive" size="sm" onClick={clearLogs}>
-                      <Trash2 className="w-4 h-4 mr-1" />
-                      Limpiar
-                    </Button>
-                  )}
-                </div>
-              </div>
-
-              {logs.length === 0 ? (
-                <div className="rounded-xl bg-secondary/20 p-8 text-center">
-                  <Wifi className="w-8 h-8 text-primary mx-auto mb-2" />
-                  <p className="text-muted-foreground text-sm">Sin errores registrados</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {Object.entries(errorsByChannel).map(([channelName, channelLogs]) => (
-                    <div key={channelName} className="rounded-xl border border-border/30 overflow-hidden">
-                      <div className="flex items-center gap-3 px-4 py-3 bg-secondary/20 border-b border-border/20">
-                        <WifiOff className="w-4 h-4 text-destructive shrink-0" />
-                        <span className="font-medium text-foreground text-sm">{channelName}</span>
-                        <span className="text-xs bg-destructive/20 text-destructive px-2 py-0.5 rounded-full ml-auto">
-                          {channelLogs.length}
-                        </span>
-                      </div>
-                      <ScrollArea className={channelLogs.length > 3 ? 'max-h-32' : ''}>
-                        <div className="divide-y divide-border/10">
-                          {channelLogs.slice(0, 10).map(log => (
-                            <div key={log.id} className="px-4 py-2 flex items-start gap-3 text-xs">
-                              <Clock className="w-3 h-3 text-muted-foreground shrink-0 mt-0.5" />
-                              <span className="text-muted-foreground shrink-0">
-                                {format(new Date(log.checked_at), 'dd/MM HH:mm')}
-                              </span>
-                              <span className="text-foreground/80 flex-1">{log.error_message || 'Error desconocido'}</span>
-                              <span className="text-muted-foreground/50 shrink-0">{log.checked_by || ''}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </ScrollArea>
+      {/* Error History (server only) */}
+      {activeTab === 'server' && (
+        <AnimatePresence>
+          {showHistory && (
+            <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
+              <div className="glass-strong rounded-2xl p-5 border border-border/30">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-destructive/10 flex items-center justify-center">
+                      <AlertTriangle className="w-4 h-4 text-destructive" />
                     </div>
-                  ))}
+                    <div>
+                      <h3 className="font-semibold text-sm text-foreground">Historial de Errores</h3>
+                      <span className="text-xs text-muted-foreground">{logs.length} reportes</span>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button variant="outline" size="sm" onClick={fetchLogs} disabled={loadingLogs}>
+                      <RefreshCw className={`w-4 h-4 mr-1 ${loadingLogs ? 'animate-spin' : ''}`} />
+                      Actualizar
+                    </Button>
+                    {logs.length > 0 && (
+                      <Button variant="destructive" size="sm" onClick={clearLogs}>
+                        <Trash2 className="w-4 h-4 mr-1" />
+                        Limpiar
+                      </Button>
+                    )}
+                  </div>
                 </div>
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+
+                {logs.length === 0 ? (
+                  <div className="rounded-xl bg-secondary/20 p-8 text-center">
+                    <Wifi className="w-8 h-8 text-primary mx-auto mb-2" />
+                    <p className="text-muted-foreground text-sm">Sin errores registrados</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {Object.entries(errorsByChannel).map(([channelName, channelLogs]) => (
+                      <div key={channelName} className="rounded-xl border border-border/30 overflow-hidden">
+                        <div className="flex items-center gap-3 px-4 py-3 bg-secondary/20 border-b border-border/20">
+                          <WifiOff className="w-4 h-4 text-destructive shrink-0" />
+                          <span className="font-medium text-foreground text-sm">{channelName}</span>
+                          <span className="text-xs bg-destructive/20 text-destructive px-2 py-0.5 rounded-full ml-auto">
+                            {channelLogs.length}
+                          </span>
+                        </div>
+                        <ScrollArea className={channelLogs.length > 3 ? 'max-h-32' : ''}>
+                          <div className="divide-y divide-border/10">
+                            {channelLogs.slice(0, 10).map(log => (
+                              <div key={log.id} className="px-4 py-2 flex items-start gap-3 text-xs">
+                                <Clock className="w-3 h-3 text-muted-foreground shrink-0 mt-0.5" />
+                                <span className="text-muted-foreground shrink-0">
+                                  {format(new Date(log.checked_at), 'dd/MM HH:mm')}
+                                </span>
+                                <span className="text-foreground/80 flex-1">{log.error_message || 'Error desconocido'}</span>
+                                <span className="text-muted-foreground/50 shrink-0">{log.checked_by || ''}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </ScrollArea>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      )}
 
       {/* Search */}
       <div className="relative">
@@ -619,16 +887,27 @@ const ChannelTester = () => {
       </div>
 
       {/* Select all */}
-      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Checkbox
-          checked={filteredChannels.length > 0 && filteredChannels.every(c => selected.has(c.id))}
-          onCheckedChange={toggleSelectAll}
-        />
-        <span>Seleccionar todos ({filteredChannels.length})</span>
-      </div>
+      {currentChannels.length > 0 && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Checkbox
+            checked={filteredChannels.length > 0 && filteredChannels.every(c => selected.has(c.id))}
+            onCheckedChange={toggleSelectAll}
+          />
+          <span>Seleccionar todos ({filteredChannels.length})</span>
+        </div>
+      )}
 
       {/* Channel list */}
-      {loading ? (
+      {activeTab === 'external' && externalChannels.length === 0 ? (
+        <div className="rounded-xl bg-secondary/20 p-12 text-center">
+          <Upload className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
+          <p className="text-muted-foreground font-medium">No hay canales externos cargados</p>
+          <p className="text-xs text-muted-foreground mt-1">Sube un archivo M3U o pega su contenido para empezar a probar</p>
+          <Button onClick={() => setShowUploadDialog(true)} className="mt-4 gap-2">
+            <Upload className="w-4 h-4" /> Cargar M3U
+          </Button>
+        </div>
+      ) : activeTab === 'server' && loading ? (
         <div className="flex justify-center py-12">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
@@ -658,7 +937,6 @@ const ChannelTester = () => {
                   <p className="text-sm font-medium truncate">{ch.name}</p>
                   <p className="text-xs text-muted-foreground truncate">{ch.category}</p>
                 </div>
-                {/* Failure counter */}
                 {result && result.status === 'offline' && (result.consecutive_failures || 0) > 0 && (
                   <div className="flex items-center gap-1 text-xs text-amber-500 shrink-0">
                     <ShieldAlert className="w-3 h-3" />
@@ -668,7 +946,6 @@ const ChannelTester = () => {
                 {result?.was_auto_disabled && result.status === 'online' && (
                   <Badge variant="outline" className="text-[10px] border-green-500/30 text-green-500">Recuperado</Badge>
                 )}
-                {/* Response time */}
                 {result && result.status === 'online' && (
                   <span className="text-[11px] text-green-500/80 flex items-center gap-1 shrink-0">
                     <Zap className="w-3 h-3" />{result.response_time}ms
@@ -699,11 +976,56 @@ const ChannelTester = () => {
               </motion.div>
             );
           })}
-          {filteredChannels.length === 0 && (
+          {filteredChannels.length === 0 && currentChannels.length > 0 && (
             <p className="text-center py-8 text-muted-foreground">No se encontraron canales</p>
           )}
         </div>
       )}
+
+      {/* Upload M3U Dialog */}
+      <Dialog open={showUploadDialog} onOpenChange={setShowUploadDialog}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Upload className="w-5 h-5 text-primary" />
+              Cargar canales para prueba
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <label className="text-sm font-medium text-foreground mb-1 block">URL del M3U</label>
+              <Input
+                placeholder="https://ejemplo.com/lista.m3u"
+                value={m3uUrl}
+                onChange={e => setM3uUrl(e.target.value)}
+              />
+            </div>
+            <div className="text-center text-xs text-muted-foreground">— o —</div>
+            <div>
+              <label className="text-sm font-medium text-foreground mb-1 block">Subir archivo M3U</label>
+              <Input
+                type="file"
+                accept=".m3u,.m3u8,.txt"
+                onChange={handleFileUpload}
+              />
+            </div>
+            <div className="text-center text-xs text-muted-foreground">— o —</div>
+            <div>
+              <label className="text-sm font-medium text-foreground mb-1 block">Pegar contenido M3U</label>
+              <Textarea
+                placeholder="#EXTM3U&#10;#EXTINF:-1 group-title=&quot;Deportes&quot;,ESPN&#10;http://ejemplo.com/espn.m3u8"
+                value={m3uInput}
+                onChange={e => setM3uInput(e.target.value)}
+                className="min-h-[150px] font-mono text-xs"
+              />
+            </div>
+            <Button onClick={handleUploadM3U} disabled={loadingM3u} className="w-full gap-2">
+              {loadingM3u ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+              {loadingM3u ? 'Cargando...' : 'Cargar canales'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
