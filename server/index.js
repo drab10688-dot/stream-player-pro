@@ -1527,7 +1527,7 @@ function releaseTranscoder(channelId) {
 }
 
 // =============================================
-// BUFFER MODE: Grabación circular 10 min
+// BUFFER MODE: Grabación circular 5 min (segmentos de 10s)
 // =============================================
 function startBufferTranscoder(channelId, sourceUrl) {
   if (activeTranscoders.has(channelId)) {
@@ -1541,6 +1541,7 @@ function startBufferTranscoder(channelId, sourceUrl) {
   if (!fs.existsSync(channelDir)) fs.mkdirSync(channelDir, { recursive: true });
 
   const manifestPath = path.join(channelDir, 'stream.m3u8');
+  // 5 min buffer: 30 segments × 10s = 300s
   const ffmpegArgs = [
     '-user_agent', 'VLC/3.0.18 LibVLC/3.0.18',
     '-analyzeduration', '1000000', '-probesize', '1000000',
@@ -1550,14 +1551,14 @@ function startBufferTranscoder(channelId, sourceUrl) {
     '-i', sourceUrl,
     '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k',
     '-f', 'hls',
-    '-hls_time', '2',
-    '-hls_list_size', '300',
+    '-hls_time', '10',
+    '-hls_list_size', '30',
     '-hls_flags', 'delete_segments+append_list',
     '-hls_segment_filename', path.join(channelDir, 'seg_%05d.ts'),
     '-y', manifestPath
   ];
 
-  console.log(`📀 [${channelId}] Buffer mode: grabación circular 10min: ${sourceUrl}`);
+  console.log(`📀 [${channelId}] Buffer mode: grabación circular 5min (30×10s): ${sourceUrl}`);
   const proc = spawn('/usr/bin/ffmpeg', ffmpegArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
 
   const entry = {
@@ -1565,10 +1566,12 @@ function startBufferTranscoder(channelId, sourceUrl) {
     ffmpeg: proc,
     channelDir,
     manifestPath,
+    sourceUrl,
     clients: 1,
     lastAccess: Date.now(),
     ready: false,
     keepAlive: false,
+    restartCount: 0,
   };
   activeTranscoders.set(channelId, entry);
 
@@ -1582,6 +1585,18 @@ function startBufferTranscoder(channelId, sourceUrl) {
   proc.on('exit', (code) => {
     console.log(`📀 [${channelId}] Buffer FFmpeg salió con código ${code}`);
     activeTranscoders.delete(channelId);
+    // Auto-restart if there are still clients or fewer than 10 consecutive failures
+    if (entry.clients > 0 && entry.restartCount < 10) {
+      const delay = Math.min(2000 * (entry.restartCount + 1), 15000);
+      console.log(`🔄 [${channelId}] Buffer auto-restart en ${delay}ms (intento ${entry.restartCount + 1})`);
+      setTimeout(() => {
+        if (!activeTranscoders.has(channelId)) {
+          const newEntry = startBufferTranscoder(channelId, sourceUrl);
+          newEntry.clients = entry.clients;
+          newEntry.restartCount = entry.restartCount + 1;
+        }
+      }, delay);
+    }
   });
 
   return entry;
