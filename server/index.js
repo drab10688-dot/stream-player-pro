@@ -1362,6 +1362,11 @@ function startSingleQualityTranscoder(channelId, sourceUrl, channelDir, isKeepAl
   console.log(`🎬 [${channelId}] FFmpeg calidad única (caché: ${cacheLabel}): ${sourceUrl}`);
 
   const ffmpeg = spawn('ffmpeg', [
+    '-user_agent', 'VLC/3.0.18 LibVLC/3.0.18',
+    '-analyzeduration', '1000000',
+    '-probesize', '1000000',
+    '-fflags', '+nobuffer',
+    '-flags', '+low_delay',
     '-reconnect', '1',
     '-reconnect_streamed', '1',
     '-reconnect_delay_max', '10',
