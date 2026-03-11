@@ -50,9 +50,19 @@ const ShieldClientsManager = () => {
 
   const processClients = (raw: any[]): XtreamClient[] => {
     return raw.map(c => {
-      const expDate = c.exp_date
-        ? (String(c.exp_date).length > 10 ? new Date(c.exp_date) : new Date(Number(c.exp_date) * 1000))
-        : null;
+      let expDate: Date | null = null;
+      try {
+        if (c.exp_date) {
+          const parsed = String(c.exp_date).length > 10
+            ? new Date(c.exp_date)
+            : new Date(Number(c.exp_date) * 1000);
+          if (!isNaN(parsed.getTime())) {
+            expDate = parsed;
+          }
+        }
+      } catch {
+        expDate = null;
+      }
       const daysLeft = expDate ? differenceInDays(expDate, new Date()) : 999;
       return {
         ...c,
