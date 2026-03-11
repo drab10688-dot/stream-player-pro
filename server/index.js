@@ -133,6 +133,7 @@ const authAdmin = async (req, res, next) => {
 // RUTAS: ADMIN AUTH
 // =============================================
 
+
 // Crear primer admin (solo funciona si no hay admins)
 app.post('/api/admin/setup', async (req, res) => {
   try {
@@ -445,10 +446,10 @@ app.post('/api/channels/upload-logo', authAdmin, uploadLogo.single('logo'), (req
 });
 
 app.post('/api/channels', authAdmin, async (req, res) => {
-  const { name, url, category, sort_order, logo_url } = req.body;
+  const { name, url, category, sort_order, logo_url, stream_mode } = req.body;
   const { rows } = await pool.query(
-    'INSERT INTO channels (name, url, category, sort_order, logo_url) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-    [name, url, category || 'General', sort_order || 0, logo_url || null]
+    'INSERT INTO channels (name, url, category, sort_order, logo_url, stream_mode) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+    [name, url, category || 'General', sort_order || 0, logo_url || null, stream_mode || 'direct']
   );
   res.json(rows[0]);
 });
@@ -466,10 +467,11 @@ app.put('/api/channels/:id', authAdmin, async (req, res) => {
     const is_active = req.body.is_active !== undefined ? req.body.is_active : c.is_active;
     const keep_alive = req.body.keep_alive !== undefined ? req.body.keep_alive : c.keep_alive;
     const logo_url = req.body.logo_url !== undefined ? req.body.logo_url : c.logo_url;
+    const stream_mode = req.body.stream_mode !== undefined ? req.body.stream_mode : (c.stream_mode || 'direct');
 
     const { rows } = await pool.query(
-      'UPDATE channels SET name=$1, url=$2, category=$3, sort_order=$4, is_active=$5, keep_alive=$6, logo_url=$7 WHERE id=$8 RETURNING *',
-      [name, url, category, sort_order, is_active, keep_alive, logo_url, req.params.id]
+      'UPDATE channels SET name=$1, url=$2, category=$3, sort_order=$4, is_active=$5, keep_alive=$6, logo_url=$7, stream_mode=$8 WHERE id=$9 RETURNING *',
+      [name, url, category, sort_order, is_active, keep_alive, logo_url, stream_mode, req.params.id]
     );
 
     // If keep_alive was toggled ON, start the transcoder immediately
@@ -1525,6 +1527,67 @@ function releaseTranscoder(channelId) {
 }
 
 // =============================================
+// BUFFER MODE: Grabación circular 10 min
+// =============================================
+function startBufferTranscoder(channelId, sourceUrl) {
+  if (activeTranscoders.has(channelId)) {
+    const existing = activeTranscoders.get(channelId);
+    existing.clients++;
+    existing.lastAccess = Date.now();
+    return existing;
+  }
+
+  const channelDir = path.join(HLS_DIR, channelId);
+  if (!fs.existsSync(channelDir)) fs.mkdirSync(channelDir, { recursive: true });
+
+  const manifestPath = path.join(channelDir, 'stream.m3u8');
+  const ffmpegArgs = [
+    '-user_agent', 'VLC/3.0.18 LibVLC/3.0.18',
+    '-analyzeduration', '1000000', '-probesize', '1000000',
+    '-fflags', '+nobuffer', '-flags', '+low_delay',
+    '-reconnect', '1', '-reconnect_streamed', '1',
+    '-reconnect_delay_max', '5', '-timeout', '5000000',
+    '-i', sourceUrl,
+    '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k',
+    '-f', 'hls',
+    '-hls_time', '2',
+    '-hls_list_size', '300',
+    '-hls_flags', 'delete_segments+append_list',
+    '-hls_segment_filename', path.join(channelDir, 'seg_%05d.ts'),
+    '-y', manifestPath
+  ];
+
+  console.log(`📀 [${channelId}] Buffer mode: grabación circular 10min: ${sourceUrl}`);
+  const proc = spawn('/usr/bin/ffmpeg', ffmpegArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
+
+  const entry = {
+    type: 'ffmpeg-buffer',
+    ffmpeg: proc,
+    channelDir,
+    manifestPath,
+    clients: 1,
+    lastAccess: Date.now(),
+    ready: false,
+    keepAlive: false,
+  };
+  activeTranscoders.set(channelId, entry);
+
+  proc.stderr.on('data', (data) => {
+    const msg = data.toString();
+    if (msg.includes('Opening') || msg.includes('muxing')) {
+      entry.ready = true;
+    }
+  });
+
+  proc.on('exit', (code) => {
+    console.log(`📀 [${channelId}] Buffer FFmpeg salió con código ${code}`);
+    activeTranscoders.delete(channelId);
+  });
+
+  return entry;
+}
+
+// =============================================
 // KEEP ALIVE: Iniciar canal persistente
 // =============================================
 function startKeepAliveChannel(channelId, sourceUrl) {
@@ -2097,17 +2160,71 @@ app.get('/api/restream/:channelId.ts', async (req, res) => {
 app.get('/api/restream/:channelId', async (req, res) => {
   try {
     const { rows: channels } = await pool.query(
-      'SELECT url FROM channels WHERE id = $1 AND is_active = true',
+      'SELECT url, stream_mode FROM channels WHERE id = $1 AND is_active = true',
       [req.params.channelId]
     );
     if (channels.length === 0) return res.status(404).json({ error: 'Canal no encontrado' });
 
     const targetUrl = channels[0].url;
+    const streamMode = channels[0].stream_mode || 'direct';
     const channelId = req.params.channelId;
     const isHLS = /\.m3u8?(\?|$)/i.test(targetUrl);
 
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Cache-Control', 'no-cache, no-store');
+
+    // ── Buffer mode: circular recording with 10-min segments ──
+    if (streamMode === 'buffer') {
+      const entry = startBufferTranscoder(channelId, targetUrl);
+      // Wait for manifest
+      let waited = 0;
+      const waitBuf = () => {
+        const mp = entry.manifestPath;
+        if (fs.existsSync(mp) && fs.statSync(mp).size > 0) {
+          let manifest = fs.readFileSync(mp, 'utf8');
+          manifest = manifest.replace(/seg_\d+\.ts/g, m => `/api/hls-local/${channelId}/${m}`);
+          res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+          res.send(manifest);
+          res.on('finish', () => releaseTranscoder(channelId));
+          return;
+        }
+        waited += 500;
+        if (waited > 15000) { releaseTranscoder(channelId); return res.status(504).json({ error: 'Buffer timeout' }); }
+        setTimeout(waitBuf, 500);
+      };
+      waitBuf();
+      return;
+    }
+
+    // ── Transcode mode: force H.264/AAC permanently ──
+    if (streamMode === 'transcode') {
+      const entry = startFFmpegTranscoder(channelId, targetUrl);
+      let waited = 0;
+      const waitTrans = () => {
+        const masterPath = path.join(HLS_DIR, channelId, 'master.m3u8');
+        const singlePath = entry.manifestPath || path.join(HLS_DIR, channelId, 'stream.m3u8');
+        let manifestFile = null;
+        if (fs.existsSync(masterPath)) manifestFile = masterPath;
+        else if (fs.existsSync(singlePath)) manifestFile = singlePath;
+        if (manifestFile && fs.statSync(manifestFile).size > 0) {
+          let manifest = fs.readFileSync(manifestFile, 'utf8');
+          if (manifestFile.includes('master.m3u8')) {
+            manifest = manifest.replace(/(copy|micro|low|med|high)\/stream\.m3u8/g, (match, quality) => `/api/hls-adaptive/${channelId}/${quality}/stream.m3u8`);
+          } else {
+            manifest = manifest.replace(/seg_\d+\.ts/g, m => `/api/hls-local/${channelId}/${m}`);
+          }
+          res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+          res.send(manifest);
+          res.on('finish', () => releaseTranscoder(channelId));
+          return;
+        }
+        waited += 500;
+        if (waited > 15000) { releaseTranscoder(channelId); return res.status(504).json({ error: 'Transcode timeout' }); }
+        setTimeout(waitTrans, 500);
+      };
+      waitTrans();
+      return;
+    }
 
     if (isHLS) {
       // Canal ya es HLS → check if HEVC needs transcoding
