@@ -2,10 +2,17 @@ import { useState, useEffect, useCallback } from 'react';
 import { apiGet, apiPost } from '@/lib/api';
 import { copyToClipboard } from '@/lib/clipboard';
 import { useToast } from '@/hooks/use-toast';
-import { Globe, Shield, ShieldCheck, Play, Square, Download, RefreshCw, Copy, ExternalLink, Loader2, Monitor, Split } from 'lucide-react';
+import { Globe, Shield, ShieldCheck, Play, Square, Download, RefreshCw, Copy, ExternalLink, Loader2, Monitor, Split, Server } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { motion } from 'framer-motion';
+
+interface XtreamTunnelStatus {
+  status: 'stopped' | 'running';
+  url: string | null;
+  error: string | null;
+  port: string;
+}
 
 interface TunnelStatus {
   installed: boolean;
@@ -16,6 +23,7 @@ interface TunnelStatus {
   mode: 'full' | 'hybrid';
   server_ip: string | null;
   stream_base_url: string | null;
+  xtream_tunnel?: XtreamTunnelStatus;
 }
 
 const TunnelManager = () => {
@@ -57,7 +65,6 @@ const TunnelManager = () => {
     try {
       const data = await apiPost('/api/tunnel/start', { port: 80 });
       toast({ title: 'Éxito', description: data.message });
-      // Poll for URL if not available yet
       if (!data.url) {
         let attempts = 0;
         const poll = setInterval(async () => {
@@ -85,10 +92,49 @@ const TunnelManager = () => {
     setActionLoading(null);
   };
 
+  const handleXtreamStart = async () => {
+    setActionLoading('xtream-start');
+    try {
+      const data = await apiPost('/api/tunnel/xtream/start', {});
+      toast({ title: 'Éxito', description: data.message });
+      if (!data.url) {
+        let attempts = 0;
+        const poll = setInterval(async () => {
+          attempts++;
+          await fetchStatus();
+          if (tunnel?.xtream_tunnel?.url || attempts > 10) clearInterval(poll);
+        }, 3000);
+      }
+      await fetchStatus();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+    setActionLoading(null);
+  };
+
+  const handleXtreamStop = async () => {
+    setActionLoading('xtream-stop');
+    try {
+      const data = await apiPost('/api/tunnel/xtream/stop', {});
+      toast({ title: 'Éxito', description: data.message });
+      await fetchStatus();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+    setActionLoading(null);
+  };
+
   const copyUrl = async () => {
     if (tunnel?.url) {
       await copyToClipboard(tunnel.url);
       toast({ title: 'Copiado', description: 'URL copiada al portapapeles' });
+    }
+  };
+
+  const copyXtreamUrl = async () => {
+    if (tunnel?.xtream_tunnel?.url) {
+      await copyToClipboard(tunnel.xtream_tunnel.url);
+      toast({ title: 'Copiado', description: 'URL de Xtream UI copiada al portapapeles' });
     }
   };
 
@@ -110,18 +156,20 @@ const TunnelManager = () => {
 
   const status = tunnel?.status || 'stopped';
   const config = statusConfig[status];
+  const xtreamStatus = tunnel?.xtream_tunnel?.status || 'stopped';
+  const xtreamConfig = statusConfig[xtreamStatus];
 
   return (
     <div className="space-y-6">
-      {/* Header Card */}
+      {/* Shield Tunnel Card */}
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="glass rounded-xl p-6">
         <div className="flex items-center gap-3 mb-4">
           <div className="w-12 h-12 rounded-xl bg-primary/15 flex items-center justify-center">
             <Globe className="w-6 h-6 text-primary" />
           </div>
           <div>
-            <h2 className="text-lg font-bold text-foreground">Cloudflare Tunnel</h2>
-            <p className="text-xs text-muted-foreground">Oculta la IP de tu VPS con HTTPS gratuito</p>
+            <h2 className="text-lg font-bold text-foreground">Túnel Shield</h2>
+            <p className="text-xs text-muted-foreground">Panel Shield + Proxy de streams con HTTPS</p>
           </div>
           <div className="ml-auto flex items-center gap-2">
             <Badge variant={config.variant}>{config.label}</Badge>
@@ -229,12 +277,12 @@ const TunnelManager = () => {
         )}
       </motion.div>
 
-      {/* URL Card - when running */}
+      {/* Shield URL Card */}
       {tunnel?.url && (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="glass rounded-xl p-6">
           <div className="flex items-center gap-2 mb-4">
             <ShieldCheck className="w-5 h-5 text-emerald-400" />
-            <h3 className="text-sm font-semibold text-foreground">URL Segura Activa</h3>
+            <h3 className="text-sm font-semibold text-foreground">URL Shield Activa</h3>
             {tunnel.https && <Badge variant="outline" className="text-emerald-400 border-emerald-400/30 text-[10px]">HTTPS</Badge>}
           </div>
 
@@ -268,6 +316,65 @@ const TunnelManager = () => {
           <div className="mt-4 bg-primary/5 rounded-lg p-3 border border-primary/10">
             <p className="text-xs text-muted-foreground">
               <span className="text-foreground font-medium">💡 Comparte esta URL</span> con tus clientes en lugar de tu IP. Cada vez que reinicies el túnel se genera una URL nueva.
+            </p>
+          </div>
+        </motion.div>
+      )}
+
+      {/* Xtream UI Tunnel Card */}
+      {tunnel?.installed && (
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="glass rounded-xl p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-12 h-12 rounded-xl bg-yellow-500/15 flex items-center justify-center">
+              <Server className="w-6 h-6 text-yellow-400" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-foreground">Túnel Xtream UI</h2>
+              <p className="text-xs text-muted-foreground">Acceso seguro al panel de administración de Xtream UI (puerto {tunnel.xtream_tunnel?.port || '25500'})</p>
+            </div>
+            <div className="ml-auto">
+              <Badge variant={xtreamConfig.variant}>{xtreamConfig.label}</Badge>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 mb-4">
+            {xtreamStatus === 'stopped' ? (
+              <Button onClick={handleXtreamStart} disabled={!!actionLoading} className="bg-yellow-500 hover:bg-yellow-600 text-yellow-950 gap-2">
+                {actionLoading === 'xtream-start' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+                Iniciar Túnel Xtream UI
+              </Button>
+            ) : (
+              <Button onClick={handleXtreamStop} disabled={!!actionLoading} variant="destructive" className="gap-2">
+                {actionLoading === 'xtream-stop' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4" />}
+                Detener
+              </Button>
+            )}
+          </div>
+
+          {/* Xtream URL */}
+          {tunnel.xtream_tunnel?.url && (
+            <div className="bg-muted/30 rounded-lg p-4 border border-border/30 flex items-center gap-3">
+              <code className="text-yellow-400 text-sm flex-1 break-all font-mono">{tunnel.xtream_tunnel.url}</code>
+              <Button variant="ghost" size="icon" onClick={copyXtreamUrl} className="shrink-0 text-muted-foreground hover:text-yellow-400">
+                <Copy className="w-4 h-4" />
+              </Button>
+              <Button variant="ghost" size="icon" asChild className="shrink-0 text-muted-foreground hover:text-yellow-400">
+                <a href={tunnel.xtream_tunnel.url} target="_blank" rel="noopener noreferrer">
+                  <ExternalLink className="w-4 h-4" />
+                </a>
+              </Button>
+            </div>
+          )}
+
+          {tunnel.xtream_tunnel?.error && (
+            <div className="mt-3 bg-destructive/10 border border-destructive/20 rounded-lg p-3">
+              <p className="text-xs text-destructive">{tunnel.xtream_tunnel.error}</p>
+            </div>
+          )}
+
+          <div className="mt-4 bg-yellow-500/5 rounded-lg p-3 border border-yellow-500/10">
+            <p className="text-xs text-muted-foreground">
+              <span className="text-foreground font-medium">⚠️ Solo para administración.</span> Este túnel expone el panel de Xtream UI. No compartas esta URL con clientes.
             </p>
           </div>
         </motion.div>

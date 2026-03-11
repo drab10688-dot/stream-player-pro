@@ -28,11 +28,17 @@ const NGINX_PORT = process.env.NGINX_PORT || '8880';
 let XTREAM_HOST = process.env.XTREAM_HOST || 'http://localhost';
 let XTREAM_PORT = process.env.XTREAM_PORT || '25461';
 
-// Tunnel state
+// Tunnel state - Shield (main)
 let tunnelProcess = null;
 let tunnelUrl = null;
 let tunnelMode = 'full'; // 'full' | 'hybrid'
 let tunnelError = null;
+
+// Tunnel state - Xtream UI panel
+let xtreamTunnelProcess = null;
+let xtreamTunnelUrl = null;
+let xtreamTunnelError = null;
+const XTREAM_PANEL_PORT = process.env.XTREAM_PANEL_PORT || '25500';
 
 // Stats
 let totalRequests = 0;
@@ -273,6 +279,12 @@ app.get('/api/tunnel/status', authAdmin, (req, res) => {
     mode: tunnelMode,
     server_ip: getServerIp(),
     stream_base_url: tunnelMode === 'hybrid' ? `http://${getServerIp()}:${XTREAM_PORT}` : tunnelUrl,
+    xtream_tunnel: {
+      status: xtreamTunnelProcess ? 'running' : 'stopped',
+      url: xtreamTunnelUrl,
+      error: xtreamTunnelError,
+      port: XTREAM_PANEL_PORT,
+    },
   });
 });
 
@@ -349,6 +361,60 @@ app.post('/api/tunnel/mode', authAdmin, (req, res) => {
     res.status(400).json({ error: 'Modo inválido. Usa "full" o "hybrid"' });
   }
 });
+
+// =============================================
+// XTREAM UI PANEL TUNNEL
+// =============================================
+app.post('/api/tunnel/xtream/start', authAdmin, (req, res) => {
+  if (xtreamTunnelProcess) {
+    return res.json({ success: true, message: 'El túnel de Xtream UI ya está activo', url: xtreamTunnelUrl });
+  }
+
+  xtreamTunnelUrl = null;
+  xtreamTunnelError = null;
+
+  const port = req.body.port || XTREAM_PANEL_PORT;
+
+  xtreamTunnelProcess = spawn('cloudflared', ['tunnel', '--url', `http://localhost:${port}`, '--no-autoupdate'], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  let output = '';
+  const urlExtractor = (data) => {
+    output += data.toString();
+    const match = output.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/);
+    if (match) {
+      xtreamTunnelUrl = match[0];
+      console.log(`🌐 Túnel Xtream UI activo: ${xtreamTunnelUrl}`);
+    }
+  };
+
+  xtreamTunnelProcess.stdout.on('data', urlExtractor);
+  xtreamTunnelProcess.stderr.on('data', urlExtractor);
+
+  xtreamTunnelProcess.on('exit', (code) => {
+    console.log(`⚠️ cloudflared (Xtream UI) salió con código ${code}`);
+    xtreamTunnelProcess = null;
+    if (code !== 0) xtreamTunnelError = `cloudflared salió con código ${code}`;
+  });
+
+  setTimeout(() => {
+    res.json({ success: true, message: 'Túnel Xtream UI iniciado', url: xtreamTunnelUrl });
+  }, 5000);
+});
+
+app.post('/api/tunnel/xtream/stop', authAdmin, (req, res) => {
+  if (xtreamTunnelProcess) {
+    xtreamTunnelProcess.kill('SIGTERM');
+    xtreamTunnelProcess = null;
+    xtreamTunnelUrl = null;
+    xtreamTunnelError = null;
+    res.json({ success: true, message: 'Túnel Xtream UI detenido' });
+  } else {
+    res.json({ success: true, message: 'El túnel no estaba activo' });
+  }
+});
+
 
 // =============================================
 // PROXY STATUS
@@ -646,10 +712,12 @@ app.listen(PORT, () => {
 // Cleanup on exit
 process.on('SIGTERM', () => {
   if (tunnelProcess) tunnelProcess.kill('SIGTERM');
+  if (xtreamTunnelProcess) xtreamTunnelProcess.kill('SIGTERM');
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
   if (tunnelProcess) tunnelProcess.kill('SIGTERM');
+  if (xtreamTunnelProcess) xtreamTunnelProcess.kill('SIGTERM');
   process.exit(0);
 });
