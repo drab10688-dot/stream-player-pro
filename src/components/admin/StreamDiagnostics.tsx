@@ -1,6 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { apiGet, apiPost } from '@/lib/api';
+import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+
+const isLovablePreview = () => {
+  const host = window.location.hostname;
+  return host.includes('lovable.app') || host.includes('lovable.dev') || host === 'localhost';
+};
 import { Bug, Play, RefreshCw, AlertTriangle, CheckCircle, XCircle, Search, Wifi, Clock, FileText, Copy, ClipboardCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
