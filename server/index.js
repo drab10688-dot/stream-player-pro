@@ -939,6 +939,7 @@ function probeStreamCodec(url) {
     try {
       const probe = spawn('ffprobe', [
         '-v', 'error',
+        '-user_agent', 'VLC/3.0.18 LibVLC/3.0.18',
         '-select_streams', 'v:0',
         '-show_entries', 'stream=codec_name',
         '-of', 'csv=p=0',
