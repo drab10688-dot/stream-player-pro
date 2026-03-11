@@ -8,7 +8,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import VideoPlayer from '@/components/VideoPlayer';
 import { useLocation } from 'react-router-dom';
 import omnisyncLogo from '@/assets/omnisync-logo.png';
-import { playWithVlc, isNativeAndroid } from '@/lib/native-player';
+
 
 const PlayerPage = () => {
   const navigate = useNavigate();
@@ -55,10 +55,6 @@ const PlayerPage = () => {
     const idx = channels.findIndex(ch => ch.id === channel.id);
     showChannelChange(channel, idx);
 
-    // On native Android, launch VLC player
-    if (isNativeAndroid()) {
-      playWithVlc(channel.url, channel.name);
-    }
 
     // Auto-hide controls after channel selection
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
