@@ -2986,6 +2986,53 @@ app.post('/api/streams/stop/:channelId', authAdmin, async (req, res) => {
 });
 
 // =============================================
+// RUTA: REINICIAR PROCESO DE STREAM INDIVIDUAL
+// =============================================
+app.post('/api/streams/restart/:channelId', authAdmin, async (req, res) => {
+  try {
+    const channelId = req.params.channelId;
+    const entry = activeTranscoders.get(channelId);
+    const wasKeepAlive = entry ? entry.keepAlive : false;
+
+    // Kill existing
+    if (entry) {
+      if (entry.pollTimer) { clearInterval(entry.pollTimer); entry.pollTimer = null; }
+      if (entry.ffmpeg) entry.ffmpeg.kill('SIGTERM');
+      activeTranscoders.delete(channelId);
+      channelBandwidth.delete(channelId);
+      cleanChannelDir(channelId);
+    }
+
+    const { rows } = await pool.query('SELECT url, name, stream_mode FROM channels WHERE id = $1 AND is_active = true', [channelId]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Canal no encontrado o inactivo' });
+
+    const sourceUrl = rows[0].url;
+    const streamMode = rows[0].stream_mode || 'direct';
+    const isHLS = /\.m3u8?(\?|$)/i.test(sourceUrl);
+
+    // Re-start based on stream_mode
+    if (streamMode === 'buffer') {
+      const newEntry = startBufferTranscoder(channelId, sourceUrl);
+      newEntry.keepAlive = wasKeepAlive;
+      newEntry.restartCount = 0;
+    } else if (streamMode === 'transcode' || !isHLS) {
+      const newEntry = startFFmpegTranscoder(channelId, sourceUrl);
+      newEntry.keepAlive = wasKeepAlive;
+    } else {
+      const newEntry = startHLSProxy(channelId, sourceUrl);
+      newEntry.keepAlive = wasKeepAlive;
+      newEntry.clients = 0;
+      startHLSKeepAlivePolling(channelId, sourceUrl);
+    }
+
+    console.log(`🔄 [${channelId}] Stream reiniciado manualmente: ${rows[0].name}`);
+    res.json({ success: true, message: `Stream reiniciado: ${rows[0].name}` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// =============================================
 // RUTA: LISTAR TODOS LOS CANALES CON ESTADO DE STREAM
 // =============================================
 app.get('/api/streams/all-channels', authAdmin, async (req, res) => {
