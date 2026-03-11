@@ -167,10 +167,22 @@ const ClientsManager = () => {
     return format ? `${base}/api/playlist/${token}/${format}` : `${base}/api/playlist/${token}`;
   };
 
-  const copyPlaylistUrl = (token: string | null, format?: string, label?: string) => {
+  const copyPlaylistUrl = async (token: string | null, format?: string, label?: string) => {
     const url = getPlaylistUrl(token, format);
     if (!url) return;
-    navigator.clipboard.writeText(url);
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      // Fallback for iframe/non-secure contexts
+      const textarea = document.createElement('textarea');
+      textarea.value = url;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+    }
     toast({ title: '📋 URL copiada', description: `Link ${label || 'M3U Plus'} copiado al portapapeles` });
   };
 
