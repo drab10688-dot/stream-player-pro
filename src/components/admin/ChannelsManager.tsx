@@ -496,12 +496,14 @@ const ChannelsManager = () => {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className="font-semibold text-foreground text-sm truncate">{ch.name}</p>
-                        {(ch.stream_mode && ch.stream_mode !== 'direct') && (
-                          <Badge variant="outline" className={`text-[10px] py-0 px-1.5 gap-1 ${ch.stream_mode === 'buffer' ? 'border-amber-500/30 text-amber-500' : 'border-cyan-500/30 text-cyan-500'}`}>
-                            {ch.stream_mode === 'buffer' ? <Disc className="w-2.5 h-2.5" /> : <Cpu className="w-2.5 h-2.5" />}
-                            {ch.stream_mode === 'buffer' ? 'Buffer' : 'Transcode'}
-                          </Badge>
-                        )}
+                        <Badge variant="outline" className={`text-[10px] py-0 px-1.5 gap-1 ${
+                          !ch.stream_mode || ch.stream_mode === 'direct' ? 'border-primary/30 text-primary' :
+                          ch.stream_mode === 'buffer' ? 'border-amber-500/30 text-amber-500' : 'border-cyan-500/30 text-cyan-500'
+                        }`}>
+                          {!ch.stream_mode || ch.stream_mode === 'direct' ? <Radio className="w-2.5 h-2.5" /> :
+                           ch.stream_mode === 'buffer' ? <Disc className="w-2.5 h-2.5" /> : <Cpu className="w-2.5 h-2.5" />}
+                          {!ch.stream_mode || ch.stream_mode === 'direct' ? 'Directo' : ch.stream_mode === 'buffer' ? 'Buffer' : 'Transcode'}
+                        </Badge>
                         {cache?.transcoder_active && (
                           <div className="flex items-center gap-1">
                             <Badge variant="outline" className="text-[10px] py-0 px-1.5 border-green-500/30 text-green-500 gap-1">
