@@ -55,14 +55,16 @@ const StreamDiagnostics = () => {
   const [copied, setCopied] = useState(false);
   const [reportText, setReportText] = useState('');
   const [showReport, setShowReport] = useState(false);
-  useEffect(() => {
-    fetchChannels();
-  }, []);
-
-  const fetchChannels = async () => {
+  const fetchChannels = useCallback(async () => {
     try {
-      const data = await apiGet('/api/channels');
-      setChannels(data);
+      if (isLovablePreview()) {
+        const { data, error } = await supabase.from('channels').select('id, name, url, category, logo_url, is_active');
+        if (error) throw error;
+        setChannels(data || []);
+      } else {
+        const data = await apiGet('/api/channels');
+        setChannels(data);
+      }
     } catch (err: any) {
       toast({ title: 'Error', description: err.message, variant: 'destructive' });
     }
