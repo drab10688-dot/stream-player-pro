@@ -20,6 +20,7 @@ import VodManager from '@/components/admin/VodManager';
 import SeriesManager from '@/components/admin/SeriesManager';
 import ActiveViewers from '@/components/admin/ActiveViewers';
 import SystemTuning from '@/components/admin/SystemTuning';
+import ChannelTester from '@/components/admin/ChannelTester';
 import omnisyncLogo from '@/assets/omnisync-logo.png';
 import ChangePasswordDialog from '@/components/admin/ChangePasswordDialog';
 
