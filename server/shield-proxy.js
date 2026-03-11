@@ -293,6 +293,25 @@ app.post('/api/xtream/config', authAdmin, (req, res) => {
   res.json({ success: true, message: 'Configuración actualizada' });
 });
 
+// Master credentials endpoints
+app.get('/api/xtream/master-creds', authAdmin, (req, res) => {
+  const creds = loadMasterCreds();
+  res.json({
+    configured: !!creds,
+    username: creds?.username || '',
+    // Don't send password back for security
+  });
+});
+
+app.post('/api/xtream/master-creds', authAdmin, (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Usuario y contraseña requeridos' });
+  }
+  saveMasterCreds({ username, password });
+  res.json({ success: true, message: 'Credenciales maestras guardadas' });
+});
+
 app.post('/api/xtream/test', authAdmin, (req, res) => {
   const { host, port, username, password } = req.body;
   const testHost = host || XTREAM_HOST;
