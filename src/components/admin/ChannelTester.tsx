@@ -46,8 +46,6 @@ const ChannelTester = () => {
         if (error) throw error;
         setChannels(data || []);
       } else {
-        const { default: apiMod } = await import('@/lib/api');
-        // fallback: use apiGet
         const { apiGet } = await import('@/lib/api');
         const data = await apiGet('/api/channels');
         setChannels(data);
