@@ -1527,6 +1527,67 @@ function releaseTranscoder(channelId) {
 }
 
 // =============================================
+// BUFFER MODE: Grabación circular 10 min
+// =============================================
+function startBufferTranscoder(channelId, sourceUrl) {
+  if (activeTranscoders.has(channelId)) {
+    const existing = activeTranscoders.get(channelId);
+    existing.clients++;
+    existing.lastAccess = Date.now();
+    return existing;
+  }
+
+  const channelDir = path.join(HLS_DIR, channelId);
+  if (!fs.existsSync(channelDir)) fs.mkdirSync(channelDir, { recursive: true });
+
+  const manifestPath = path.join(channelDir, 'stream.m3u8');
+  const ffmpegArgs = [
+    '-user_agent', 'VLC/3.0.18 LibVLC/3.0.18',
+    '-analyzeduration', '1000000', '-probesize', '1000000',
+    '-fflags', '+nobuffer', '-flags', '+low_delay',
+    '-reconnect', '1', '-reconnect_streamed', '1',
+    '-reconnect_delay_max', '5', '-timeout', '5000000',
+    '-i', sourceUrl,
+    '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k',
+    '-f', 'hls',
+    '-hls_time', '2',
+    '-hls_list_size', '300',
+    '-hls_flags', 'delete_segments+append_list',
+    '-hls_segment_filename', path.join(channelDir, 'seg_%05d.ts'),
+    '-y', manifestPath
+  ];
+
+  console.log(`📀 [${channelId}] Buffer mode: grabación circular 10min: ${sourceUrl}`);
+  const proc = spawn('/usr/bin/ffmpeg', ffmpegArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
+
+  const entry = {
+    type: 'ffmpeg-buffer',
+    ffmpeg: proc,
+    channelDir,
+    manifestPath,
+    clients: 1,
+    lastAccess: Date.now(),
+    ready: false,
+    keepAlive: false,
+  };
+  activeTranscoders.set(channelId, entry);
+
+  proc.stderr.on('data', (data) => {
+    const msg = data.toString();
+    if (msg.includes('Opening') || msg.includes('muxing')) {
+      entry.ready = true;
+    }
+  });
+
+  proc.on('exit', (code) => {
+    console.log(`📀 [${channelId}] Buffer FFmpeg salió con código ${code}`);
+    activeTranscoders.delete(channelId);
+  });
+
+  return entry;
+}
+
+// =============================================
 // KEEP ALIVE: Iniciar canal persistente
 // =============================================
 function startKeepAliveChannel(channelId, sourceUrl) {
