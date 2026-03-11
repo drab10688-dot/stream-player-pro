@@ -44,7 +44,7 @@ const ChannelsManager = () => {
   const [showForm, setShowForm] = useState(false);
   const [showM3UImport, setShowM3UImport] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState({ name: '', url: '', category: 'General', sort_order: 0, logo_url: '' });
+  const [form, setForm] = useState({ name: '', url: '', category: 'General', sort_order: 0, logo_url: '', stream_mode: 'direct' as 'direct' | 'buffer' | 'transcode' });
   const [m3uContent, setM3uContent] = useState('');
   const [m3uUrl, setM3uUrl] = useState('');
   const [importing, setImporting] = useState(false);
