@@ -370,6 +370,121 @@ app.get('/api/proxy/status', authAdmin, (req, res) => {
 });
 
 // =============================================
+// SHIELD CLIENTS MANAGEMENT (local JSON storage)
+// =============================================
+const CLIENTS_FILE = '/opt/omnisync-shield/clients.json';
+
+const loadClients = () => {
+  try {
+    if (fs.existsSync(CLIENTS_FILE)) {
+      return JSON.parse(fs.readFileSync(CLIENTS_FILE, 'utf8'));
+    }
+  } catch (err) {
+    console.error('Error loading clients:', err.message);
+  }
+  return [];
+};
+
+const saveClients = (clients) => {
+  const dir = require('path').dirname(CLIENTS_FILE);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(CLIENTS_FILE, JSON.stringify(clients, null, 2));
+};
+
+// GET all clients
+app.get('/api/shield/clients', authAdmin, (req, res) => {
+  const clients = loadClients();
+  // Enrich with active connection count
+  const enriched = clients.map(c => {
+    const activeCons = Array.from(activeConnections.values()).filter(conn => conn.username === c.username).length;
+    return { ...c, active_cons: activeCons };
+  });
+  res.json(enriched);
+});
+
+// CREATE client
+app.post('/api/shield/clients', authAdmin, (req, res) => {
+  const { username, password, max_connections, exp_date, is_trial } = req.body;
+  if (!username || !password) return res.status(400).json({ error: 'Usuario y contraseña requeridos' });
+
+  const clients = loadClients();
+  if (clients.find(c => c.username === username)) {
+    return res.status(400).json({ error: 'El usuario ya existe' });
+  }
+
+  const newClient = {
+    id: crypto.randomUUID(),
+    username,
+    password,
+    max_connections: max_connections || 1,
+    exp_date: exp_date || null,
+    is_trial: is_trial || false,
+    is_banned: false,
+    admin_enabled: true,
+    created_at: new Date().toISOString(),
+  };
+
+  clients.push(newClient);
+  saveClients(clients);
+  res.json(newClient);
+});
+
+// UPDATE client
+app.put('/api/shield/clients/:id', authAdmin, (req, res) => {
+  const clients = loadClients();
+  const idx = clients.findIndex(c => c.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Cliente no encontrado' });
+
+  const allowed = ['username', 'password', 'max_connections', 'exp_date', 'is_trial', 'is_banned', 'admin_enabled'];
+  for (const key of allowed) {
+    if (req.body[key] !== undefined) clients[idx][key] = req.body[key];
+  }
+
+  saveClients(clients);
+  res.json(clients[idx]);
+});
+
+// DELETE client
+app.delete('/api/shield/clients/:id', authAdmin, (req, res) => {
+  let clients = loadClients();
+  const before = clients.length;
+  clients = clients.filter(c => c.id !== req.params.id);
+  if (clients.length === before) return res.status(404).json({ error: 'Cliente no encontrado' });
+
+  saveClients(clients);
+  res.json({ success: true });
+});
+
+// =============================================
+// SHIELD VIEWERS (active connections monitor)
+// =============================================
+app.get('/api/shield/viewers', authAdmin, (req, res) => {
+  res.json(Array.from(activeConnections.values()));
+});
+
+app.post('/api/shield/viewers/kick', authAdmin, (req, res) => {
+  const { connectionId } = req.body;
+  if (activeConnections.has(connectionId)) {
+    activeConnections.delete(connectionId);
+    res.json({ success: true });
+  } else {
+    res.status(404).json({ error: 'Conexión no encontrada' });
+  }
+});
+
+app.post('/api/shield/viewers/kick-user', authAdmin, (req, res) => {
+  const { username } = req.body;
+  let kicked = 0;
+  for (const [id, conn] of activeConnections) {
+    if (conn.username === username) {
+      activeConnections.delete(id);
+      kicked++;
+    }
+  }
+  res.json({ success: true, kicked });
+});
+
+// =============================================
 // XTREAM CODES PROXY ENDPOINTS
 // =============================================
 
