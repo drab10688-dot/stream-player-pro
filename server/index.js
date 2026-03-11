@@ -445,10 +445,10 @@ app.post('/api/channels/upload-logo', authAdmin, uploadLogo.single('logo'), (req
 });
 
 app.post('/api/channels', authAdmin, async (req, res) => {
-  const { name, url, category, sort_order, logo_url } = req.body;
+  const { name, url, category, sort_order, logo_url, stream_mode } = req.body;
   const { rows } = await pool.query(
-    'INSERT INTO channels (name, url, category, sort_order, logo_url) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-    [name, url, category || 'General', sort_order || 0, logo_url || null]
+    'INSERT INTO channels (name, url, category, sort_order, logo_url, stream_mode) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+    [name, url, category || 'General', sort_order || 0, logo_url || null, stream_mode || 'direct']
   );
   res.json(rows[0]);
 });
