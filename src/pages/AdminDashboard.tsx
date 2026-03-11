@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAdminAuth } from '@/contexts/AdminAuthContext';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Tv, Users, Megaphone, Store, LogOut, LayoutDashboard, Bell, Activity, Globe, Radio, Bug, Package, HardDrive, Film, Tv2, Eye, Shield, FlaskConical } from 'lucide-react';
+import { Tv, Users, Megaphone, Store, LogOut, LayoutDashboard, Bell, Globe, Radio, Bug, Package, HardDrive, Film, Tv2, Eye, Shield, FlaskConical } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import AdminStats from '@/components/admin/AdminStats';
 import ChannelsManager from '@/components/admin/ChannelsManager';
@@ -10,7 +10,7 @@ import ClientsManager from '@/components/admin/ClientsManager';
 import AdsManager from '@/components/admin/AdsManager';
 import ResellersManager from '@/components/admin/ResellersManager';
 import ExpirationAlerts from '@/components/admin/ExpirationAlerts';
-import ChannelMonitor from '@/components/admin/ChannelMonitor';
+
 import TunnelManager from '@/components/admin/TunnelManager';
 import StreamMonitor from '@/components/admin/StreamMonitor';
 import StreamDiagnostics from '@/components/admin/StreamDiagnostics';
@@ -92,9 +92,6 @@ const AdminDashboard = () => {
             <TabsTrigger value="alerts" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
               <Bell className="w-4 h-4" /> Alertas
             </TabsTrigger>
-            <TabsTrigger value="monitor" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
-              <Activity className="w-4 h-4" /> Monitoreo
-            </TabsTrigger>
             <TabsTrigger value="tunnel" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
               <Globe className="w-4 h-4" /> Túnel
             </TabsTrigger>
@@ -133,7 +130,7 @@ const AdminDashboard = () => {
           <TabsContent value="resellers" forceMount className="data-[state=inactive]:hidden"><ResellersManager /></TabsContent>
           <TabsContent value="ads" forceMount className="data-[state=inactive]:hidden"><AdsManager /></TabsContent>
           <TabsContent value="alerts" forceMount className="data-[state=inactive]:hidden"><ExpirationAlerts /></TabsContent>
-          <TabsContent value="monitor" forceMount className="data-[state=inactive]:hidden"><ChannelMonitor /></TabsContent>
+          
           <TabsContent value="tunnel" forceMount className="data-[state=inactive]:hidden"><TunnelManager /></TabsContent>
           <TabsContent value="streams" forceMount className="data-[state=inactive]:hidden"><StreamMonitor /></TabsContent>
           <TabsContent value="diagnostics" forceMount className="data-[state=inactive]:hidden"><StreamDiagnostics /></TabsContent>
