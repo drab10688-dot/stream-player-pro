@@ -2098,17 +2098,71 @@ app.get('/api/restream/:channelId.ts', async (req, res) => {
 app.get('/api/restream/:channelId', async (req, res) => {
   try {
     const { rows: channels } = await pool.query(
-      'SELECT url FROM channels WHERE id = $1 AND is_active = true',
+      'SELECT url, stream_mode FROM channels WHERE id = $1 AND is_active = true',
       [req.params.channelId]
     );
     if (channels.length === 0) return res.status(404).json({ error: 'Canal no encontrado' });
 
     const targetUrl = channels[0].url;
+    const streamMode = channels[0].stream_mode || 'direct';
     const channelId = req.params.channelId;
     const isHLS = /\.m3u8?(\?|$)/i.test(targetUrl);
 
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Cache-Control', 'no-cache, no-store');
+
+    // ── Buffer mode: circular recording with 10-min segments ──
+    if (streamMode === 'buffer') {
+      const entry = startBufferTranscoder(channelId, targetUrl);
+      // Wait for manifest
+      let waited = 0;
+      const waitBuf = () => {
+        const mp = entry.manifestPath;
+        if (fs.existsSync(mp) && fs.statSync(mp).size > 0) {
+          let manifest = fs.readFileSync(mp, 'utf8');
+          manifest = manifest.replace(/seg_\d+\.ts/g, m => `/api/hls-local/${channelId}/${m}`);
+          res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+          res.send(manifest);
+          res.on('finish', () => releaseTranscoder(channelId));
+          return;
+        }
+        waited += 500;
+        if (waited > 15000) { releaseTranscoder(channelId); return res.status(504).json({ error: 'Buffer timeout' }); }
+        setTimeout(waitBuf, 500);
+      };
+      waitBuf();
+      return;
+    }
+
+    // ── Transcode mode: force H.264/AAC permanently ──
+    if (streamMode === 'transcode') {
+      const entry = startFFmpegTranscoder(channelId, targetUrl);
+      let waited = 0;
+      const waitTrans = () => {
+        const masterPath = path.join(HLS_DIR, channelId, 'master.m3u8');
+        const singlePath = entry.manifestPath || path.join(HLS_DIR, channelId, 'stream.m3u8');
+        let manifestFile = null;
+        if (fs.existsSync(masterPath)) manifestFile = masterPath;
+        else if (fs.existsSync(singlePath)) manifestFile = singlePath;
+        if (manifestFile && fs.statSync(manifestFile).size > 0) {
+          let manifest = fs.readFileSync(manifestFile, 'utf8');
+          if (manifestFile.includes('master.m3u8')) {
+            manifest = manifest.replace(/(copy|micro|low|med|high)\/stream\.m3u8/g, (match, quality) => `/api/hls-adaptive/${channelId}/${quality}/stream.m3u8`);
+          } else {
+            manifest = manifest.replace(/seg_\d+\.ts/g, m => `/api/hls-local/${channelId}/${m}`);
+          }
+          res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+          res.send(manifest);
+          res.on('finish', () => releaseTranscoder(channelId));
+          return;
+        }
+        waited += 500;
+        if (waited > 15000) { releaseTranscoder(channelId); return res.status(504).json({ error: 'Transcode timeout' }); }
+        setTimeout(waitTrans, 500);
+      };
+      waitTrans();
+      return;
+    }
 
     if (isHLS) {
       // Canal ya es HLS → check if HEVC needs transcoding
