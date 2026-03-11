@@ -208,7 +208,7 @@ async function runAutoPing() {
         const parsedUrl = new URL(ch.url);
         const httpClient = parsedUrl.protocol === 'https:' ? https : http;
         const result = await new Promise((resolve) => {
-          const req = httpClient.request(ch.url, { method: 'GET', headers: { 'User-Agent': 'StreamBox-HealthCheck/1.0', 'Range': 'bytes=0-1024' } }, (response) => {
+           const req = httpClient.request(ch.url, { method: 'GET', headers: { 'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18', 'Range': 'bytes=0-1024' } }, (response) => {
             response.destroy();
             const isOk = response.statusCode >= 200 && response.statusCode < 400;
             resolve({ id: ch.id, name: ch.name, status: isOk ? 'online' : 'offline', consecutive_failures: ch.consecutive_failures, was_auto_disabled: ch.auto_disabled, error: isOk ? null : `HTTP ${response.statusCode}` });
