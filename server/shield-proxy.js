@@ -511,19 +511,8 @@ app.get('/api/proxy/status', authAdmin, (req, res) => {
 
 // =============================================
 // SHIELD CLIENTS MANAGEMENT (local JSON storage)
+// Note: loadClients, CLIENTS_FILE defined at top
 // =============================================
-const CLIENTS_FILE = '/opt/omnisync-shield/clients.json';
-
-const loadClients = () => {
-  try {
-    if (fs.existsSync(CLIENTS_FILE)) {
-      return JSON.parse(fs.readFileSync(CLIENTS_FILE, 'utf8'));
-    }
-  } catch (err) {
-    console.error('Error loading clients:', err.message);
-  }
-  return [];
-};
 
 const saveClients = (clients) => {
   const dir = require('path').dirname(CLIENTS_FILE);
