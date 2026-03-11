@@ -1,10 +1,11 @@
 import { useRef, useEffect, useState, useCallback, memo } from 'react';
 import Hls from 'hls.js';
-import { Settings, AlertTriangle, RefreshCw, ChevronDown } from 'lucide-react';
+import { Settings, AlertTriangle, RefreshCw, ChevronDown, Disc, Loader2 } from 'lucide-react';
 
 interface VideoPlayerProps {
   src: string;
   channelId?: string;
+  streamMode?: 'direct' | 'buffer' | 'transcode';
   muted?: boolean;
   onError?: (channelId: string, message: string) => void;
 }
@@ -14,7 +15,7 @@ const getYouTubeId = (url: string): string | null => {
   return m?.[1] || null;
 };
 
-const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlayerProps) => {
+const VideoPlayer = memo(({ src, channelId, streamMode, muted = false, onError }: VideoPlayerProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const retryTimer = useRef<ReturnType<typeof setTimeout>>();
@@ -22,6 +23,7 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
   const stallTimer = useRef<ReturnType<typeof setInterval>>();
   const lastTimeRef = useRef(0);
   const stallCountRef = useRef(0);
+  const bufferRetryTimer = useRef<ReturnType<typeof setTimeout>>();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -29,15 +31,32 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
   const [qualities, setQualities] = useState<{ id: string; label: string; height: number }[]>([]);
   const [activeQuality, setActiveQuality] = useState('auto');
   const [showQMenu, setShowQMenu] = useState(false);
+  const [bufferWaiting, setBufferWaiting] = useState(false);
+  const [bufferRetries, setBufferRetries] = useState(0);
+
+  const isBufferMode = streamMode === 'buffer' || streamMode === 'transcode';
+
+  // Resolve the actual playback URL
+  const resolveUrl = useCallback((rawSrc: string): string => {
+    // If it's already a restream URL, use as-is
+    if (rawSrc.includes('/api/restream/')) return rawSrc;
+    // If we have a channelId and it's not YouTube, route through restream
+    if (channelId && !getYouTubeId(rawSrc)) {
+      return `/api/restream/${channelId}`;
+    }
+    return rawSrc;
+  }, [channelId]);
 
   // Bridge streams use port 3002 (xtream-bridge), not the main API
-  const isBridge = src?.includes(':3002/api/restream/');
-  const streamId = isBridge ? src.match(/\/api\/restream\/([^/?]+)/)?.[1] : null;
+  const resolvedSrc = resolveUrl(src);
+  const isBridge = resolvedSrc?.includes(':3002/api/restream/');
+  const streamId = resolvedSrc?.match(/\/api\/restream\/([^/?]+)/)?.[1] || channelId;
 
   // ── Cleanup ──
   const destroy = useCallback(() => {
     if (retryTimer.current) clearTimeout(retryTimer.current);
     if (stallTimer.current) clearInterval(stallTimer.current);
+    if (bufferRetryTimer.current) clearTimeout(bufferRetryTimer.current);
     if (hlsRef.current) {
       try { hlsRef.current.destroy(); } catch {}
       hlsRef.current = null;
@@ -50,7 +69,7 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
     lastTimeRef.current = 0;
   }, []);
 
-  // ── Start playback ──
+  // ── Start playback with buffer-aware retry ──
   const play = useCallback((url: string) => {
     const video = videoRef.current;
     if (!video) return;
@@ -58,9 +77,59 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
     setError(null);
     setLoading(true);
     setLoadingSec(0);
+    setBufferWaiting(false);
     retryCount.current = 0;
     destroy();
 
+    // For buffer/transcode modes, first check if manifest is ready
+    if (isBufferMode && url.includes('/api/restream/')) {
+      setBufferWaiting(true);
+      setBufferRetries(0);
+
+      const tryFetchManifest = (attempt: number) => {
+        fetch(url, { method: 'GET', headers: { 'Accept': 'application/vnd.apple.mpegurl' } })
+          .then(res => {
+            if (res.ok) {
+              // Manifest is ready, proceed with playback
+              setBufferWaiting(false);
+              setBufferRetries(0);
+              startHlsPlayback(url, video);
+            } else if (res.status === 504 || res.status === 503 || res.status === 502) {
+              // Server still preparing buffer, retry in 5s
+              setBufferRetries(attempt + 1);
+              if (attempt < 24) { // max ~2 min of retries
+                bufferRetryTimer.current = setTimeout(() => tryFetchManifest(attempt + 1), 5000);
+              } else {
+                setBufferWaiting(false);
+                setError('El buffer no pudo inicializarse. Intenta de nuevo.');
+                setLoading(false);
+              }
+            } else {
+              setBufferWaiting(false);
+              setError(`Error del servidor (${res.status})`);
+              setLoading(false);
+            }
+          })
+          .catch(() => {
+            setBufferRetries(attempt + 1);
+            if (attempt < 24) {
+              bufferRetryTimer.current = setTimeout(() => tryFetchManifest(attempt + 1), 5000);
+            } else {
+              setBufferWaiting(false);
+              setError('No se pudo conectar al servidor.');
+              setLoading(false);
+            }
+          });
+      };
+
+      tryFetchManifest(0);
+      return;
+    }
+
+    startHlsPlayback(url, video);
+  }, [muted, destroy, isBufferMode]);
+
+  const startHlsPlayback = useCallback((url: string, video: HTMLVideoElement) => {
     // Native HLS (Safari / iOS)
     if (video.canPlayType('application/vnd.apple.mpegurl')) {
       video.src = url;
@@ -99,7 +168,6 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
     hls.on(Hls.Events.MEDIA_ATTACHED, () => hls.loadSource(url));
 
     hls.on(Hls.Events.MANIFEST_PARSED, (_e, data) => {
-      // Only show quality menu from manifest if NOT a bridge stream (bridge has server-side qualities)
       if (!isBridge && data.levels.length > 1) {
         setQualities(data.levels.map((l: any, i: number) => ({
           id: String(i),
@@ -140,11 +208,11 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
     });
 
     // Playing event as backup for loading state
-    const onPlaying = () => { setLoading(false); setError(null); };
+    const onPlaying = () => { setLoading(false); setError(null); setBufferWaiting(false); };
     video.addEventListener('playing', onPlaying, { once: true });
     video.addEventListener('timeupdate', onPlaying, { once: true });
 
-    // ── Stall detection: if currentTime doesn't advance for 6s, recover ──
+    // ── Stall detection ──
     if (stallTimer.current) clearInterval(stallTimer.current);
     stallCountRef.current = 0;
     lastTimeRef.current = 0;
@@ -154,16 +222,10 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
       if (ct > 0 && ct === lastTimeRef.current) {
         stallCountRef.current++;
         if (stallCountRef.current >= 3) {
-          // Stalled for ~6 seconds
           console.warn(`[Player] Stall detectado (${stallCountRef.current * 2}s), recuperando...`);
           stallCountRef.current = 0;
           if (hls) {
-            try {
-              hls.recoverMediaError();
-            } catch {
-              // If recovery fails, reload source
-              hls.loadSource(url);
-            }
+            try { hls.recoverMediaError(); } catch { hls.loadSource(url); }
           }
         }
       } else {
@@ -171,40 +233,41 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
       }
       lastTimeRef.current = ct;
     }, 2000);
-
-  }, [muted, destroy, channelId, onError, isBridge]);
+  }, [muted, channelId, onError, isBridge]);
 
   // ── Fetch bridge qualities ──
   useEffect(() => {
     if (!streamId) return;
-    setQualities([
-      { id: 'original', label: 'Original', height: 1080 },
-      { id: '720', label: '720p', height: 720 },
-      { id: '480', label: '480p', height: 480 },
-      { id: '360', label: '360p', height: 360 },
-    ]);
+    // Always set default qualities for restream channels
+    if (resolvedSrc.includes('/api/restream/')) {
+      setQualities([
+        { id: 'original', label: 'Original', height: 1080 },
+        { id: '720', label: '720p', height: 720 },
+        { id: '480', label: '480p', height: 480 },
+        { id: '360', label: '360p', height: 360 },
+      ]);
 
-    // Try server-provided qualities
-    fetch(`/api/restream/${streamId}/qualities`)
-      .then(r => r.ok ? r.json() : null)
-      .then((data: any) => {
-        if (Array.isArray(data) && data.length > 0) {
-          setQualities(data.map((q: any) => ({
-            id: q.id,
-            label: q.label,
-            height: q.height || 0,
-          })));
-        }
-      })
-      .catch(() => {});
-  }, [streamId]);
+      fetch(`/api/restream/${streamId}/qualities`)
+        .then(r => r.ok ? r.json() : null)
+        .then((data: any) => {
+          if (Array.isArray(data) && data.length > 0) {
+            setQualities(data.map((q: any) => ({
+              id: q.id,
+              label: q.label,
+              height: q.height || 0,
+            })));
+          }
+        })
+        .catch(() => {});
+    }
+  }, [streamId, resolvedSrc]);
 
   // ── Quality switch ──
   const switchQuality = useCallback((qId: string) => {
     setActiveQuality(qId);
     setShowQMenu(false);
 
-    if (!isBridge && hlsRef.current) {
+    if (!isBridge && !resolvedSrc.includes('/api/restream/') && hlsRef.current) {
       hlsRef.current.currentLevel = qId === 'auto' ? -1 : parseInt(qId, 10);
       return;
     }
@@ -217,14 +280,14 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
           : `/api/restream/${streamId}/variant/${qId}.m3u8`;
       play(newUrl);
     }
-  }, [isBridge, streamId, play]);
+  }, [isBridge, streamId, play, resolvedSrc]);
 
   // ── Init on src change ──
   useEffect(() => {
     if (!src || getYouTubeId(src)) return;
     setActiveQuality('auto');
     setQualities([]);
-    play(src);
+    play(resolveUrl(src));
     return () => destroy();
   }, [src]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -244,17 +307,18 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
   // ── Loading timeout ──
   useEffect(() => {
     if (loadingSec >= 60 && loading) {
-      // Double-check video isn't actually playing
       const video = videoRef.current;
       if (video && video.currentTime > 0 && !video.paused) {
         setLoading(false);
         setError(null);
         return;
       }
-      setError('El canal tardó demasiado en responder.');
-      setLoading(false);
+      if (!bufferWaiting) {
+        setError('El canal tardó demasiado en responder.');
+        setLoading(false);
+      }
     }
-  }, [loadingSec, loading]);
+  }, [loadingSec, loading, bufferWaiting]);
 
   // ── YouTube ──
   const ytId = getYouTubeId(src);
@@ -330,8 +394,28 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
         </div>
       )}
 
+      {/* Buffer waiting state */}
+      {bufferWaiting && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/80 pointer-events-none z-20">
+          <div className="flex flex-col items-center gap-3 max-w-xs text-center">
+            <div className="relative">
+              <Disc className="w-10 h-10 text-primary animate-spin" style={{ animationDuration: '3s' }} />
+              <Loader2 className="w-5 h-5 text-primary/60 animate-spin absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
+            </div>
+            <p className="text-white/80 text-sm font-medium">
+              Iniciando buffer de estabilidad…
+            </p>
+            <p className="text-white/40 text-xs">
+              {bufferRetries > 0 
+                ? `Esperando segmentos… intento ${bufferRetries} (reintentando cada 5s)`
+                : 'El servidor está preparando los segmentos de video'}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Loading */}
-      {loading && !error && (
+      {loading && !error && !bufferWaiting && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/70 pointer-events-none z-20">
           <div className="flex flex-col items-center gap-3">
             <div className="w-10 h-10 border-2 border-primary border-t-transparent rounded-full animate-spin" />
@@ -353,7 +437,7 @@ const VideoPlayer = memo(({ src, channelId, muted = false, onError }: VideoPlaye
             <p className="text-destructive font-semibold mb-2">Error de reproducción</p>
             <p className="text-muted-foreground text-sm mb-4">{error}</p>
             <button
-              onClick={() => play(src)}
+              onClick={() => play(resolveUrl(src))}
               className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors"
             >
               <RefreshCw className="w-4 h-4" />

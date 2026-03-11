@@ -528,6 +528,40 @@ const ChannelsManager = () => {
                     </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
+                    {/* Inline stream_mode quick-switcher */}
+                    {!isLovablePreview() && (
+                      <div className="flex items-center border border-border rounded-lg overflow-hidden mr-1">
+                        {([
+                          { value: 'direct' as const, icon: Radio, tip: 'Directo' },
+                          { value: 'buffer' as const, icon: Disc, tip: 'Buffer' },
+                          { value: 'transcode' as const, icon: Cpu, tip: 'Transcode' },
+                        ]).map(mode => (
+                          <button
+                            key={mode.value}
+                            title={mode.tip}
+                            onClick={async () => {
+                              if (ch.stream_mode === mode.value) return;
+                              try {
+                                await apiPut(`/api/channels/${ch.id}`, { stream_mode: mode.value });
+                                // Restart the stream process with the new mode
+                                try { await apiPost(`/api/streams/restart/${ch.id}`, {}); } catch {}
+                                toast({ title: `Modo cambiado a ${mode.tip}`, description: `${ch.name} reiniciado con modo ${mode.tip}` });
+                                fetchChannels();
+                              } catch (err: any) {
+                                toast({ title: 'Error', description: err.message, variant: 'destructive' });
+                              }
+                            }}
+                            className={`p-1.5 transition-colors ${
+                              (ch.stream_mode || 'direct') === mode.value
+                                ? 'bg-primary/15 text-primary'
+                                : 'text-muted-foreground/50 hover:text-foreground hover:bg-secondary'
+                            }`}
+                          >
+                            <mode.icon className="w-3.5 h-3.5" />
+                          </button>
+                        ))}
+                      </div>
+                    )}
                     <Button
                       variant="ghost"
                       size="icon"
@@ -567,7 +601,7 @@ const ChannelsManager = () => {
                       transition={{ duration: 0.3 }}
                       className="border-t border-border bg-black"
                     >
-                      <VideoPlayer src={ch.url} channelId={ch.id} />
+                      <VideoPlayer src={ch.url} channelId={ch.id} streamMode={ch.stream_mode} />
                     </motion.div>
                   )}
                 </AnimatePresence>
