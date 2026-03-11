@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Shield, Lock, Mail, Loader2, Globe } from 'lucide-react';
 import { Input } from '@/components/ui/input';
