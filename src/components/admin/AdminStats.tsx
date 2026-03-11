@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { apiGet } from '@/lib/api';
+import { copyToClipboard } from '@/lib/clipboard';
 import { supabase } from '@/integrations/supabase/client';
 import { isLovablePreview } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';

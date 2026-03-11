@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { apiGet } from '@/lib/api';
+import { copyToClipboard } from '@/lib/clipboard';
 import { useToast } from '@/hooks/use-toast';
 import { Cpu, HardDrive, MemoryStick, Network, Shield, CheckCircle2, XCircle, AlertTriangle, RefreshCw, Copy, ChevronDown, ChevronRight, Server, Gauge, ArrowDownToLine, ArrowUpFromLine } from 'lucide-react';
 import { Button } from '@/components/ui/button';
