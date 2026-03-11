@@ -92,9 +92,6 @@ const AdminDashboard = () => {
             <TabsTrigger value="alerts" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
               <Bell className="w-4 h-4" /> Alertas
             </TabsTrigger>
-            <TabsTrigger value="monitor" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
-              <Activity className="w-4 h-4" /> Monitoreo
-            </TabsTrigger>
             <TabsTrigger value="tunnel" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
               <Globe className="w-4 h-4" /> Túnel
             </TabsTrigger>
