@@ -279,6 +279,12 @@ app.get('/api/tunnel/status', authAdmin, (req, res) => {
     mode: tunnelMode,
     server_ip: getServerIp(),
     stream_base_url: tunnelMode === 'hybrid' ? `http://${getServerIp()}:${XTREAM_PORT}` : tunnelUrl,
+    xtream_tunnel: {
+      status: xtreamTunnelProcess ? 'running' : 'stopped',
+      url: xtreamTunnelUrl,
+      error: xtreamTunnelError,
+      port: XTREAM_PANEL_PORT,
+    },
   });
 });
 
