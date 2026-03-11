@@ -2831,18 +2831,34 @@ app.get('/api/streams/active', authAdmin, async (req, res) => {
   try {
     const streams = [];
     for (const [channelId, entry] of activeTranscoders) {
-      const { rows } = await pool.query('SELECT name, url FROM channels WHERE id = $1', [channelId]);
+      const { rows } = await pool.query('SELECT name, url, stream_mode FROM channels WHERE id = $1', [channelId]);
       const channelName = rows.length > 0 ? rows[0].name : 'Desconocido';
       const sourceUrl = rows.length > 0 ? rows[0].url : entry.sourceUrl || 'N/A';
+      const streamMode = rows.length > 0 ? (rows[0].stream_mode || 'direct') : 'direct';
       
       const bw = channelBandwidth.get(channelId);
       const bandwidth_bps = bw ? bw.bpsOut : 0;
       const bandwidth_in_bps = bw ? bw.bpsIn : 0;
 
+      // Per-process resource usage via /proc (Linux)
+      let cpu_percent = 0;
+      let mem_mb = 0;
+      if (entry.ffmpeg && entry.ffmpeg.pid) {
+        try {
+          const pidStat = execSync(`ps -p ${entry.ffmpeg.pid} -o %cpu=,%mem=,rss= 2>/dev/null`, { timeout: 2000 }).toString().trim();
+          const parts = pidStat.split(/\s+/);
+          if (parts.length >= 3) {
+            cpu_percent = parseFloat(parts[0]) || 0;
+            mem_mb = Math.round((parseInt(parts[2]) || 0) / 1024);
+          }
+        } catch { /* process may have exited */ }
+      }
+
       streams.push({
         channel_id: channelId,
         channel_name: channelName,
         type: entry.type,
+        stream_mode: streamMode,
         clients: Math.max(0, entry.clients),
         ready: entry.ready !== undefined ? entry.ready : true,
         keep_alive: entry.keepAlive || false,
@@ -2850,14 +2866,44 @@ app.get('/api/streams/active', authAdmin, async (req, res) => {
         source_url: sourceUrl.substring(0, 60) + (sourceUrl.length > 60 ? '...' : ''),
         bandwidth_bps: Math.round(bandwidth_bps),
         bandwidth_in_bps: Math.round(bandwidth_in_bps),
+        cpu_percent,
+        mem_mb,
+        retry_count: entry.retryCount || entry.restartCount || 0,
+        max_retries: entry.maxRetries || 10,
       });
     }
+
+    // Global system stats
+    const os = require('os');
+    const totalMemMB = Math.round(os.totalmem() / (1024 * 1024));
+    const freeMemMB = Math.round(os.freemem() / (1024 * 1024));
+    const usedMemMB = totalMemMB - freeMemMB;
+    const cpuCount = os.cpus().length;
+    const loadAvg = os.loadavg();
+    const cpuUsagePercent = Math.min(100, Math.round((loadAvg[0] / cpuCount) * 100));
+
+    // Failure alerts: streams with 3+ retries
+    const failedStreams = streams.filter(s => s.retry_count >= 3);
     
     res.json({
       total_streams: streams.length,
       total_clients_watching: streams.reduce((sum, s) => sum + s.clients, 0),
       origin_connections: streams.length,
       streams,
+      system: {
+        cpu_percent: cpuUsagePercent,
+        cpu_cores: cpuCount,
+        load_avg: loadAvg,
+        mem_total_mb: totalMemMB,
+        mem_used_mb: usedMemMB,
+        mem_percent: Math.round((usedMemMB / totalMemMB) * 100),
+      },
+      alerts: failedStreams.map(s => ({
+        channel_id: s.channel_id,
+        channel_name: s.channel_name,
+        retry_count: s.retry_count,
+        type: s.type,
+      })),
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
