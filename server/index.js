@@ -1151,6 +1151,11 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
 
   // Build FFmpeg command: 4 transcoded outputs + 1 copy
   const ffmpegArgs = [
+    '-user_agent', 'VLC/3.0.18 LibVLC/3.0.18',
+    '-analyzeduration', '1000000',
+    '-probesize', '1000000',
+    '-fflags', '+nobuffer',
+    '-flags', '+low_delay',
     '-reconnect', '1',
     '-reconnect_streamed', '1',
     '-reconnect_delay_max', '10',
