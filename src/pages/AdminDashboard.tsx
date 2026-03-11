@@ -2,12 +2,14 @@ import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAdminAuth } from '@/contexts/AdminAuthContext';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { LayoutDashboard, Globe, Settings, Activity, LogOut } from 'lucide-react';
+import { LayoutDashboard, Globe, Settings, Activity, LogOut, Users, Eye } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import DashboardOverview from '@/components/admin/DashboardOverview';
 import TunnelManager from '@/components/admin/TunnelManager';
 import XtreamConfig from '@/components/admin/XtreamConfig';
 import ProxyStatus from '@/components/admin/ProxyStatus';
+import ShieldClientsManager from '@/components/admin/ShieldClientsManager';
+import ShieldViewers from '@/components/admin/ShieldViewers';
 import ChangePasswordDialog from '@/components/admin/ChangePasswordDialog';
 import omnisyncLogo from '@/assets/omnisync-logo.png';
 
@@ -67,6 +69,12 @@ const AdminDashboard = () => {
             <TabsTrigger value="tunnel" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
               <Globe className="w-4 h-4" /> Túnel
             </TabsTrigger>
+            <TabsTrigger value="clients" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
+              <Users className="w-4 h-4" /> Clientes
+            </TabsTrigger>
+            <TabsTrigger value="viewers" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
+              <Eye className="w-4 h-4" /> Conectados
+            </TabsTrigger>
             <TabsTrigger value="proxy" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
               <Activity className="w-4 h-4" /> Proxy
             </TabsTrigger>
@@ -77,6 +85,8 @@ const AdminDashboard = () => {
 
           <TabsContent value="overview" forceMount className="data-[state=inactive]:hidden"><DashboardOverview /></TabsContent>
           <TabsContent value="tunnel" forceMount className="data-[state=inactive]:hidden"><TunnelManager /></TabsContent>
+          <TabsContent value="clients" forceMount className="data-[state=inactive]:hidden"><ShieldClientsManager /></TabsContent>
+          <TabsContent value="viewers" forceMount className="data-[state=inactive]:hidden"><ShieldViewers /></TabsContent>
           <TabsContent value="proxy" forceMount className="data-[state=inactive]:hidden"><ProxyStatus /></TabsContent>
           <TabsContent value="xtream" forceMount className="data-[state=inactive]:hidden"><XtreamConfig /></TabsContent>
         </Tabs>
