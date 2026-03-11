@@ -28,11 +28,17 @@ const NGINX_PORT = process.env.NGINX_PORT || '8880';
 let XTREAM_HOST = process.env.XTREAM_HOST || 'http://localhost';
 let XTREAM_PORT = process.env.XTREAM_PORT || '25461';
 
-// Tunnel state
+// Tunnel state - Shield (main)
 let tunnelProcess = null;
 let tunnelUrl = null;
 let tunnelMode = 'full'; // 'full' | 'hybrid'
 let tunnelError = null;
+
+// Tunnel state - Xtream UI panel
+let xtreamTunnelProcess = null;
+let xtreamTunnelUrl = null;
+let xtreamTunnelError = null;
+const XTREAM_PANEL_PORT = process.env.XTREAM_PANEL_PORT || '25500';
 
 // Stats
 let totalRequests = 0;
