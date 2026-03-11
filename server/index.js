@@ -2044,7 +2044,56 @@ scheduleCacheCleanup();
 // =============================================
 // ENDPOINT PRINCIPAL: /api/restream/:channelId
 // Sirve HLS para TODOS los tipos de canal
+// Soporta /api/restream/:channelId.ts para forzar MPEG-TS output
 // =============================================
+app.get('/api/restream/:channelId.ts', async (req, res) => {
+  // MPEG-TS format: proxy raw TS stream via FFmpeg -f mpegts
+  try {
+    const channelId = req.params.channelId;
+    const { rows: channels } = await pool.query(
+      'SELECT url FROM channels WHERE id = $1 AND is_active = true',
+      [channelId]
+    );
+    if (channels.length === 0) return res.status(404).json({ error: 'Canal no encontrado' });
+
+    const targetUrl = channels[0].url;
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Content-Type', 'video/mp2t');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    const args = [
+      '-user_agent', 'VLC/3.0.18 LibVLC/3.0.18',
+      '-analyzeduration', '1000000', '-probesize', '1000000',
+      '-fflags', '+nobuffer', '-flags', '+low_delay',
+      '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
+      '-i', targetUrl,
+      '-c:v', 'copy',
+      '-c:a', 'aac', '-b:a', '128k',
+      '-f', 'mpegts',
+      '-'
+    ];
+
+    const ffmpeg = require('child_process').spawn('/usr/bin/ffmpeg', args);
+    ffmpeg.stdout.pipe(res);
+    ffmpeg.stderr.on('data', () => {}); // suppress logs
+
+    req.on('close', () => { try { ffmpeg.kill('SIGKILL'); } catch(e) {} });
+    res.on('close', () => { try { ffmpeg.kill('SIGKILL'); } catch(e) {} });
+
+    // 5s timeout if no data
+    const timeout = setTimeout(() => {
+      try { ffmpeg.kill('SIGKILL'); } catch(e) {}
+      if (!res.headersSent) res.status(504).json({ error: 'Timeout: canal no responde' });
+    }, 5000);
+    ffmpeg.stdout.once('data', () => clearTimeout(timeout));
+
+  } catch (err) {
+    console.error('MPEG-TS restream error:', err);
+    if (!res.headersSent) res.status(500).json({ error: 'Error de restream TS' });
+  }
+});
+
 app.get('/api/restream/:channelId', async (req, res) => {
   try {
     const { rows: channels } = await pool.query(
