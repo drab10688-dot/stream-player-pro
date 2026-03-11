@@ -161,17 +161,17 @@ const ClientsManager = () => {
 
   const isExpired = (date: string) => new Date(date) < new Date();
 
-  const getPlaylistUrl = (token: string | null) => {
+  const getPlaylistUrl = (token: string | null, format?: string) => {
     if (!token) return '';
     const base = window.location.origin;
-    return `${base}/api/playlist/${token}`;
+    return format ? `${base}/api/playlist/${token}/${format}` : `${base}/api/playlist/${token}`;
   };
 
-  const copyPlaylistUrl = (token: string | null) => {
-    const url = getPlaylistUrl(token);
+  const copyPlaylistUrl = (token: string | null, format?: string, label?: string) => {
+    const url = getPlaylistUrl(token, format);
     if (!url) return;
     navigator.clipboard.writeText(url);
-    toast({ title: '📋 URL copiada', description: 'Link de playlist M3U copiado al portapapeles' });
+    toast({ title: '📋 URL copiada', description: `Link ${label || 'M3U Plus'} copiado al portapapeles` });
   };
 
   const regenerateToken = async (clientId: string) => {
