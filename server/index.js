@@ -1178,11 +1178,12 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
     );
   });
 
-  // Output 4: COPY (original passthrough — 0% CPU, NO filters, NO encoder params)
+  // Output 4: COPY video, but ALWAYS transcode audio to AAC for browser compatibility
+  // Many IPTV sources use AC3/EAC3 audio which browsers cannot decode
   ffmpegArgs.push(
     '-map', '0:v:0', '-map', '0:a:0?',
     '-c:v:4', 'copy',
-    '-c:a:4', 'copy',
+    '-c:a:4', 'aac', '-b:a:4', '128k',
   );
 
   // Common settings
