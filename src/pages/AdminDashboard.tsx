@@ -122,6 +122,9 @@ const AdminDashboard = () => {
             <TabsTrigger value="system" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
               <Shield className="w-4 h-4" /> Sistema
             </TabsTrigger>
+            <TabsTrigger value="apk" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
+              <Smartphone className="w-4 h-4" /> APK
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="dashboard" forceMount className="data-[state=inactive]:hidden"><AdminStats /></TabsContent>
@@ -140,6 +143,7 @@ const AdminDashboard = () => {
           <TabsContent value="series" forceMount className="data-[state=inactive]:hidden"><SeriesManager /></TabsContent>
           <TabsContent value="viewers" forceMount className="data-[state=inactive]:hidden"><ActiveViewers /></TabsContent>
           <TabsContent value="system" forceMount className="data-[state=inactive]:hidden"><SystemTuning /></TabsContent>
+          <TabsContent value="apk" forceMount className="data-[state=inactive]:hidden"><ApkManager /></TabsContent>
         </Tabs>
       </main>
     </div>
