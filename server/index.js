@@ -3179,11 +3179,100 @@ app.get('/api/admin/system-info', async (req, res) => {
 });
 
 // =============================================
+// APK MANAGEMENT
+// =============================================
+const APK_DIR = '/opt/streambox/apk';
+if (!fs.existsSync(APK_DIR)) fs.mkdirSync(APK_DIR, { recursive: true });
+
+const uploadApk = multer({
+  storage: multer.diskStorage({
+    destination: APK_DIR,
+    filename: (req, file, cb) => cb(null, file.originalname),
+  }),
+  fileFilter: (req, file, cb) => {
+    if (file.originalname.endsWith('.apk')) cb(null, true);
+    else cb(new Error('Solo archivos .apk'));
+  },
+});
+
+// List APKs
+app.get('/api/apk/list', authAdmin, (req, res) => {
+  try {
+    const files = fs.readdirSync(APK_DIR)
+      .filter(f => f.endsWith('.apk'))
+      .map(name => {
+        const stat = fs.statSync(path.join(APK_DIR, name));
+        // Detect server IP
+        const os = require('os');
+        const ifaces = os.networkInterfaces();
+        let serverIP = '0.0.0.0';
+        for (const iface of Object.values(ifaces)) {
+          for (const alias of iface) {
+            if (alias.family === 'IPv4' && !alias.internal) {
+              serverIP = alias.address;
+              break;
+            }
+          }
+        }
+        return {
+          name,
+          size: stat.size,
+          uploaded_at: stat.mtime.toISOString(),
+          download_url: `/api/apk/download/${encodeURIComponent(name)}`,
+        };
+      });
+
+    // Get server info
+    const os = require('os');
+    const ifaces = os.networkInterfaces();
+    let serverIP = '0.0.0.0';
+    for (const iface of Object.values(ifaces)) {
+      for (const alias of iface) {
+        if (alias.family === 'IPv4' && !alias.internal) {
+          serverIP = alias.address;
+          break;
+        }
+      }
+    }
+
+    res.json({
+      files,
+      server: { ip: serverIP, apk_port: 25461 },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Upload APK
+app.post('/api/apk/upload', authAdmin, uploadApk.single('apk'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file' });
+  res.json({ ok: true, name: req.file.originalname, size: req.file.size });
+});
+
+// Download APK
+app.get('/api/apk/download/:name', (req, res) => {
+  const filePath = path.join(APK_DIR, req.params.name);
+  if (!fs.existsSync(filePath)) return res.status(404).send('Not found');
+  res.download(filePath);
+});
+
+// Delete APK
+app.delete('/api/apk/:name', authAdmin, (req, res) => {
+  const filePath = path.join(APK_DIR, decodeURIComponent(req.params.name));
+  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  res.json({ ok: true });
+});
+
+console.log('📱 APK management habilitado: /api/apk/*');
+
+// =============================================
 // INICIAR SERVIDOR
 // =============================================
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🚀 StreamBox API corriendo en http://0.0.0.0:${PORT}`);
+  console.log(`\n🚀 Omnisync API corriendo en http://0.0.0.0:${PORT}`);
   console.log(`📺 Panel Admin: http://TU_IP:80`);
+  console.log(`📱 API Xtream (APKs): puerto 25461`);
   console.log(`🔐 Setup inicial: POST http://localhost:${PORT}/api/admin/setup\n`);
   
   // Iniciar canales keep-alive después de 3 segundos (esperar conexión DB)
