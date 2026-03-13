@@ -951,6 +951,7 @@ fi
 # Configurar firewall
 if command -v ufw &> /dev/null; then
   ufw allow ${WEB_PORT}/tcp > /dev/null 2>&1
+  ufw allow ${APK_PORT}/tcp > /dev/null 2>&1
   ufw allow 22/tcp > /dev/null 2>&1
 fi
 
