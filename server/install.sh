@@ -285,7 +285,8 @@ if [ "$WEB_PORT" != "80" ] || lsof -i :$WEB_PORT &>/dev/null; then
   fi
 fi
 
-log_ok "API: puerto $API_PORT | Web: puerto $WEB_PORT"
+APK_PORT=25461
+log_ok "API: puerto $API_PORT | Web: puerto $WEB_PORT | APK (Xtream): puerto $APK_PORT"
 echo ""
 
 sleep 1
