@@ -973,14 +973,15 @@ fi
 echo ""
 if [ "$WEB_PORT" = "80" ]; then
   echo -e "${CYAN}🌐 Panel Admin:    http://${SERVER_IP}/admin${NC}"
-  echo -e "${CYAN}📺 App Clientes:   http://${SERVER_IP}/login${NC}"
 else
   echo -e "${CYAN}🌐 Panel Admin:    http://${SERVER_IP}:${WEB_PORT}/admin${NC}"
-  echo -e "${CYAN}📺 App Clientes:   http://${SERVER_IP}:${WEB_PORT}/login${NC}"
 fi
+echo -e "${CYAN}📺 API Xtream:     http://${SERVER_IP}:${APK_PORT}${NC}"
+echo -e "${CYAN}   Formato APK:    http://${SERVER_IP}:${APK_PORT}/player_api.php?username=X&password=X${NC}"
 echo -e "${CYAN}🔑 Admin Email:    ${ADMIN_EMAIL}${NC}"
 echo -e "${CYAN}⚙️  API Puerto:     ${API_PORT}${NC}"
 echo -e "${CYAN}🌐 Web Puerto:     ${WEB_PORT}${NC}"
+echo -e "${CYAN}📱 APK Puerto:     ${APK_PORT}${NC}"
 echo ""
 echo -e "${YELLOW}📋 Comandos útiles:${NC}"
 echo "   pm2 logs streambox-api     → Ver logs de la API"
