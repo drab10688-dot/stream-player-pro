@@ -10,7 +10,7 @@ const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 const crypto = require('crypto');
-const { spawn, execSync } = require('child_process');
+const { spawn } = require('child_process');
 
 const app = express();
 app.use(cors());
@@ -133,7 +133,6 @@ const authAdmin = async (req, res, next) => {
 // RUTAS: ADMIN AUTH
 // =============================================
 
-
 // Crear primer admin (solo funciona si no hay admins)
 app.post('/api/admin/setup', async (req, res) => {
   try {
@@ -209,7 +208,7 @@ async function runAutoPing() {
         const parsedUrl = new URL(ch.url);
         const httpClient = parsedUrl.protocol === 'https:' ? https : http;
         const result = await new Promise((resolve) => {
-           const req = httpClient.request(ch.url, { method: 'GET', headers: { 'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18', 'Range': 'bytes=0-1024' } }, (response) => {
+          const req = httpClient.request(ch.url, { method: 'GET', headers: { 'User-Agent': 'StreamBox-HealthCheck/1.0', 'Range': 'bytes=0-1024' } }, (response) => {
             response.destroy();
             const isOk = response.statusCode >= 200 && response.statusCode < 400;
             resolve({ id: ch.id, name: ch.name, status: isOk ? 'online' : 'offline', consecutive_failures: ch.consecutive_failures, was_auto_disabled: ch.auto_disabled, error: isOk ? null : `HTTP ${response.statusCode}` });
@@ -335,7 +334,7 @@ app.post('/api/channels/ping', authAdmin, async (req, res) => {
         const httpClient = parsedUrl.protocol === 'https:' ? https : http;
 
         const result = await new Promise((resolve) => {
-          const req = httpClient.request(ch.url, { method: 'GET', headers: { 'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18', 'Range': 'bytes=0-1024' } }, (response) => {
+          const req = httpClient.request(ch.url, { method: 'GET', headers: { 'User-Agent': 'StreamBox-HealthCheck/1.0', 'Range': 'bytes=0-1024' } }, (response) => {
             response.destroy();
             const responseTime = Date.now() - start;
             const isOk = response.statusCode >= 200 && response.statusCode < 400;
@@ -446,10 +445,10 @@ app.post('/api/channels/upload-logo', authAdmin, uploadLogo.single('logo'), (req
 });
 
 app.post('/api/channels', authAdmin, async (req, res) => {
-  const { name, url, category, sort_order, logo_url, stream_mode } = req.body;
+  const { name, url, category, sort_order, logo_url } = req.body;
   const { rows } = await pool.query(
-    'INSERT INTO channels (name, url, category, sort_order, logo_url, stream_mode) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
-    [name, url, category || 'General', sort_order || 0, logo_url || null, stream_mode || 'direct']
+    'INSERT INTO channels (name, url, category, sort_order, logo_url) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+    [name, url, category || 'General', sort_order || 0, logo_url || null]
   );
   res.json(rows[0]);
 });
@@ -467,11 +466,10 @@ app.put('/api/channels/:id', authAdmin, async (req, res) => {
     const is_active = req.body.is_active !== undefined ? req.body.is_active : c.is_active;
     const keep_alive = req.body.keep_alive !== undefined ? req.body.keep_alive : c.keep_alive;
     const logo_url = req.body.logo_url !== undefined ? req.body.logo_url : c.logo_url;
-    const stream_mode = req.body.stream_mode !== undefined ? req.body.stream_mode : (c.stream_mode || 'direct');
 
     const { rows } = await pool.query(
-      'UPDATE channels SET name=$1, url=$2, category=$3, sort_order=$4, is_active=$5, keep_alive=$6, logo_url=$7, stream_mode=$8 WHERE id=$9 RETURNING *',
-      [name, url, category, sort_order, is_active, keep_alive, logo_url, stream_mode, req.params.id]
+      'UPDATE channels SET name=$1, url=$2, category=$3, sort_order=$4, is_active=$5, keep_alive=$6, logo_url=$7 WHERE id=$8 RETURNING *',
+      [name, url, category, sort_order, is_active, keep_alive, logo_url, req.params.id]
     );
 
     // If keep_alive was toggled ON, start the transcoder immediately
@@ -662,149 +660,6 @@ app.delete('/api/resellers/:id', authAdmin, async (req, res) => {
 });
 
 // =============================================
-// MIDDLEWARE: Verificar token de reseller
-// =============================================
-const authReseller = async (req, res, next) => {
-  const token = req.headers.authorization?.replace('Bearer ', '');
-  if (!token) return res.status(401).json({ error: 'Token requerido' });
-
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    if (!decoded.reseller_id) return res.status(401).json({ error: 'Token inválido' });
-    const { rows } = await pool.query('SELECT * FROM resellers WHERE id = $1 AND is_active = true', [decoded.reseller_id]);
-    if (rows.length === 0) return res.status(401).json({ error: 'Reseller no encontrado o suspendido' });
-    req.reseller = rows[0];
-    next();
-  } catch {
-    res.status(401).json({ error: 'Token inválido' });
-  }
-};
-
-// =============================================
-// RUTAS: RESELLER AUTH Y PANEL
-// =============================================
-app.post('/api/reseller/login', async (req, res) => {
-  try {
-    const { username, password } = req.body;
-    const { rows } = await pool.query(
-      'SELECT * FROM resellers WHERE username = $1 AND password = $2 AND is_active = true',
-      [username, password]
-    );
-    if (rows.length === 0) return res.status(401).json({ error: 'Credenciales inválidas o cuenta suspendida' });
-
-    const r = rows[0];
-    const { rows: clients } = await pool.query('SELECT id FROM clients WHERE reseller_id = $1', [r.id]);
-    const token = jwt.sign({ reseller_id: r.id }, JWT_SECRET, { expiresIn: '12h' });
-    res.json({
-      token,
-      reseller: {
-        id: r.id, name: r.name, username: r.username,
-        max_clients: r.max_clients, commission_percent: r.commission_percent || 0,
-        client_count: clients.length,
-      },
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Reseller: get own info
-app.get('/api/reseller/me', authReseller, async (req, res) => {
-  const r = req.reseller;
-  const { rows: clients } = await pool.query('SELECT id FROM clients WHERE reseller_id = $1', [r.id]);
-  res.json({
-    id: r.id, name: r.name, username: r.username,
-    max_clients: r.max_clients, commission_percent: r.commission_percent || 0,
-    client_count: clients.length,
-  });
-});
-
-// Reseller: list own clients
-app.get('/api/reseller/clients', authReseller, async (req, res) => {
-  try {
-    const { rows } = await pool.query(
-      'SELECT id, username, password, max_screens, expiry_date, is_active, notes, plan_id, vod_enabled, created_at FROM clients WHERE reseller_id = $1 ORDER BY created_at DESC',
-      [req.reseller.id]
-    );
-    res.json(rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Reseller: list available plans (read-only)
-app.get('/api/reseller/plans', authReseller, async (req, res) => {
-  try {
-    const { rows } = await pool.query('SELECT id, name FROM plans WHERE is_active = true ORDER BY sort_order');
-    res.json(rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Reseller: create client (respects max_clients limit)
-app.post('/api/reseller/clients', authReseller, async (req, res) => {
-  try {
-    const { rows: existing } = await pool.query('SELECT id FROM clients WHERE reseller_id = $1', [req.reseller.id]);
-    if (existing.length >= req.reseller.max_clients) {
-      return res.status(403).json({ error: `Has alcanzado el límite de ${req.reseller.max_clients} clientes` });
-    }
-
-    const { username, password, max_screens, expiry_date, notes, plan_id, vod_enabled } = req.body;
-    if (!username || !password || !expiry_date) return res.status(400).json({ error: 'Usuario, contraseña y fecha de expiración requeridos' });
-
-    const playlist_token = crypto.randomBytes(16).toString('hex');
-    const { rows } = await pool.query(
-      'INSERT INTO clients (username, password, max_screens, expiry_date, notes, plan_id, vod_enabled, reseller_id, playlist_token) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *',
-      [username, password, max_screens || 1, expiry_date, notes, plan_id || null, vod_enabled || false, req.reseller.id, playlist_token]
-    );
-    res.json(rows[0]);
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-// Reseller: update own client
-app.put('/api/reseller/clients/:id', authReseller, async (req, res) => {
-  try {
-    const { rows: current } = await pool.query('SELECT * FROM clients WHERE id = $1 AND reseller_id = $2', [req.params.id, req.reseller.id]);
-    if (current.length === 0) return res.status(404).json({ error: 'Cliente no encontrado' });
-
-    const c = current[0];
-    const username = req.body.username !== undefined ? req.body.username : c.username;
-    const password = req.body.password !== undefined ? req.body.password : c.password;
-    const max_screens = req.body.max_screens !== undefined ? req.body.max_screens : c.max_screens;
-    const expiry_date = req.body.expiry_date !== undefined ? req.body.expiry_date : c.expiry_date;
-    const is_active = req.body.is_active !== undefined ? req.body.is_active : c.is_active;
-    const notes = req.body.notes !== undefined ? req.body.notes : c.notes;
-    const plan_id = req.body.plan_id !== undefined ? req.body.plan_id : c.plan_id;
-    const vod_enabled = req.body.vod_enabled !== undefined ? req.body.vod_enabled : c.vod_enabled;
-
-    const { rows } = await pool.query(
-      'UPDATE clients SET username=$1, password=$2, max_screens=$3, expiry_date=$4, is_active=$5, notes=$6, plan_id=$7, vod_enabled=$8 WHERE id=$9 RETURNING *',
-      [username, password, max_screens, expiry_date, is_active, notes, plan_id, vod_enabled, req.params.id]
-    );
-    res.json(rows[0]);
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-// Reseller: delete own client
-app.delete('/api/reseller/clients/:id', authReseller, async (req, res) => {
-  try {
-    const { rows } = await pool.query('SELECT id FROM clients WHERE id = $1 AND reseller_id = $2', [req.params.id, req.reseller.id]);
-    if (rows.length === 0) return res.status(404).json({ error: 'Cliente no encontrado' });
-    
-    await pool.query('DELETE FROM active_connections WHERE client_id = $1', [req.params.id]);
-    await pool.query('DELETE FROM clients WHERE id = $1', [req.params.id]);
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// =============================================
 // RUTAS: LOGIN DE CLIENTES (público, para la app)
 // =============================================
 app.post('/api/client/login', async (req, res) => {
@@ -928,96 +783,12 @@ app.get('/api/validate-stream', async (req, res) => {
 // =============================================
 // child_process, fs, path ya importados arriba
 
-// ── ffprobe codec detection for streams without CODECS attribute ──
-const codecProbeCache = new Map(); // url -> { codec, timestamp }
-const CODEC_PROBE_TTL = 300000; // 5 min cache
-
-function probeStreamCodec(url) {
-  const cached = codecProbeCache.get(url);
-  if (cached && Date.now() - cached.timestamp < CODEC_PROBE_TTL) {
-    return Promise.resolve(cached.codec);
-  }
-  return new Promise((resolve) => {
-    try {
-      const probe = spawn('ffprobe', [
-        '-v', 'error',
-        '-user_agent', 'VLC/3.0.18 LibVLC/3.0.18',
-        '-select_streams', 'v:0',
-        '-show_entries', 'stream=codec_name',
-        '-of', 'csv=p=0',
-        '-rw_timeout', '8000000',
-        url
-      ], { stdio: ['pipe', 'pipe', 'pipe'] });
-
-      let output = '';
-      let errOutput = '';
-      probe.stdout.on('data', d => { output += d.toString(); });
-      probe.stderr.on('data', d => { errOutput += d.toString(); });
-
-      const timeout = setTimeout(() => {
-        probe.kill('SIGKILL');
-        console.warn(`⏱️ ffprobe timeout for ${url.substring(0, 60)}...`);
-        resolve('unknown');
-      }, 10000);
-
-      probe.on('close', (code) => {
-        clearTimeout(timeout);
-        const codec = output.trim().split('\n')[0]?.trim().toLowerCase() || 'unknown';
-        console.log(`🔍 ffprobe: ${url.substring(0, 60)}... → codec: ${codec}`);
-        codecProbeCache.set(url, { codec, timestamp: Date.now() });
-        resolve(codec);
-      });
-    } catch (err) {
-      console.error('ffprobe spawn error:', err.message);
-      resolve('unknown');
-    }
-  });
-}
-
 // Directorios de caché HLS - SSD por defecto (soporta 100+ canales)
 // El instalador configura /opt/streambox/hls-cache en SSD
 // Fallback a /tmp si no existe (compatibilidad con instalaciones anteriores)
 const HLS_DIR = fs.existsSync('/opt/streambox/hls-cache') ? '/opt/streambox/hls-cache' : '/tmp/streambox-hls';
 const HLS_CACHE_DIR = fs.existsSync('/opt/streambox/hls-proxy-cache') ? '/opt/streambox/hls-proxy-cache' : '/tmp/streambox-cache';
 const activeTranscoders = new Map(); // channelId -> { ffmpeg, clients, lastAccess, type }
-// Per-channel bandwidth tracking (input = from origin, output = to clients)
-// Uses exponential moving average (EMA) for smooth display
-const channelBandwidth = new Map(); // channelId -> { bytesIn, bytesOut, lastReset, bpsIn, bpsOut }
-function initBandwidthEntry(channelId) {
-  if (!channelBandwidth.has(channelId)) {
-    channelBandwidth.set(channelId, { bytesIn: 0, bytesOut: 0, lastReset: Date.now(), bpsIn: 0, bpsOut: 0 });
-  }
-}
-function trackBandwidth(channelId, bytes) {
-  initBandwidthEntry(channelId);
-  channelBandwidth.get(channelId).bytesOut += bytes;
-}
-function trackInputBandwidth(channelId, bytes) {
-  initBandwidthEntry(channelId);
-  channelBandwidth.get(channelId).bytesIn += bytes;
-}
-// Calculate bandwidth rate every 3 seconds using EMA (alpha=0.4 for smooth transitions)
-const BW_EMA_ALPHA = 0.4;
-setInterval(() => {
-  const now = Date.now();
-  channelBandwidth.forEach((bw, channelId) => {
-    const elapsed = (now - bw.lastReset) / 1000;
-    if (elapsed > 0) {
-      const instantOut = bw.bytesOut / elapsed;
-      const instantIn = bw.bytesIn / elapsed;
-      // EMA: new = alpha * instant + (1-alpha) * previous
-      bw.bpsOut = BW_EMA_ALPHA * instantOut + (1 - BW_EMA_ALPHA) * bw.bpsOut;
-      bw.bpsIn = BW_EMA_ALPHA * instantIn + (1 - BW_EMA_ALPHA) * bw.bpsIn;
-    }
-    bw.bytesOut = 0;
-    bw.bytesIn = 0;
-    bw.lastReset = now;
-  });
-  // Clean up channels no longer active
-  channelBandwidth.forEach((_, channelId) => {
-    if (!activeTranscoders.has(channelId)) channelBandwidth.delete(channelId);
-  });
-}, 3000);
 
 // Crear directorios base
 [HLS_DIR, HLS_CACHE_DIR].forEach(dir => {
@@ -1027,7 +798,7 @@ setInterval(() => {
 // Detectar tipo de almacenamiento
 const storageInfo = (() => {
   try {
-    // execSync ya importado arriba
+    const { execSync } = require('child_process');
     const output = execSync(`df -T ${HLS_DIR} 2>/dev/null`).toString();
     const isTmpfs = output.includes('tmpfs');
     const parts = output.split('\n')[1]?.split(/\s+/) || [];
@@ -1053,7 +824,7 @@ const storageInfo = (() => {
 // Monitor de uso de disco (cada 60s)
 setInterval(() => {
   try {
-    // execSync ya importado arriba
+    const { execSync } = require('child_process');
     const output = execSync(`df -h ${HLS_DIR} 2>/dev/null`).toString();
     const parts = output.split('\n')[1]?.split(/\s+/) || [];
     const used = parts[2] || '?';
@@ -1102,23 +873,19 @@ function cleanChannelDir(channelId) {
 // TRANSCODIFICADOR TS → HLS con FFmpeg
 // =============================================
 // =============================================
-// MODO ABR 5 CALIDADES (estilo YouTube)
-// 240p → 360p → 480p → 720p → Copy (original)
-// El reproductor cambia automáticamente según el ancho de banda
+// CALIDADES ADAPTATIVAS (tipo Netflix)
+// Low: 480p ~800kbps (para 2-3 Mbps)
+// Med: 720p ~2Mbps (para 4-6 Mbps) 
+// High: original (copy, sin re-encode)
 // =============================================
-console.log('✅ Modo ABR YouTube — 5 calidades: 240p/360p/480p/720p/original');
-
-const ABR_PROFILES = [
-  { name: 'micro', width: 426, height: 240, vBitrate: '250k', maxrate: '350k', bufsize: '500k', aBitrate: '32k', audioChannels: 1, bandwidth: 400000 },
-  { name: 'low',   width: 640, height: 360, vBitrate: '400k', maxrate: '550k', bufsize: '800k', aBitrate: '48k', audioChannels: 1, bandwidth: 600000 },
-  { name: 'med',   width: 854, height: 480, vBitrate: '700k', maxrate: '900k', bufsize: '1200k', aBitrate: '64k', audioChannels: 1, bandwidth: 1000000 },
-  { name: 'high',  width: 1280, height: 720, vBitrate: '1500k', maxrate: '2000k', bufsize: '3000k', aBitrate: '96k', audioChannels: 2, bandwidth: 2200000 },
+const QUALITY_PROFILES = [
+  { name: 'low', width: 854, height: 480, vBitrate: '800k', maxrate: '900k', bufsize: '1200k', aBitrate: '96k', bandwidth: 900000 },
+  { name: 'med', width: 1280, height: 720, vBitrate: '2000k', maxrate: '2200k', bufsize: '3000k', aBitrate: '128k', bandwidth: 2200000 },
 ];
-// Copy profile is handled separately (no transcode, 0% CPU)
 
-// Configuración de caché según modo — segmentos de 2s para switching rápido estilo DirecTV Go
-const CACHE_NORMAL = { hls_list_size: 60, hls_time: 2 };       // 60×2s = 2 min
-const CACHE_KEEPALIVE = { hls_list_size: 900, hls_time: 2 };   // 900×2s = 30 min
+// Configuración de caché según modo
+const CACHE_NORMAL = { hls_list_size: 30, hls_time: 4 };       // 30×4s = 2 min
+const CACHE_KEEPALIVE = { hls_list_size: 450, hls_time: 4 };   // 450×4s = 30 min
 
 function startFFmpegTranscoder(channelId, sourceUrl, isKeepAlive = false) {
   if (activeTranscoders.has(channelId)) {
@@ -1142,67 +909,62 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
   const copyManifestPath = path.join(channelDir, 'high', 'stream.m3u8');
   const cacheConfig = isKeepAlive ? CACHE_KEEPALIVE : CACHE_NORMAL;
 
-  // Create subdirectories for all ABR profiles + copy
-  [...ABR_PROFILES.map(p => p.name), 'copy'].forEach(q => {
+  // Create subdirectories for each quality
+  ['low', 'med', 'high'].forEach(q => {
     const qDir = path.join(channelDir, q);
     if (!fs.existsSync(qDir)) fs.mkdirSync(qDir, { recursive: true });
   });
 
   const cacheLabel = isKeepAlive ? `${cacheConfig.hls_list_size}seg ≈ ${Math.round(cacheConfig.hls_list_size * cacheConfig.hls_time / 60)}min` : '2min';
-  console.log(`🎬 [${channelId}] FFmpeg ABR YouTube (5 calidades: 240p/360p/480p/720p/original, caché: ${cacheLabel}): ${sourceUrl}`);
+  console.log(`🎬 [${channelId}] FFmpeg adaptativo (3 calidades, caché: ${cacheLabel}): ${sourceUrl}`);
 
-  // Build FFmpeg command: 4 transcoded outputs + 1 copy
+  // Build FFmpeg command for multi-output adaptive streaming
   const ffmpegArgs = [
-    '-user_agent', 'VLC/3.0.18 LibVLC/3.0.18',
-    '-analyzeduration', '1000000',
-    '-probesize', '1000000',
-    '-fflags', '+nobuffer',
-    '-flags', '+low_delay',
     '-reconnect', '1',
     '-reconnect_streamed', '1',
     '-reconnect_delay_max', '10',
     '-rw_timeout', '10000000',
     '-i', sourceUrl,
-  ];
 
-  // Add transcoded outputs (0-3: micro, low, med, high)
-  // Encoder params (-g, -keyint_min, -sc_threshold) are per-stream to avoid conflict with copy output
-  ABR_PROFILES.forEach((profile, i) => {
-    ffmpegArgs.push(
-      '-map', '0:v:0', '-map', '0:a:0?',
-      `-c:v:${i}`, 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency',
-      `-b:v:${i}`, profile.vBitrate,
-      `-maxrate:v:${i}`, profile.maxrate,
-      `-bufsize:v:${i}`, profile.bufsize,
-      `-g:v:${i}`, '48', `-keyint_min:v:${i}`, '48',
-      `-filter:v:${i}`, `scale=${profile.width}:${profile.height}`,
-      `-c:a:${i}`, 'aac', `-b:a:${i}`, profile.aBitrate, `-ac:${i}`, String(profile.audioChannels),
-    );
-  });
-
-  // Output 4: COPY video, but ALWAYS transcode audio to AAC for browser compatibility
-  // Many IPTV sources use AC3/EAC3 audio which browsers cannot decode
-  ffmpegArgs.push(
+    // --- Output 0: LOW (480p) ---
     '-map', '0:v:0', '-map', '0:a:0?',
-    '-c:v:4', 'copy',
-    '-c:a:4', 'aac', '-b:a:4', '128k',
-  );
+    '-c:v:0', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency',
+    '-b:v:0', QUALITY_PROFILES[0].vBitrate,
+    '-maxrate:v:0', QUALITY_PROFILES[0].maxrate,
+    '-bufsize:v:0', QUALITY_PROFILES[0].bufsize,
+    '-vf:0', `scale=${QUALITY_PROFILES[0].width}:${QUALITY_PROFILES[0].height}`,
+    '-c:a:0', 'aac', '-b:a:0', QUALITY_PROFILES[0].aBitrate,
+    '-g', '48', '-keyint_min', '48', '-sc_threshold', '0',
 
-  // Common settings
-  ffmpegArgs.push(
-    '-sc_threshold', '0',
+    // --- Output 1: MED (720p) ---
+    '-map', '0:v:0', '-map', '0:a:0?',
+    '-c:v:1', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency',
+    '-b:v:1', QUALITY_PROFILES[1].vBitrate,
+    '-maxrate:v:1', QUALITY_PROFILES[1].maxrate,
+    '-bufsize:v:1', QUALITY_PROFILES[1].bufsize,
+    '-vf:1', `scale=${QUALITY_PROFILES[1].width}:${QUALITY_PROFILES[1].height}`,
+    '-c:a:1', 'aac', '-b:a:1', QUALITY_PROFILES[1].aBitrate,
+    '-g', '48', '-keyint_min', '48',
+
+    // --- Output 2: HIGH (original, copy) ---
+    '-map', '0:v:0', '-map', '0:a:0?',
+    '-c:v:2', 'copy',
+    '-c:a:2', 'aac', '-b:a:2', '128k',
+
+    // --- HLS output ---
     '-f', 'hls',
     '-hls_time', String(cacheConfig.hls_time),
     '-hls_list_size', String(cacheConfig.hls_list_size),
     '-hls_flags', isKeepAlive ? 'append_list+delete_segments+temp_file' : 'append_list+temp_file',
     '-hls_segment_type', 'mpegts',
+    '-hls_segment_filename', path.join(channelDir, 'low', 'seg_%05d.ts'),
     '-hls_allow_cache', '1',
-    '-var_stream_map', ABR_PROFILES.map((p, i) => `v:${i},a:${i},name:${p.name}`).join(' ') + ' v:4,a:4,name:copy',
+    '-var_stream_map', 'v:0,a:0 v:1,a:1 v:2,a:2',
     '-master_pl_name', 'master.m3u8',
     '-hls_segment_filename', path.join(channelDir, '%v', 'seg_%05d.ts'),
     '-y',
     path.join(channelDir, '%v', 'stream.m3u8'),
-  );
+  ];
 
   // Try adaptive first, fallback to single-quality if FFmpeg doesn't support var_stream_map
   let ffmpeg;
@@ -1234,23 +996,9 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
   ffmpeg.stderr.on('data', (data) => {
     const msg = data.toString();
 
-    // Track input bandwidth from FFmpeg's reported bitrate
-    const bitrateMatch = msg.match(/bitrate=\s*([\d.]+)kbits\/s/);
-    if (bitrateMatch) {
-      const kbps = parseFloat(bitrateMatch[1]);
-      if (kbps > 0) {
-        // FFmpeg reports cumulative bitrate; use it as current input rate estimate
-        initBandwidthEntry(channelId);
-        const bw = channelBandwidth.get(channelId);
-        // Set bytesIn to match the reported bitrate for the current interval
-        const elapsed = (Date.now() - bw.lastReset) / 1000;
-        bw.bytesIn = (kbps * 1024 / 8) * elapsed; // Convert kbps to bytes for elapsed period
-      }
-    }
-
     // If var_stream_map fails, fallback to single quality optimized for slow internet
-    if (!fallbackTriggered && ((msg.includes('var_stream_map') && msg.includes('Error')) || 
-        msg.includes('Option var_stream_map not found'))) {
+    if (!fallbackTriggered && (msg.includes('var_stream_map') && msg.includes('Error')) || 
+        (msg.includes('Option var_stream_map not found'))) {
       fallbackTriggered = true;
       console.log(`⚠️ [${channelId}] var_stream_map no soportado, usando calidad única optimizada`);
       ffmpeg.kill('SIGTERM');
@@ -1260,7 +1008,7 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
 
     if (!entry.ready && (msg.includes('Opening') || msg.includes('muxing'))) {
       entry.ready = true;
-      console.log(`✅ [${channelId}] FFmpeg ABR YouTube listo (240p/360p/480p/720p/original)`);
+      console.log(`✅ [${channelId}] FFmpeg adaptativo listo (480p/720p/original)`);
     }
   });
 
@@ -1268,21 +1016,10 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
     console.error(`❌ [${channelId}] FFmpeg error:`, err.message);
   });
 
-  // Capture last stderr for debugging crashes
-  let lastStderr = '';
-  const origStderrHandler = ffmpeg.stderr.listeners('data').slice(-1)[0];
-  ffmpeg.stderr.on('data', (data) => {
-    lastStderr = data.toString().slice(-500); // Keep last 500 chars
-  });
-
   ffmpeg.on('close', (code) => {
-    const wasKeepAlive = entry.keepAlive;
-
-    // Log stderr on crash for debugging
-    if (code !== 0 && lastStderr) {
-      console.error(`❌ [${channelId}] FFmpeg stderr: ${lastStderr.trim().split('\n').slice(-3).join(' | ')}`);
-    }
     console.log(`⚠️ [${channelId}] FFmpeg terminó (code: ${code})`);
+
+    const wasKeepAlive = entry.keepAlive;
 
     // If it crashed immediately and no fallback, try single quality
     if (!fallbackTriggered && code !== 0 && entry.retryCount === 0) {
@@ -1292,63 +1029,34 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
       const fallbackEntry = startSingleQualityTranscoder(channelId, sourceUrl, channelDir, wasKeepAlive);
       if (fallbackEntry) {
         fallbackEntry.clients = entry.clients;
-        fallbackEntry.keepAlive = wasKeepAlive;
-        fallbackEntry.retryCount = entry.retryCount; // Preserve count
+        fallbackEntry.keepAlive = wasKeepAlive; // PRESERVAR keepAlive
       }
       return;
     }
 
     activeTranscoders.delete(channelId);
-
-    // Keep-alive: limit to 10 consecutive failures, then cooldown 5 min
-    const KEEPALIVE_MAX_RETRIES = 10;
-    const KEEPALIVE_COOLDOWN = 5 * 60 * 1000; // 5 minutes
-
-    if (wasKeepAlive) {
+    // Keep-alive channels ALWAYS retry, sin límite de reintentos
+    const shouldRetry = wasKeepAlive || (entry.clients > 0 && entry.retryCount < entry.maxRetries);
+    if (shouldRetry) {
       entry.retryCount++;
-      if (entry.retryCount >= KEEPALIVE_MAX_RETRIES) {
-        console.error(`🛑 [${channelId}] Keep-alive pausado tras ${KEEPALIVE_MAX_RETRIES} fallos consecutivos. Reintentando en 5 min...`);
-        setTimeout(() => {
-          console.log(`🔄 [${channelId}] Keep-alive: reintentando tras cooldown de 5 min`);
-          cleanChannelDir(channelId);
-          startFFmpegTranscoder(channelId, sourceUrl, true);
-          const newEntry = activeTranscoders.get(channelId);
-          if (newEntry) {
-            newEntry.keepAlive = true;
-            newEntry.retryCount = 0; // Reset after cooldown
-          }
-        }, KEEPALIVE_COOLDOWN);
-        return;
-      }
-      const delay = Math.min(3000 * entry.retryCount, 30000);
-      console.log(`🔄 [${channelId}] Reiniciando en ${delay}ms (intento ${entry.retryCount}/${KEEPALIVE_MAX_RETRIES}) [KEEP-ALIVE]`);
+      const delay = wasKeepAlive 
+        ? Math.min(3000 * entry.retryCount, 30000) // keep-alive: más paciencia
+        : Math.min(2000 * entry.retryCount, 15000);
+      const maxLabel = wasKeepAlive ? '∞' : entry.maxRetries;
+      console.log(`🔄 [${channelId}] Reiniciando en ${delay}ms (intento ${entry.retryCount}/${maxLabel})${wasKeepAlive ? ' [KEEP-ALIVE]' : ''}`);
       setTimeout(() => {
         cleanChannelDir(channelId);
-        startFFmpegTranscoder(channelId, sourceUrl, true);
+        startFFmpegTranscoder(channelId, sourceUrl, wasKeepAlive);
         const newEntry = activeTranscoders.get(channelId);
         if (newEntry) {
           newEntry.clients = entry.clients;
-          newEntry.keepAlive = true;
-          newEntry.retryCount = entry.retryCount; // Preserve count!
+          newEntry.keepAlive = wasKeepAlive; // PRESERVAR keepAlive
+          // Reset retry count si era keep-alive (reintentos infinitos)
+          if (wasKeepAlive) newEntry.retryCount = 0;
         }
       }, delay);
     } else {
-      const shouldRetry = entry.clients > 0 && entry.retryCount < entry.maxRetries;
-      if (shouldRetry) {
-        entry.retryCount++;
-        const delay = Math.min(2000 * entry.retryCount, 15000);
-        console.log(`🔄 [${channelId}] Reiniciando en ${delay}ms (intento ${entry.retryCount}/${entry.maxRetries})`);
-        setTimeout(() => {
-          cleanChannelDir(channelId);
-          startFFmpegTranscoder(channelId, sourceUrl, false);
-          const newEntry = activeTranscoders.get(channelId);
-          if (newEntry) {
-            newEntry.clients = entry.clients;
-          }
-        }, delay);
-      } else {
-        cleanChannelDir(channelId);
-      }
+      cleanChannelDir(channelId);
     }
   });
 
@@ -1364,11 +1072,6 @@ function startSingleQualityTranscoder(channelId, sourceUrl, channelDir, isKeepAl
   console.log(`🎬 [${channelId}] FFmpeg calidad única (caché: ${cacheLabel}): ${sourceUrl}`);
 
   const ffmpeg = spawn('ffmpeg', [
-    '-user_agent', 'VLC/3.0.18 LibVLC/3.0.18',
-    '-analyzeduration', '1000000',
-    '-probesize', '1000000',
-    '-fflags', '+nobuffer',
-    '-flags', '+low_delay',
     '-reconnect', '1',
     '-reconnect_streamed', '1',
     '-reconnect_delay_max', '10',
@@ -1378,7 +1081,7 @@ function startSingleQualityTranscoder(channelId, sourceUrl, channelDir, isKeepAl
     '-b:v', '1200k', '-maxrate', '1400k', '-bufsize', '2000k',
     '-vf', 'scale=1280:720',
     '-c:a', 'aac', '-b:a', '96k',
-    '-g', '24', '-keyint_min', '24', '-sc_threshold', '0',
+    '-g', '48', '-keyint_min', '48', '-sc_threshold', '0',
     '-f', 'hls',
     '-hls_time', String(cacheConfig.hls_time),
     '-hls_list_size', String(cacheConfig.hls_list_size),
@@ -1408,17 +1111,6 @@ function startSingleQualityTranscoder(channelId, sourceUrl, channelDir, isKeepAl
   // Monitorear salida de FFmpeg
   ffmpeg.stderr.on('data', (data) => {
     const msg = data.toString();
-    // Track input bandwidth from FFmpeg's reported bitrate
-    const bitrateMatch = msg.match(/bitrate=\s*([\d.]+)kbits\/s/);
-    if (bitrateMatch) {
-      const kbps = parseFloat(bitrateMatch[1]);
-      if (kbps > 0) {
-        initBandwidthEntry(channelId);
-        const bw = channelBandwidth.get(channelId);
-        const elapsed = (Date.now() - bw.lastReset) / 1000;
-        bw.bytesIn = (kbps * 1024 / 8) * elapsed;
-      }
-    }
     // Detectar cuando el primer segmento está listo
     if (!entry.ready && (msg.includes('Opening') || msg.includes('muxing'))) {
       entry.ready = true;
@@ -1426,63 +1118,36 @@ function startSingleQualityTranscoder(channelId, sourceUrl, channelDir, isKeepAl
     }
   });
 
-  // Capture last stderr for crash debugging
-  let lastStderr = '';
-  ffmpeg.stderr.on('data', (data) => {
-    lastStderr = data.toString().slice(-500);
-  });
-
   ffmpeg.on('error', (err) => {
     console.error(`❌ [${channelId}] FFmpeg error:`, err.message);
   });
 
   ffmpeg.on('close', (code) => {
-    const wasKeepAlive = entry.keepAlive;
-    if (code !== 0 && lastStderr) {
-      console.error(`❌ [${channelId}] FFmpeg stderr: ${lastStderr.trim().split('\n').slice(-3).join(' | ')}`);
-    }
     console.log(`⚠️ [${channelId}] FFmpeg terminó (code: ${code})`);
+    const wasKeepAlive = entry.keepAlive;
     activeTranscoders.delete(channelId);
 
-    const KEEPALIVE_MAX_RETRIES = 10;
-    const KEEPALIVE_COOLDOWN = 5 * 60 * 1000;
-
-    if (wasKeepAlive) {
+    // Keep-alive channels ALWAYS retry
+    const shouldRetry = wasKeepAlive || (entry.clients > 0 && entry.retryCount < entry.maxRetries);
+    if (shouldRetry) {
       entry.retryCount++;
-      if (entry.retryCount >= KEEPALIVE_MAX_RETRIES) {
-        console.error(`🛑 [${channelId}] Keep-alive pausado tras ${KEEPALIVE_MAX_RETRIES} fallos consecutivos. Reintentando en 5 min...`);
-        setTimeout(() => {
-          console.log(`🔄 [${channelId}] Keep-alive: reintentando tras cooldown de 5 min`);
-          cleanChannelDir(channelId);
-          startFFmpegTranscoder(channelId, sourceUrl, true);
-          const newEntry = activeTranscoders.get(channelId);
-          if (newEntry) { newEntry.keepAlive = true; newEntry.retryCount = 0; }
-        }, KEEPALIVE_COOLDOWN);
-        return;
-      }
-      const delay = Math.min(3000 * entry.retryCount, 30000);
-      console.log(`🔄 [${channelId}] Reiniciando en ${delay}ms (intento ${entry.retryCount}/${KEEPALIVE_MAX_RETRIES}) [KEEP-ALIVE]`);
+      const delay = wasKeepAlive 
+        ? Math.min(3000 * entry.retryCount, 30000)
+        : Math.min(2000 * entry.retryCount, 15000);
+      const maxLabel = wasKeepAlive ? '∞' : entry.maxRetries;
+      console.log(`🔄 [${channelId}] Reiniciando FFmpeg en ${delay}ms (intento ${entry.retryCount}/${maxLabel})${wasKeepAlive ? ' [KEEP-ALIVE]' : ''}`);
       setTimeout(() => {
         cleanChannelDir(channelId);
-        startFFmpegTranscoder(channelId, sourceUrl, true);
+        startFFmpegTranscoder(channelId, sourceUrl, wasKeepAlive);
         const newEntry = activeTranscoders.get(channelId);
-        if (newEntry) { newEntry.clients = entry.clients; newEntry.keepAlive = true; newEntry.retryCount = entry.retryCount; }
+        if (newEntry) {
+          newEntry.clients = entry.clients;
+          newEntry.keepAlive = wasKeepAlive;
+          if (wasKeepAlive) newEntry.retryCount = 0;
+        }
       }, delay);
     } else {
-      const shouldRetry = entry.clients > 0 && entry.retryCount < entry.maxRetries;
-      if (shouldRetry) {
-        entry.retryCount++;
-        const delay = Math.min(2000 * entry.retryCount, 15000);
-        console.log(`🔄 [${channelId}] Reiniciando FFmpeg en ${delay}ms (intento ${entry.retryCount}/${entry.maxRetries})`);
-        setTimeout(() => {
-          cleanChannelDir(channelId);
-          startFFmpegTranscoder(channelId, sourceUrl, false);
-          const newEntry = activeTranscoders.get(channelId);
-          if (newEntry) { newEntry.clients = entry.clients; }
-        }, delay);
-      } else {
-        cleanChannelDir(channelId);
-      }
+      cleanChannelDir(channelId);
     }
   });
 
@@ -1499,23 +1164,14 @@ function releaseTranscoder(channelId) {
     // Keep alive channels NEVER stop
     if (entry.keepAlive) {
       entry.clients = 0; // Floor at 0
-      console.log(`💚 [${channelId}] Keep-alive activo, permanece encendido`);
+      console.log(`💚 [${channelId}] Keep-alive activo, FFmpeg permanece encendido`);
       return;
-    }
-    // Stop HLS polling if active
-    if (entry.pollTimer) {
-      clearInterval(entry.pollTimer);
-      entry.pollTimer = null;
     }
     // Esperar 30 segundos antes de matar, por si alguien vuelve
     setTimeout(() => {
       const current = activeTranscoders.get(channelId);
       if (current && current.clients <= 0 && !current.keepAlive) {
-        console.log(`🔴 [${channelId}] Sin clientes, deteniendo`);
-        if (current.pollTimer) {
-          clearInterval(current.pollTimer);
-          current.pollTimer = null;
-        }
+        console.log(`🔴 [${channelId}] Sin clientes, deteniendo FFmpeg`);
         if ((current.type === 'ffmpeg' || current.type === 'ffmpeg-adaptive') && current.ffmpeg) {
           current.ffmpeg.kill('SIGTERM');
         }
@@ -1527,91 +1183,9 @@ function releaseTranscoder(channelId) {
 }
 
 // =============================================
-// BUFFER MODE: Grabación circular 5 min (segmentos de 10s)
-// =============================================
-function startBufferTranscoder(channelId, sourceUrl) {
-  if (activeTranscoders.has(channelId)) {
-    const existing = activeTranscoders.get(channelId);
-    existing.clients++;
-    existing.lastAccess = Date.now();
-    return existing;
-  }
-
-  const channelDir = path.join(HLS_DIR, channelId);
-  if (!fs.existsSync(channelDir)) fs.mkdirSync(channelDir, { recursive: true });
-
-  const manifestPath = path.join(channelDir, 'stream.m3u8');
-  // 5 min buffer: 30 segments × 10s = 300s
-  const ffmpegArgs = [
-    '-user_agent', 'VLC/3.0.18 LibVLC/3.0.18',
-    '-analyzeduration', '1000000', '-probesize', '1000000',
-    '-fflags', '+nobuffer', '-flags', '+low_delay',
-    '-reconnect', '1', '-reconnect_streamed', '1',
-    '-reconnect_delay_max', '5', '-timeout', '5000000',
-    '-i', sourceUrl,
-    '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k',
-    '-f', 'hls',
-    '-hls_time', '10',
-    '-hls_list_size', '30',
-    '-hls_flags', 'delete_segments+append_list',
-    '-hls_segment_filename', path.join(channelDir, 'seg_%05d.ts'),
-    '-y', manifestPath
-  ];
-
-  console.log(`📀 [${channelId}] Buffer mode: grabación circular 5min (30×10s): ${sourceUrl}`);
-  const proc = spawn('/usr/bin/ffmpeg', ffmpegArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
-
-  const entry = {
-    type: 'ffmpeg-buffer',
-    ffmpeg: proc,
-    channelDir,
-    manifestPath,
-    sourceUrl,
-    clients: 1,
-    lastAccess: Date.now(),
-    ready: false,
-    keepAlive: false,
-    restartCount: 0,
-  };
-  activeTranscoders.set(channelId, entry);
-
-  proc.stderr.on('data', (data) => {
-    const msg = data.toString();
-    if (msg.includes('Opening') || msg.includes('muxing')) {
-      entry.ready = true;
-    }
-  });
-
-  proc.on('exit', (code) => {
-    console.log(`📀 [${channelId}] Buffer FFmpeg salió con código ${code}`);
-    activeTranscoders.delete(channelId);
-    // Auto-restart if there are still clients or fewer than 10 consecutive failures
-    if (entry.clients > 0 && entry.restartCount < 10) {
-      const delay = Math.min(2000 * (entry.restartCount + 1), 15000);
-      console.log(`🔄 [${channelId}] Buffer auto-restart en ${delay}ms (intento ${entry.restartCount + 1})`);
-      setTimeout(() => {
-        if (!activeTranscoders.has(channelId)) {
-          const newEntry = startBufferTranscoder(channelId, sourceUrl);
-          newEntry.clients = entry.clients;
-          newEntry.restartCount = entry.restartCount + 1;
-        }
-      }, delay);
-    }
-  });
-
-  return entry;
-}
-
-// =============================================
 // KEEP ALIVE: Iniciar canal persistente
 // =============================================
 function startKeepAliveChannel(channelId, sourceUrl) {
-  // Validar URL antes de iniciar
-  if (!sourceUrl || typeof sourceUrl !== 'string' || !sourceUrl.startsWith('http')) {
-    console.warn(`⚠️ [${channelId}] Keep-alive omitido: URL inválida → "${sourceUrl}"`);
-    return;
-  }
-
   const isHLS = /\.m3u8?(\?|$)/i.test(sourceUrl);
   const isYouTube = /youtube\.com|youtu\.be/.test(sourceUrl);
   
@@ -1623,8 +1197,6 @@ function startKeepAliveChannel(channelId, sourceUrl) {
       entry.keepAlive = true;
       entry.clients = 0;
       console.log(`💚 [${channelId}] Keep-alive HLS proxy iniciado`);
-      // Start active polling to pre-fetch segments continuously
-      startHLSKeepAlivePolling(channelId, sourceUrl);
     }
   } else {
     const entry = startFFmpegTranscoder(channelId, sourceUrl, true); // isKeepAlive = true → 30 min caché
@@ -1637,9 +1209,6 @@ function startKeepAliveChannel(channelId, sourceUrl) {
 }
 
 // Iniciar todos los canales keep_alive al arrancar el servidor
-// Limita a MAX_CONCURRENT_FFMPEG procesos simultáneos para no saturar
-const MAX_CONCURRENT_FFMPEG = 3;
-
 async function initKeepAliveChannels() {
   try {
     const { rows } = await pool.query(
@@ -1649,19 +1218,11 @@ async function initKeepAliveChannels() {
       console.log('📡 No hay canales keep-alive configurados');
       return;
     }
-    console.log(`\n💚 Iniciando ${rows.length} canal(es) keep-alive (máx ${MAX_CONCURRENT_FFMPEG} simultáneos)...`);
-    
-    // Iniciar en lotes para no saturar CPU/RAM
-    for (let i = 0; i < rows.length; i += MAX_CONCURRENT_FFMPEG) {
-      const batch = rows.slice(i, i + MAX_CONCURRENT_FFMPEG);
-      for (const ch of batch) {
-        startKeepAliveChannel(ch.id, ch.url);
-      }
-      // Esperar 5s entre lotes para que FFmpeg se estabilice
-      if (i + MAX_CONCURRENT_FFMPEG < rows.length) {
-        console.log(`   ⏳ Esperando 5s antes del siguiente lote...`);
-        await new Promise(r => setTimeout(r, 5000));
-      }
+    console.log(`\n💚 Iniciando ${rows.length} canal(es) keep-alive...`);
+    for (const ch of rows) {
+      startKeepAliveChannel(ch.id, ch.url);
+      // Stagger starts to avoid overwhelming the server
+      await new Promise(r => setTimeout(r, 2000));
     }
     console.log(`✅ ${rows.length} canal(es) keep-alive iniciados\n`);
   } catch (err) {
@@ -1696,46 +1257,28 @@ app.get('/api/channels/cache-status', authAdmin, async (req, res) => {
       const entry = activeTranscoders.get(ch.id);
       let cacheSize = 0;
       let segmentCount = 0;
-      if (entry) {
-        if (entry.type === 'hls-proxy') {
-          // Count in-memory cached segments for HLS proxy channels
-          if (entry.cachedSegments) {
-            entry.cachedSegments.forEach(url => {
-              const seg = segmentCache.get(url);
-              if (seg) {
-                segmentCount++;
-                cacheSize += seg.data.length;
-              } else {
-                entry.cachedSegments.delete(url); // Clean stale refs
+      if (entry && entry.channelDir && fs.existsSync(entry.channelDir)) {
+        try {
+          const countFiles = (dir) => {
+            let count = 0, size = 0;
+            fs.readdirSync(dir).forEach(f => {
+              const fp = path.join(dir, f);
+              const stat = fs.statSync(fp);
+              if (stat.isDirectory()) {
+                const sub = countFiles(fp);
+                count += sub.count;
+                size += sub.size;
+              } else if (f.endsWith('.ts')) {
+                count++;
+                size += stat.size;
               }
             });
-          }
-          // Also count manifest cache
-          const manifestKey = `m3u8_${ch.id}`;
-          if (streamCache.has(manifestKey)) segmentCount++;
-        } else if (entry.channelDir && fs.existsSync(entry.channelDir)) {
-          try {
-            const countFiles = (dir) => {
-              let count = 0, size = 0;
-              fs.readdirSync(dir).forEach(f => {
-                const fp = path.join(dir, f);
-                const stat = fs.statSync(fp);
-                if (stat.isDirectory()) {
-                  const sub = countFiles(fp);
-                  count += sub.count;
-                  size += sub.size;
-                } else if (f.endsWith('.ts')) {
-                  count++;
-                  size += stat.size;
-                }
-              });
-              return { count, size };
-            };
-            const result = countFiles(entry.channelDir);
-            segmentCount = result.count;
-            cacheSize = result.size;
-          } catch {}
-        }
+            return { count, size };
+          };
+          const result = countFiles(entry.channelDir);
+          segmentCount = result.count;
+          cacheSize = result.size;
+        } catch {}
       }
       return {
         id: ch.id,
@@ -1794,264 +1337,47 @@ function startHLSProxy(channelId, sourceUrl) {
   const entry = {
     clients: 1,
     lastAccess: Date.now(),
-    startTime: Date.now(),
     type: 'hls-proxy',
     sourceUrl,
     ready: true,
-    cachedSegments: new Set(), // Track cached segment URLs for this channel
-    pollTimer: null, // Timer for keep-alive polling
   };
   activeTranscoders.set(channelId, entry);
   console.log(`📡 [${channelId}] Proxy HLS iniciado: ${sourceUrl}`);
   return entry;
 }
 
-// Active polling for keep-alive HLS proxy channels
-// Fetches manifest DIRECTLY from origin (bypassing cache) to always see new segments
-function startHLSKeepAlivePolling(channelId, sourceUrl) {
-  const entry = activeTranscoders.get(channelId);
-  if (!entry || entry.type !== 'hls-proxy' || entry.pollTimer) return;
+// Obtener manifiesto m3u8 con caché y reescritura de URLs
+const getCachedM3U8 = async (channelId, targetUrl) => {
+  const cacheKey = `m3u8_${channelId}`;
+  const cached = streamCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < 5000) return cached.data;
 
-  const seenSegments = new Set();
-
-  const fetchManifestDirect = () => {
-    return new Promise((resolve, reject) => {
-      const parsedUrl = new URL(sourceUrl);
-      const httpClient = parsedUrl.protocol === 'https:' ? https : http;
-      const req = httpClient.request(sourceUrl, {
-        method: 'GET',
-        headers: { 'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18' },
-      }, (res) => {
-        let body = '';
-        res.on('data', chunk => { body += chunk.toString(); });
-        res.on('end', () => resolve(body));
-        res.on('error', reject);
-      });
-      req.on('error', reject);
-      req.setTimeout(5000, () => { req.destroy(); reject(new Error('Timeout 5s')); });
-      req.end();
-    });
-  };
-
-  const poll = async () => {
-    try {
-      // Fetch manifest DIRECTLY from origin — never from cache
-      let rawManifest = await fetchManifestDirect();
-      let baseUrl = sourceUrl.substring(0, sourceUrl.lastIndexOf('/') + 1);
-
-      // If it's a master playlist, follow through to the media playlist
-      if (rawManifest.includes('#EXT-X-STREAM-INF')) {
-        const lines = rawManifest.split('\n');
-        let subUrl = null;
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i].trim();
-          if (line.startsWith('#EXT-X-STREAM-INF')) {
-            // Get next non-comment line as the sub-playlist URL
-            for (let j = i + 1; j < lines.length; j++) {
-              const urlLine = lines[j].trim();
-              if (urlLine && !urlLine.startsWith('#')) {
-                subUrl = urlLine.startsWith('http') ? urlLine : baseUrl + urlLine;
-                break;
-              }
-            }
-            break; // Use first variant
-          }
-        }
-        if (subUrl) {
-          // Fetch the media playlist
-          const subManifest = await new Promise((resolve, reject) => {
-            const parsedUrl = new URL(subUrl);
-            const httpClient = parsedUrl.protocol === 'https:' ? https : http;
-            const req = httpClient.request(subUrl, {
-              method: 'GET',
-        headers: { 'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18' },
-            }, (res) => {
-              let body = '';
-              res.on('data', chunk => { body += chunk.toString(); });
-              res.on('end', () => resolve(body));
-              res.on('error', reject);
-            });
-            req.on('error', reject);
-            req.setTimeout(5000, () => { req.destroy(); reject(new Error('Timeout 5s')); });
-            req.end();
-          });
-          rawManifest = subManifest;
-          baseUrl = subUrl.substring(0, subUrl.lastIndexOf('/') + 1);
-        }
-      }
-
-      // Extract segment URLs from media manifest (.ts, .m3u, .m3u8, .aac, .mp4, .fmp4, or any non-comment line)
-      const lines = rawManifest.split('\n');
-      const segmentUrls = [];
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (trimmed && !trimmed.startsWith('#')) {
-          // Accept any non-comment, non-empty line as a segment (covers .ts, .m3u8 sub-segments, .aac, etc.)
-          const fullUrl = trimmed.startsWith('http') ? trimmed : baseUrl + trimmed;
-          segmentUrls.push(fullUrl);
-        }
-      }
-
-      // Pre-fetch last 4 segments to keep cache warm
-      const newSegments = segmentUrls.slice(-4).filter(u => !seenSegments.has(u));
-      if (newSegments.length > 0) {
-        console.log(`📥 [${channelId}] Polling: ${segmentUrls.length} segs en manifest, ${newSegments.length} nuevos`);
-      }
-      for (const segUrl of newSegments) {
-        try {
-          const segData = await fetchSegment(segUrl);
-          seenSegments.add(segUrl);
-          if (segData && segData.length) {
-            trackInputBandwidth(channelId, segData.length);
-            console.log(`📊 [${channelId}] Segment ${segData.length} bytes → trackInputBandwidth`);
-          }
-        } catch (segErr) {
-          console.warn(`⚠️ [${channelId}] Segment fetch failed: ${segErr.message}`);
-        }
-      }
-
-      // Keep seenSegments from growing forever
-      if (seenSegments.size > 200) {
-        const iter = seenSegments.values();
-        for (let i = 0; i < 100; i++) {
-          const val = iter.next().value;
-          if (val) seenSegments.delete(val);
-        }
-      }
-    } catch (err) {
-      // Only log every ~30s to avoid spam
-      if (!entry._lastPollError || Date.now() - entry._lastPollError > 30000) {
-        console.error(`⚠️ [${channelId}] Keep-alive HLS poll error:`, err.message);
-        entry._lastPollError = Date.now();
-      }
-    }
-  };
-
-  // Poll immediately, then every 2.5 seconds (slightly offset from 2s segment duration)
-  poll();
-  entry.pollTimer = setInterval(poll, 2500);
-  console.log(`💚 [${channelId}] Keep-alive HLS polling activo (cada 2.5s, fetch directo al origen)`);
-}
-
-// Fetch raw m3u8 content from a URL
-const fetchM3U8Raw = (targetUrl) => {
   return new Promise((resolve, reject) => {
     const parsedUrl = new URL(targetUrl);
     const httpClient = parsedUrl.protocol === 'https:' ? https : http;
     const req = httpClient.request(targetUrl, {
       method: 'GET',
-      headers: { 'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18' },
+      headers: { 'User-Agent': 'StreamBox/1.0' },
     }, (res) => {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return fetchM3U8Raw(res.headers.location).then(resolve).catch(reject);
-      }
       let body = '';
       res.on('data', chunk => { body += chunk.toString(); });
-      res.on('end', () => resolve({ body, baseUrl: targetUrl.substring(0, targetUrl.lastIndexOf('/') + 1), statusCode: res.statusCode }));
+      res.on('end', () => {
+        const baseUrl = targetUrl.substring(0, targetUrl.lastIndexOf('/') + 1);
+        const rewritten = body.replace(/^(?!#)(.+\.ts.*)$/gm, (match) => {
+          const fullUrl = match.startsWith('http') ? match : baseUrl + match;
+          return `/api/hls-segment/${channelId}?url=${encodeURIComponent(fullUrl)}`;
+        }).replace(/^(?!#)(.+\.m3u8.*)$/gm, (match) => {
+          const fullUrl = match.startsWith('http') ? match : baseUrl + match;
+          return `/api/hls-manifest/${channelId}?url=${encodeURIComponent(fullUrl)}`;
+        });
+        streamCache.set(cacheKey, { data: rewritten, timestamp: Date.now() });
+        resolve(rewritten);
+      });
     });
     req.on('error', reject);
-    req.setTimeout(5000, () => { req.destroy(); reject(new Error('Timeout 5s')); });
+    req.setTimeout(15000, () => { req.destroy(); reject(new Error('Timeout')); });
     req.end();
   });
-};
-
-// Obtener manifiesto m3u8 con caché y reescritura de URLs
-// SIEMPRE aplana master playlists → devuelve media playlist directamente
-const getCachedM3U8 = async (channelId, targetUrl) => {
-  const cacheKey = `m3u8_${channelId}`;
-  const cached = streamCache.get(cacheKey);
-  if (cached && Date.now() - cached.timestamp < 2500) return cached.data;
-
-  let { body, baseUrl, statusCode } = await fetchM3U8Raw(targetUrl);
-  
-  if (statusCode >= 400) {
-    throw new Error(`Origin returned ${statusCode}`);
-  }
-
-  // Detect master playlist and flatten it (follow first variant)
-  const isMaster = body.includes('#EXT-X-STREAM-INF');
-  console.log(`📋 [${channelId}] Manifest type: ${isMaster ? 'MASTER' : 'MEDIA'} (${body.split('\n').length} lines)`);
-
-  if (isMaster) {
-    // Extract ALL variants, prefer H.264 (avc1) over H.265 (hev1/hvc1)
-    const lines = body.split('\n');
-    const variants = [];
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].trim();
-      if (line.startsWith('#EXT-X-STREAM-INF')) {
-        const bwMatch = line.match(/BANDWIDTH=(\d+)/);
-        const bw = bwMatch ? parseInt(bwMatch[1]) : 0;
-        const codecsMatch = line.match(/CODECS="([^"]+)"/);
-        const codecs = codecsMatch ? codecsMatch[1].toLowerCase() : '';
-        const resMatch = line.match(/RESOLUTION=(\d+)x(\d+)/);
-        const height = resMatch ? parseInt(resMatch[2]) : 0;
-        // Only mark as H.264 if CODECS explicitly contains avc1
-        const isH264 = codecs ? codecs.includes('avc1') : false;
-        const isHEVC = codecs.includes('hev1') || codecs.includes('hvc1') || codecs.includes('hevc');
-        const isUnknown = !codecs;
-        for (let j = i + 1; j < lines.length; j++) {
-          const urlLine = lines[j].trim();
-          if (urlLine && !urlLine.startsWith('#')) {
-            variants.push({
-              url: urlLine.startsWith('http') ? urlLine : baseUrl + urlLine,
-              bandwidth: bw,
-              height,
-              isH264,
-              isHEVC,
-              isUnknown,
-              codecs,
-            });
-            break;
-          }
-        }
-      }
-    }
-
-    console.log(`📋 [${channelId}] Variantes encontradas: ${variants.map(v => `${v.height}p ${v.isH264 ? 'H264' : v.isHEVC ? 'HEVC' : 'unknown'} ${v.bandwidth}bps ${v.codecs || 'no-codecs'}`).join(' | ')}`);
-
-    // Priority: explicit H.264 > unknown codec (pick LOWEST resolution = safer) > HEVC last
-    variants.sort((a, b) => {
-      // Explicit H.264 always first
-      if (a.isH264 && !b.isH264) return -1;
-      if (!a.isH264 && b.isH264) return 1;
-      // HEVC always last
-      if (a.isHEVC && !b.isHEVC) return 1;
-      if (!a.isHEVC && b.isHEVC) return -1;
-      // Among same codec type:
-      // - For H.264: prefer highest bandwidth
-      // - For unknown: prefer LOWEST resolution (more likely H.264 compatible)
-      if (a.isUnknown && b.isUnknown) {
-        // Pick lowest resolution for unknown codecs (safer for browser compatibility)
-        if (a.height && b.height) return a.height - b.height;
-        return a.bandwidth - b.bandwidth;
-      }
-      return b.bandwidth - a.bandwidth;
-    });
-
-    const best = variants[0];
-    if (best) {
-      console.log(`🔗 [${channelId}] Aplanando master → ${best.isH264 ? 'H.264' : best.isHEVC ? 'HEVC' : 'unknown'} ${best.height}p ${best.bandwidth}bps ${best.codecs ? `(${best.codecs})` : '(no codecs)'}: ${best.url.substring(0, 80)}...`);
-      const sub = await fetchM3U8Raw(best.url);
-      if (sub.statusCode >= 400) {
-        console.error(`❌ [${channelId}] Sub-manifest returned ${sub.statusCode}, falling back to master rewrite`);
-      } else {
-        body = sub.body;
-        baseUrl = sub.baseUrl;
-      }
-    } else {
-      console.warn(`⚠️ [${channelId}] Master playlist pero no se encontró variante`);
-    }
-  }
-
-  // Rewrite .ts segment URLs to go through our proxy
-  const rewritten = body.replace(/^(?!#)(.+\.ts.*)$/gm, (match) => {
-    const trimmed = match.trim();
-    const fullUrl = trimmed.startsWith('http') ? trimmed : baseUrl + trimmed;
-    return `/api/hls-segment/${channelId}?url=${encodeURIComponent(fullUrl)}`;
-  });
-
-  streamCache.set(cacheKey, { data: rewritten, timestamp: Date.now() });
-  return rewritten;
 };
 
 // Descargar segmento con caché compartido
@@ -2065,30 +1391,20 @@ const fetchSegment = (segmentUrl) => {
     const httpClient = parsedUrl.protocol === 'https:' ? https : http;
     const req = httpClient.request(segmentUrl, {
       method: 'GET',
-      headers: { 'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18' },
+      headers: { 'User-Agent': 'StreamBox/1.0' },
     }, (res) => {
       const chunks = [];
       res.on('data', chunk => chunks.push(chunk));
       res.on('end', () => {
-      const buffer = Buffer.concat(chunks);
-                segmentCache.set(segmentUrl, { data: buffer, timestamp: Date.now() });
-                // Track input bandwidth for ALL proxy channels that match this segment's origin
-                activeTranscoders.forEach((entry, chId) => {
-                  if (entry.type === 'hls-proxy') {
-                    const baseOrigin = entry.sourceUrl.substring(0, entry.sourceUrl.lastIndexOf('/'));
-                    if (segmentUrl.startsWith(baseOrigin) || segmentUrl.includes(baseOrigin.replace(/https?:\/\//, ''))) {
-                      trackInputBandwidth(chId, buffer.length);
-                      if (entry.cachedSegments) entry.cachedSegments.add(segmentUrl);
-                    }
-                  }
-                });
-                pendingSegments.delete(segmentUrl);
+        const buffer = Buffer.concat(chunks);
+        segmentCache.set(segmentUrl, { data: buffer, timestamp: Date.now() });
+        pendingSegments.delete(segmentUrl);
         resolve(buffer);
       });
       res.on('error', (err) => { pendingSegments.delete(segmentUrl); reject(err); });
     });
     req.on('error', (err) => { pendingSegments.delete(segmentUrl); reject(err); });
-    req.setTimeout(5000, () => { req.destroy(); pendingSegments.delete(segmentUrl); reject(new Error('Timeout 5s')); });
+    req.setTimeout(15000, () => { req.destroy(); pendingSegments.delete(segmentUrl); reject(new Error('Timeout')); });
     req.end();
   });
   pendingSegments.set(segmentUrl, promise);
@@ -2122,289 +1438,71 @@ scheduleCacheCleanup();
 // =============================================
 // ENDPOINT PRINCIPAL: /api/restream/:channelId
 // Sirve HLS para TODOS los tipos de canal
-// Soporta /api/restream/:channelId.ts para forzar MPEG-TS output
 // =============================================
-app.get('/api/restream/:channelId.ts', async (req, res) => {
-  // MPEG-TS format: proxy raw TS stream via FFmpeg -f mpegts
-  try {
-    const channelId = req.params.channelId;
-    const { rows: channels } = await pool.query(
-      'SELECT url FROM channels WHERE id = $1 AND is_active = true',
-      [channelId]
-    );
-    if (channels.length === 0) return res.status(404).json({ error: 'Canal no encontrado' });
-
-    const targetUrl = channels[0].url;
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Content-Type', 'video/mp2t');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-
-    const args = [
-      '-user_agent', 'VLC/3.0.18 LibVLC/3.0.18',
-      '-analyzeduration', '1000000', '-probesize', '1000000',
-      '-fflags', '+nobuffer', '-flags', '+low_delay',
-      '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
-      '-i', targetUrl,
-      '-c:v', 'copy',
-      '-c:a', 'aac', '-b:a', '128k',
-      '-f', 'mpegts',
-      '-'
-    ];
-
-    const ffmpeg = require('child_process').spawn('/usr/bin/ffmpeg', args);
-    ffmpeg.stdout.pipe(res);
-    ffmpeg.stderr.on('data', () => {}); // suppress logs
-
-    req.on('close', () => { try { ffmpeg.kill('SIGKILL'); } catch(e) {} });
-    res.on('close', () => { try { ffmpeg.kill('SIGKILL'); } catch(e) {} });
-
-    // 5s timeout if no data
-    const timeout = setTimeout(() => {
-      try { ffmpeg.kill('SIGKILL'); } catch(e) {}
-      if (!res.headersSent) res.status(504).json({ error: 'Timeout: canal no responde' });
-    }, 5000);
-    ffmpeg.stdout.once('data', () => clearTimeout(timeout));
-
-  } catch (err) {
-    console.error('MPEG-TS restream error:', err);
-    if (!res.headersSent) res.status(500).json({ error: 'Error de restream TS' });
-  }
-});
-
 app.get('/api/restream/:channelId', async (req, res) => {
   try {
     const { rows: channels } = await pool.query(
-      'SELECT url, stream_mode FROM channels WHERE id = $1 AND is_active = true',
+      'SELECT url FROM channels WHERE id = $1 AND is_active = true',
       [req.params.channelId]
     );
     if (channels.length === 0) return res.status(404).json({ error: 'Canal no encontrado' });
 
     const targetUrl = channels[0].url;
-    const streamMode = channels[0].stream_mode || 'direct';
     const channelId = req.params.channelId;
     const isHLS = /\.m3u8?(\?|$)/i.test(targetUrl);
 
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Cache-Control', 'no-cache, no-store');
 
-    // ── Buffer mode: circular recording with 10-min segments ──
-    if (streamMode === 'buffer') {
-      const entry = startBufferTranscoder(channelId, targetUrl);
-      // Wait for manifest
-      let waited = 0;
-      const waitBuf = () => {
-        const mp = entry.manifestPath;
-        if (fs.existsSync(mp) && fs.statSync(mp).size > 0) {
-          let manifest = fs.readFileSync(mp, 'utf8');
-          manifest = manifest.replace(/seg_\d+\.ts/g, m => `/api/hls-local/${channelId}/${m}`);
-          res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-          res.send(manifest);
-          res.on('finish', () => releaseTranscoder(channelId));
-          return;
-        }
-        waited += 500;
-        if (waited > 15000) { releaseTranscoder(channelId); return res.status(504).json({ error: 'Buffer timeout' }); }
-        setTimeout(waitBuf, 500);
-      };
-      waitBuf();
-      return;
-    }
-
-    // ── Transcode mode: force H.264/AAC permanently ──
-    if (streamMode === 'transcode') {
-      const entry = startFFmpegTranscoder(channelId, targetUrl);
-      let waited = 0;
-      const waitTrans = () => {
-        const masterPath = path.join(HLS_DIR, channelId, 'master.m3u8');
-        const singlePath = entry.manifestPath || path.join(HLS_DIR, channelId, 'stream.m3u8');
-        let manifestFile = null;
-        if (fs.existsSync(masterPath)) manifestFile = masterPath;
-        else if (fs.existsSync(singlePath)) manifestFile = singlePath;
-        if (manifestFile && fs.statSync(manifestFile).size > 0) {
-          let manifest = fs.readFileSync(manifestFile, 'utf8');
-          if (manifestFile.includes('master.m3u8')) {
-            manifest = manifest.replace(/(copy|micro|low|med|high)\/stream\.m3u8/g, (match, quality) => `/api/hls-adaptive/${channelId}/${quality}/stream.m3u8`);
-          } else {
-            manifest = manifest.replace(/seg_\d+\.ts/g, m => `/api/hls-local/${channelId}/${m}`);
-          }
-          res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-          res.send(manifest);
-          res.on('finish', () => releaseTranscoder(channelId));
-          return;
-        }
-        waited += 500;
-        if (waited > 15000) { releaseTranscoder(channelId); return res.status(504).json({ error: 'Transcode timeout' }); }
-        setTimeout(waitTrans, 500);
-      };
-      waitTrans();
-      return;
-    }
-
     if (isHLS) {
-      // Canal ya es HLS → check if HEVC needs transcoding
-      // First, probe the stream codec to detect HEVC without CODECS attribute
-      let needsTranscode = false;
-      const existingEntry = activeTranscoders.get(channelId);
-      
-      // Only probe if we haven't already determined this channel needs transcoding
-      if (!existingEntry || existingEntry.type === 'hls-proxy') {
-        try {
-          const codec = await probeStreamCodec(targetUrl);
-          if (codec === 'hevc' || codec === 'h265' || codec === 'hev1' || codec === 'hvc1') {
-            console.log(`🔄 [${channelId}] HEVC detectado via ffprobe → transcodificando a H.264`);
-            needsTranscode = true;
-            // Stop existing HLS proxy if running
-            if (existingEntry && existingEntry.type === 'hls-proxy') {
-              if (existingEntry.pollTimer) clearInterval(existingEntry.pollTimer);
-              activeTranscoders.delete(channelId);
-            }
-          }
-        } catch (err) {
-          console.warn(`⚠️ [${channelId}] ffprobe failed, falling back to HLS proxy:`, err.message);
-        }
+      // Canal ya es HLS → proxy con caché
+      startHLSProxy(channelId, targetUrl);
+      try {
+        const manifest = await getCachedM3U8(channelId, targetUrl);
+        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+        res.send(manifest);
+      } catch (err) {
+        console.error('HLS proxy error:', err.message);
+        res.status(502).json({ error: 'No se pudo obtener el manifiesto HLS' });
       }
-      
-      if (needsTranscode) {
-        // Route HEVC HLS streams through FFmpeg transcoder (same as .ts streams)
-        const entry = startFFmpegTranscoder(channelId, targetUrl);
-        
-        if (entry.ready && entry.keepAlive) {
-          const masterPath = path.join(HLS_DIR, channelId, 'master.m3u8');
-          const singlePath = entry.manifestPath || path.join(HLS_DIR, channelId, 'stream.m3u8');
-          const fallbackPath = entry.fallbackManifest || singlePath;
-          
-          let manifestFile = null;
-          if (fs.existsSync(masterPath)) manifestFile = masterPath;
-          else if (fs.existsSync(singlePath)) manifestFile = singlePath;
-          else if (fs.existsSync(fallbackPath)) manifestFile = fallbackPath;
-          
-          if (manifestFile) {
-            let manifest = fs.readFileSync(manifestFile, 'utf8');
-            if (manifestFile.includes('master.m3u8')) {
-              manifest = manifest.replace(/(copy|micro|low|med|high)\/stream\.m3u8/g, (match, quality) => {
-                return `/api/hls-adaptive/${channelId}/${quality}/stream.m3u8`;
-              });
-            } else {
-              manifest = manifest.replace(/seg_\d+\.ts/g, (match) => {
-                return `/api/hls-local/${channelId}/${match}`;
-              });
-            }
-            console.log(`⚡ [${channelId}] HEVC→H264 keep-alive: sirviendo manifiesto instantáneamente`);
-            res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-            res.send(manifest);
-            res.on('finish', () => releaseTranscoder(channelId));
-            return;
-          }
-        }
-        
-        // Wait for FFmpeg to generate manifest
-        let waited = 0;
-        const waitForManifest = () => {
-          const masterPath = path.join(HLS_DIR, channelId, 'master.m3u8');
-          const singlePath = entry.manifestPath || path.join(HLS_DIR, channelId, 'stream.m3u8');
-          const fallbackPath = entry.fallbackManifest || singlePath;
-          
-          let manifestFile = null;
-          if (fs.existsSync(masterPath)) manifestFile = masterPath;
-          else if (fs.existsSync(singlePath)) manifestFile = singlePath;
-          else if (fs.existsSync(fallbackPath)) manifestFile = fallbackPath;
-          
-          if (manifestFile) {
-            let manifest = fs.readFileSync(manifestFile, 'utf8');
-            if (manifestFile.includes('master.m3u8')) {
-              manifest = manifest.replace(/(copy|micro|low|med|high)\/stream\.m3u8/g, (match, quality) => {
-                return `/api/hls-adaptive/${channelId}/${quality}/stream.m3u8`;
-              });
-            } else {
-              manifest = manifest.replace(/seg_\d+\.ts/g, (match) => {
-                return `/api/hls-local/${channelId}/${match}`;
-              });
-            }
-            res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-            res.send(manifest);
-            res.on('finish', () => releaseTranscoder(channelId));
-          } else if (waited < 20000) {
-            waited += 500;
-            setTimeout(waitForManifest, 500);
-          } else {
-            releaseTranscoder(channelId);
-            res.status(504).json({ error: 'FFmpeg no generó el manifiesto a tiempo' });
-          }
-        };
-        waitForManifest();
-      } else {
-        // Normal HLS proxy (H.264 or compatible)
-        startHLSProxy(channelId, targetUrl);
-        try {
-          const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout 5s')), 5000));
-          const manifest = await Promise.race([getCachedM3U8(channelId, targetUrl), timeoutPromise]);
-          res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-          res.send(manifest);
-        } catch (err) {
-          console.error('HLS proxy error:', err.message);
-          const status = err.message.includes('Timeout') ? 504 : 502;
-          res.status(status).json({ error: status === 504 ? 'Canal no respondió en 5 segundos' : 'No se pudo obtener el manifiesto HLS' });
-        }
-        res.on('finish', () => releaseTranscoder(channelId));
-      }
+      // Liberar al terminar respuesta
+      res.on('finish', () => releaseTranscoder(channelId));
     } else {
       // Canal TS → FFmpeg → HLS (adaptive o single)
       const entry = startFFmpegTranscoder(channelId, targetUrl);
 
-      // If keep-alive transcoder is already running and ready, serve INSTANTLY
-      if (entry.ready && entry.keepAlive) {
-        const masterPath = path.join(HLS_DIR, channelId, 'master.m3u8');
-        const singlePath = entry.manifestPath || path.join(HLS_DIR, channelId, 'stream.m3u8');
-        const fallbackPath = entry.fallbackManifest || singlePath;
-        
-        let manifestFile = null;
-        if (fs.existsSync(masterPath)) manifestFile = masterPath;
-        else if (fs.existsSync(singlePath)) manifestFile = singlePath;
-        else if (fs.existsSync(fallbackPath)) manifestFile = fallbackPath;
-        
-        if (manifestFile) {
-          let manifest = fs.readFileSync(manifestFile, 'utf8');
-          if (manifestFile.includes('master.m3u8')) {
-            manifest = manifest.replace(/(copy|micro|low|med|high)\/stream\.m3u8/g, (match, quality) => {
-              return `/api/hls-adaptive/${channelId}/${quality}/stream.m3u8`;
-            });
-          } else {
-            manifest = manifest.replace(/seg_\d+\.ts/g, (match) => {
-              return `/api/hls-local/${channelId}/${match}`;
-            });
-          }
-          console.log(`⚡ [${channelId}] Keep-alive: sirviendo manifiesto instantáneamente`);
-          res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-          res.send(manifest);
-          res.on('finish', () => releaseTranscoder(channelId));
-          return;
-        }
-      }
-
       // Esperar a que FFmpeg genere el manifiesto (máximo 20s para adaptive)
       let waited = 0;
       const waitForManifest = () => {
+        // Check for master playlist first (adaptive), then fallback manifest
         const masterPath = path.join(HLS_DIR, channelId, 'master.m3u8');
         const singlePath = entry.manifestPath || path.join(HLS_DIR, channelId, 'stream.m3u8');
         const fallbackPath = entry.fallbackManifest || singlePath;
 
         let manifestFile = null;
-        if (fs.existsSync(masterPath)) manifestFile = masterPath;
-        else if (fs.existsSync(singlePath)) manifestFile = singlePath;
-        else if (fs.existsSync(fallbackPath)) manifestFile = fallbackPath;
+        if (fs.existsSync(masterPath)) {
+          manifestFile = masterPath;
+        } else if (fs.existsSync(singlePath)) {
+          manifestFile = singlePath;
+        } else if (fs.existsSync(fallbackPath)) {
+          manifestFile = fallbackPath;
+        }
 
         if (manifestFile) {
           let manifest = fs.readFileSync(manifestFile, 'utf8');
+
           if (manifestFile.includes('master.m3u8')) {
-            manifest = manifest.replace(/(copy|micro|low|med|high)\/stream\.m3u8/g, (match, quality) => {
+            // Rewrite sub-playlist paths in master playlist
+            manifest = manifest.replace(/(low|med|high)\/stream\.m3u8/g, (match, quality) => {
               return `/api/hls-adaptive/${channelId}/${quality}/stream.m3u8`;
             });
           } else {
+            // Single quality: rewrite segment paths
             manifest = manifest.replace(/seg_\d+\.ts/g, (match) => {
               return `/api/hls-local/${channelId}/${match}`;
             });
           }
+
           res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
           res.send(manifest);
           res.on('finish', () => releaseTranscoder(channelId));
@@ -2424,7 +1522,7 @@ app.get('/api/restream/:channelId', async (req, res) => {
   }
 });
 
-// Servir sub-playlists adaptativas (micro/ultra/low/med/high)
+// Servir sub-playlists adaptativas (low/med/high)
 app.get('/api/hls-adaptive/:channelId/:quality/stream.m3u8', (req, res) => {
   const { channelId, quality } = req.params;
   const filePath = path.join(HLS_DIR, channelId, quality, 'stream.m3u8');
@@ -2447,8 +1545,10 @@ app.get('/api/hls-local/:channelId/:qualityOrFile/:filename?', (req, res) => {
   const { channelId, qualityOrFile, filename } = req.params;
   let filePath;
   if (filename) {
+    // /api/hls-local/:channelId/:quality/:filename
     filePath = path.join(HLS_DIR, channelId, qualityOrFile, filename);
   } else {
+    // /api/hls-local/:channelId/:filename (legacy single quality)
     filePath = path.join(HLS_DIR, channelId, qualityOrFile);
   }
   if (!fs.existsSync(filePath)) {
@@ -2457,9 +1557,7 @@ app.get('/api/hls-local/:channelId/:qualityOrFile/:filename?', (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Content-Type', 'video/mp2t');
   res.setHeader('Cache-Control', 'public, max-age=10');
-  const stream = fs.createReadStream(filePath);
-  stream.on('data', (chunk) => trackBandwidth(channelId, chunk.length));
-  stream.pipe(res);
+  fs.createReadStream(filePath).pipe(res);
 });
 
 // Proxy de segmentos HLS remotos (para canales que ya son HLS)
@@ -2468,7 +1566,6 @@ app.get('/api/hls-segment/:channelId', async (req, res) => {
     const segmentUrl = req.query.url;
     if (!segmentUrl) return res.status(400).send('Missing url');
     const data = await fetchSegment(segmentUrl);
-    trackBandwidth(req.params.channelId, data.length);
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Content-Type', 'video/mp2t');
     res.setHeader('Cache-Control', 'public, max-age=10');
@@ -2480,76 +1577,15 @@ app.get('/api/hls-segment/:channelId', async (req, res) => {
 });
 
 // Proxy de sub-manifiestos HLS (multi-bitrate)
-// Si el sub-manifiesto expira (404), re-fetcha el master para obtener URL fresca
 app.get('/api/hls-manifest/:channelId', async (req, res) => {
   try {
     const hlsUrl = req.query.url;
-    const channelId = req.params.channelId;
     if (!hlsUrl) return res.status(400).send('Missing url');
-
+    const manifest = await getCachedM3U8(req.params.channelId + '_sub', hlsUrl);
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
     res.setHeader('Cache-Control', 'no-cache');
-
-    // Try fetching the sub-manifest directly
-    try {
-      const result = await fetchM3U8Raw(hlsUrl);
-      if (result.statusCode < 400) {
-        // Success — rewrite .ts URLs and serve
-        const rewritten = result.body.replace(/^(?!#)(.+\.ts.*)$/gm, (match) => {
-          const fullUrl = match.startsWith('http') ? match : result.baseUrl + match;
-          return `/api/hls-segment/${channelId}?url=${encodeURIComponent(fullUrl)}`;
-        });
-        return res.send(rewritten);
-      }
-    } catch (e) {
-      console.warn(`⚠️ [${channelId}] Sub-manifest expirado, refrescando master...`);
-    }
-
-    // Sub-manifest failed (expired session) — re-fetch master to get fresh URL
-    const { rows: channels } = await pool.query(
-      'SELECT url FROM channels WHERE id = $1 AND is_active = true', [channelId]
-    );
-    if (channels.length === 0) return res.status(404).send('Channel not found');
-
-    const masterUrl = channels[0].url;
-    const master = await fetchM3U8Raw(masterUrl);
-    if (master.statusCode >= 400) return res.status(502).send('Master fetch failed');
-
-    // Extract first variant URL from fresh master
-    const lines = master.body.split('\n');
-    let freshVariantUrl = null;
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i].startsWith('#EXT-X-STREAM-INF')) {
-        for (let j = i + 1; j < lines.length; j++) {
-          const line = lines[j].trim();
-          if (line && !line.startsWith('#')) {
-            freshVariantUrl = line.startsWith('http') ? line : master.baseUrl + line;
-            break;
-          }
-        }
-        break;
-      }
-    }
-
-    if (!freshVariantUrl) {
-      // Not a master playlist — serve master body directly with rewritten URLs
-      const rewritten = master.body.replace(/^(?!#)(.+\.ts.*)$/gm, (match) => {
-        const fullUrl = match.startsWith('http') ? match : master.baseUrl + match;
-        return `/api/hls-segment/${channelId}?url=${encodeURIComponent(fullUrl)}`;
-      });
-      return res.send(rewritten);
-    }
-
-    console.log(`🔄 [${channelId}] Sesión refrescada, nueva variante: ${freshVariantUrl.substring(0, 80)}...`);
-    const sub = await fetchM3U8Raw(freshVariantUrl);
-    if (sub.statusCode >= 400) return res.status(502).send('Fresh sub-manifest failed');
-
-    const rewritten = sub.body.replace(/^(?!#)(.+\.ts.*)$/gm, (match) => {
-      const fullUrl = match.startsWith('http') ? match : sub.baseUrl + match;
-      return `/api/hls-segment/${channelId}?url=${encodeURIComponent(fullUrl)}`;
-    });
-    res.send(rewritten);
+    res.send(manifest);
   } catch (err) {
     console.error('HLS sub-manifest error:', err.message);
     res.status(502).send('Manifest fetch failed');
@@ -2831,235 +1867,32 @@ app.get('/api/streams/active', authAdmin, async (req, res) => {
   try {
     const streams = [];
     for (const [channelId, entry] of activeTranscoders) {
-      const { rows } = await pool.query('SELECT name, url, stream_mode FROM channels WHERE id = $1', [channelId]);
+      const { rows } = await pool.query('SELECT name, url FROM channels WHERE id = $1', [channelId]);
       const channelName = rows.length > 0 ? rows[0].name : 'Desconocido';
       const sourceUrl = rows.length > 0 ? rows[0].url : entry.sourceUrl || 'N/A';
-      const streamMode = rows.length > 0 ? (rows[0].stream_mode || 'direct') : 'direct';
       
-      const bw = channelBandwidth.get(channelId);
-      const bandwidth_bps = bw ? bw.bpsOut : 0;
-      const bandwidth_in_bps = bw ? bw.bpsIn : 0;
-
-      // Per-process resource usage via /proc (Linux)
-      let cpu_percent = 0;
-      let mem_mb = 0;
-      if (entry.ffmpeg && entry.ffmpeg.pid) {
-        try {
-          const pidStat = execSync(`ps -p ${entry.ffmpeg.pid} -o %cpu=,%mem=,rss= 2>/dev/null`, { timeout: 2000 }).toString().trim();
-          const parts = pidStat.split(/\s+/);
-          if (parts.length >= 3) {
-            cpu_percent = parseFloat(parts[0]) || 0;
-            mem_mb = Math.round((parseInt(parts[2]) || 0) / 1024);
-          }
-        } catch { /* process may have exited */ }
-      }
-
       streams.push({
         channel_id: channelId,
         channel_name: channelName,
         type: entry.type,
-        stream_mode: streamMode,
         clients: Math.max(0, entry.clients),
         ready: entry.ready !== undefined ? entry.ready : true,
         keep_alive: entry.keepAlive || false,
-        uptime_seconds: Math.floor((Date.now() - (entry.startTime || entry.lastAccess)) / 1000),
+        uptime_seconds: Math.floor((Date.now() - entry.lastAccess) / 1000),
         source_url: sourceUrl.substring(0, 60) + (sourceUrl.length > 60 ? '...' : ''),
-        bandwidth_bps: Math.round(bandwidth_bps),
-        bandwidth_in_bps: Math.round(bandwidth_in_bps),
-        cpu_percent,
-        mem_mb,
-        retry_count: entry.retryCount || entry.restartCount || 0,
-        max_retries: entry.maxRetries || 10,
       });
     }
-
-    // Global system stats
-    const os = require('os');
-    const totalMemMB = Math.round(os.totalmem() / (1024 * 1024));
-    const freeMemMB = Math.round(os.freemem() / (1024 * 1024));
-    const usedMemMB = totalMemMB - freeMemMB;
-    const cpuCount = os.cpus().length;
-    const loadAvg = os.loadavg();
-    const cpuUsagePercent = Math.min(100, Math.round((loadAvg[0] / cpuCount) * 100));
-
-    // Failure alerts: streams with 3+ retries
-    const failedStreams = streams.filter(s => s.retry_count >= 3);
     
     res.json({
       total_streams: streams.length,
       total_clients_watching: streams.reduce((sum, s) => sum + s.clients, 0),
       origin_connections: streams.length,
       streams,
-      system: {
-        cpu_percent: cpuUsagePercent,
-        cpu_cores: cpuCount,
-        load_avg: loadAvg,
-        mem_total_mb: totalMemMB,
-        mem_used_mb: usedMemMB,
-        mem_percent: Math.round((usedMemMB / totalMemMB) * 100),
-      },
-      alerts: failedStreams.map(s => ({
-        channel_id: s.channel_id,
-        channel_name: s.channel_name,
-        retry_count: s.retry_count,
-        type: s.type,
-      })),
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
-
-// =============================================
-// RUTA: INICIAR STREAM MANUALMENTE (como Xtream UI)
-// =============================================
-app.post('/api/streams/start/:channelId', authAdmin, async (req, res) => {
-  try {
-    const channelId = req.params.channelId;
-    
-    // Check if already running
-    if (activeTranscoders.has(channelId)) {
-      // Mark as keepAlive so it doesn't auto-stop
-      const existing = activeTranscoders.get(channelId);
-      existing.keepAlive = true;
-      return res.json({ success: true, message: 'Canal ya está activo (marcado como persistente)' });
-    }
-    
-    const { rows } = await pool.query('SELECT url, name FROM channels WHERE id = $1 AND is_active = true', [channelId]);
-    if (rows.length === 0) return res.status(404).json({ error: 'Canal no encontrado o inactivo' });
-    
-    const sourceUrl = rows[0].url;
-    const isHLS = /\.m3u8?(\?|$)/i.test(sourceUrl);
-    
-    if (isHLS) {
-      const entry = startHLSProxy(channelId, sourceUrl);
-      entry.keepAlive = true; // Persistent — won't auto-stop like Xtream UI
-      entry.clients = 0;
-      startHLSKeepAlivePolling(channelId, sourceUrl);
-    } else {
-      const entry = startFFmpegTranscoder(channelId, sourceUrl);
-      entry.keepAlive = true; // Persistent — won't auto-stop like Xtream UI
-    }
-    
-    console.log(`▶️ [${channelId}] Stream iniciado manualmente (persistente): ${rows[0].name}`);
-    res.json({ success: true, message: `Stream iniciado: ${rows[0].name}` });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// =============================================
-// RUTA: DETENER STREAM MANUALMENTE
-// =============================================
-app.post('/api/streams/stop/:channelId', authAdmin, async (req, res) => {
-  try {
-    const channelId = req.params.channelId;
-    const entry = activeTranscoders.get(channelId);
-    
-    if (!entry) {
-      return res.status(404).json({ error: 'Stream no está activo' });
-    }
-    
-    // Stop polling
-    if (entry.pollTimer) {
-      clearInterval(entry.pollTimer);
-      entry.pollTimer = null;
-    }
-    
-    // Kill FFmpeg if running
-    if (entry.ffmpeg) {
-      entry.ffmpeg.kill('SIGTERM');
-    }
-    
-    activeTranscoders.delete(channelId);
-    channelBandwidth.delete(channelId);
-    cleanChannelDir(channelId);
-    
-    const { rows } = await pool.query('SELECT name FROM channels WHERE id = $1', [channelId]);
-    const name = rows.length > 0 ? rows[0].name : channelId;
-    
-    console.log(`⏹️ [${channelId}] Stream detenido manualmente: ${name}`);
-    res.json({ success: true, message: `Stream detenido: ${name}` });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// =============================================
-// RUTA: REINICIAR PROCESO DE STREAM INDIVIDUAL
-// =============================================
-app.post('/api/streams/restart/:channelId', authAdmin, async (req, res) => {
-  try {
-    const channelId = req.params.channelId;
-    const entry = activeTranscoders.get(channelId);
-    const wasKeepAlive = entry ? entry.keepAlive : false;
-
-    // Kill existing
-    if (entry) {
-      if (entry.pollTimer) { clearInterval(entry.pollTimer); entry.pollTimer = null; }
-      if (entry.ffmpeg) entry.ffmpeg.kill('SIGTERM');
-      activeTranscoders.delete(channelId);
-      channelBandwidth.delete(channelId);
-      cleanChannelDir(channelId);
-    }
-
-    const { rows } = await pool.query('SELECT url, name, stream_mode FROM channels WHERE id = $1 AND is_active = true', [channelId]);
-    if (rows.length === 0) return res.status(404).json({ error: 'Canal no encontrado o inactivo' });
-
-    const sourceUrl = rows[0].url;
-    const streamMode = rows[0].stream_mode || 'direct';
-    const isHLS = /\.m3u8?(\?|$)/i.test(sourceUrl);
-
-    // Re-start based on stream_mode
-    if (streamMode === 'buffer') {
-      const newEntry = startBufferTranscoder(channelId, sourceUrl);
-      newEntry.keepAlive = wasKeepAlive;
-      newEntry.restartCount = 0;
-    } else if (streamMode === 'transcode' || !isHLS) {
-      const newEntry = startFFmpegTranscoder(channelId, sourceUrl);
-      newEntry.keepAlive = wasKeepAlive;
-    } else {
-      const newEntry = startHLSProxy(channelId, sourceUrl);
-      newEntry.keepAlive = wasKeepAlive;
-      newEntry.clients = 0;
-      startHLSKeepAlivePolling(channelId, sourceUrl);
-    }
-
-    console.log(`🔄 [${channelId}] Stream reiniciado manualmente: ${rows[0].name}`);
-    res.json({ success: true, message: `Stream reiniciado: ${rows[0].name}` });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// =============================================
-// RUTA: LISTAR TODOS LOS CANALES CON ESTADO DE STREAM
-// =============================================
-app.get('/api/streams/all-channels', authAdmin, async (req, res) => {
-  try {
-    const { rows } = await pool.query('SELECT id, name, url, category, is_active, keep_alive FROM channels ORDER BY sort_order ASC, name ASC');
-    
-    const channels = rows.map(ch => {
-      const entry = activeTranscoders.get(ch.id);
-      const bw = channelBandwidth.get(ch.id);
-      return {
-        ...ch,
-        is_streaming: !!entry,
-        stream_type: entry ? entry.type : null,
-        stream_ready: entry ? (entry.ready !== undefined ? entry.ready : true) : false,
-        stream_clients: entry ? Math.max(0, entry.clients) : 0,
-        bandwidth_in_bps: bw ? Math.round(bw.bpsIn) : 0,
-        bandwidth_bps: bw ? Math.round(bw.bpsOut) : 0,
-        uptime_seconds: entry ? Math.floor((Date.now() - (entry.startTime || entry.lastAccess)) / 1000) : 0,
-      };
-    });
-    
-    res.json({ channels });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 
 // =============================================
 // RUTA: ESPECTADORES ACTIVOS (quién ve qué, desde dónde)
@@ -3132,7 +1965,7 @@ app.get('/api/clients/expiring', authAdmin, async (req, res) => {
 // =============================================
 // CLOUDFLARE TUNNEL - Gestión desde admin panel
 // =============================================
-// execSync ya importado arriba
+const { execSync } = require('child_process');
 
 let tunnelProcess = null;
 let tunnelUrl = null;
@@ -3317,132 +2150,83 @@ app.post('/api/clients/generate-tokens', authAdmin, async (req, res) => {
   }
 });
 
-// Endpoint público: M3U playlist por token con soporte multi-formato
-// GET /api/playlist/:token           → M3U Plus (default, con metadatos)
-// GET /api/playlist/:token/m3u_plus  → M3U Plus (con #EXTINF, logo, grupo)
-// GET /api/playlist/:token/ts        → MPEG-TS (extensión .ts, fuerza mpegts)
-// GET /api/playlist/:token/simple    → M3U simple (sin metadatos extra)
-// GET /api/playlist/:token/ott       → Optimizado para Smart TV / OTT Player
+// Endpoint público: M3U playlist por token
+// GET /api/playlist/:token
 // Compatible con OTT Player, Smart IPTV, SS IPTV, etc.
-
-async function resolvePlaylistClient(token, res) {
-  const { rows: clients } = await pool.query(
-    'SELECT c.*, p.categories as plan_categories FROM clients c LEFT JOIN plans p ON c.plan_id = p.id WHERE c.playlist_token = $1',
-    [token]
-  );
-  if (clients.length === 0) {
-    res.status(404).send('#EXTM3U\n#EXTINF:-1,Token inválido\nhttp://invalid');
-    return null;
-  }
-  const client = clients[0];
-  if (!client.is_active) {
-    res.status(403).send('#EXTM3U\n#EXTINF:-1,Cuenta suspendida\nhttp://suspended');
-    return null;
-  }
-  if (new Date(client.expiry_date) < new Date()) {
-    await pool.query('UPDATE clients SET is_active = false WHERE id = $1', [client.id]);
-    res.status(403).send('#EXTM3U\n#EXTINF:-1,Suscripción expirada\nhttp://expired');
-    return null;
-  }
-  return client;
-}
-
-async function getFilteredChannels(client) {
-  const { rows: channels } = await pool.query(
-    'SELECT id, name, url, category, logo_url, sort_order, stream_mode FROM channels WHERE is_active = true ORDER BY sort_order'
-  );
-  if (client.plan_categories && client.plan_categories.length > 0) {
-    return channels.filter(ch => client.plan_categories.includes(ch.category));
-  }
-  return channels;
-}
-
-function getBaseUrl(req) {
-  const proto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
-  const host = req.headers['x-forwarded-host'] || req.headers.host || `localhost:${PORT}`;
-  return `${proto}://${host}`;
-}
-
-function generateM3U(channels, client, baseUrl, format) {
-  const isYouTube = (url) => /youtube\.com|youtu\.be/.test(url);
-  
-  // Smart URL: always use /api/restream for buffer/transcode modes
-  // For direct mode, also use /api/restream (it handles proxy pass-through)
-  const getChannelUrl = (ch, forceTs = false) => {
-    if (isYouTube(ch.url)) return ch.url;
-    if (forceTs) return `${baseUrl}/api/restream/${ch.id}.ts`;
-    return `${baseUrl}/api/restream/${ch.id}`;
-  };
-
-  let m3u = '#EXTM3U\n';
-
-  if (format === 'simple') {
-    m3u += `# Lista simple para ${client.username} - ${channels.length} canales\n\n`;
-    for (const ch of channels) {
-      m3u += `${getChannelUrl(ch)}\n`;
-    }
-    return m3u;
-  }
-
-  if (format === 'ts') {
-    m3u += `#PLAYLIST:${client.username}\n`;
-    m3u += `# StreamBox MPEG-TS - ${client.username}\n`;
-    m3u += `# Canales: ${channels.length}\n\n`;
-    for (const ch of channels) {
-      const logoAttr = ch.logo_url ? ` tvg-logo="${ch.logo_url.startsWith('http') ? ch.logo_url : baseUrl + ch.logo_url}"` : '';
-      m3u += `#EXTINF:-1 group-title="${ch.category}"${logoAttr},${ch.name}\n`;
-      m3u += `${getChannelUrl(ch, true)}\n`;
-    }
-    return m3u;
-  }
-
-  if (format === 'ott') {
-    m3u += `#PLAYLIST:${client.username}\n`;
-    m3u += `# Optimizado para Smart TV / OTT Player\n`;
-    m3u += `# Canales: ${channels.length}\n\n`;
-    for (const ch of channels) {
-      const logoAttr = ch.logo_url ? ` tvg-logo="${ch.logo_url.startsWith('http') ? ch.logo_url : baseUrl + ch.logo_url}"` : '';
-      m3u += `#EXTINF:-1 group-title="${ch.category}"${logoAttr} tvg-name="${ch.name}",${ch.name}\n`;
-      m3u += `${getChannelUrl(ch, true)}\n`;
-    }
-    return m3u;
-  }
-
-  // Formato m3u_plus (default): con todos los metadatos
-  m3u += `#PLAYLIST:${client.username}\n`;
-  m3u += `# StreamBox - Generado para ${client.username}\n`;
-  m3u += `# Canales: ${channels.length}\n\n`;
-  for (const ch of channels) {
-    const logoAttr = ch.logo_url ? ` tvg-logo="${ch.logo_url.startsWith('http') ? ch.logo_url : baseUrl + ch.logo_url}"` : '';
-    m3u += `#EXTINF:-1 group-title="${ch.category}"${logoAttr},${ch.name}\n`;
-    m3u += `${getChannelUrl(ch)}\n`;
-  }
-  return m3u;
-}
-
-app.get('/api/playlist/:token/:format?', async (req, res) => {
+app.get('/api/playlist/:token', async (req, res) => {
   try {
-    const { token, format: rawFormat } = req.params;
-    const format = rawFormat || 'm3u_plus';
-    const validFormats = ['m3u_plus', 'ts', 'simple', 'ott'];
-    if (!validFormats.includes(format)) {
-      return res.status(400).send('#EXTM3U\n#EXTINF:-1,Formato inválido\nhttp://invalid-format');
+    const { token } = req.params;
+    
+    // Buscar cliente por token
+    const { rows: clients } = await pool.query(
+      'SELECT c.*, p.categories as plan_categories FROM clients c LEFT JOIN plans p ON c.plan_id = p.id WHERE c.playlist_token = $1',
+      [token]
+    );
+    
+    if (clients.length === 0) {
+      return res.status(404).send('#EXTM3U\n#EXTINF:-1,Token inválido\nhttp://invalid');
     }
-
-    const client = await resolvePlaylistClient(token, res);
-    if (!client) return;
-
-    const filteredChannels = await getFilteredChannels(client);
-    const baseUrl = getBaseUrl(req);
-    const m3u = generateM3U(filteredChannels, client, baseUrl, format);
-
-    const ext = format === 'ts' ? 'ts.m3u' : 'm3u';
+    
+    const client = clients[0];
+    
+    // Verificar que el cliente esté activo
+    if (!client.is_active) {
+      return res.status(403).send('#EXTM3U\n#EXTINF:-1,Cuenta suspendida\nhttp://suspended');
+    }
+    
+    // Verificar expiración
+    if (new Date(client.expiry_date) < new Date()) {
+      await pool.query('UPDATE clients SET is_active = false WHERE id = $1', [client.id]);
+      return res.status(403).send('#EXTM3U\n#EXTINF:-1,Suscripción expirada\nhttp://expired');
+    }
+    
+    // Obtener canales activos
+    let channelsQuery = 'SELECT id, name, url, category, logo_url, sort_order FROM channels WHERE is_active = true ORDER BY sort_order';
+    const { rows: channels } = await pool.query(channelsQuery);
+    
+    // Filtrar por plan si tiene uno asignado
+    let filteredChannels = channels;
+    if (client.plan_categories && client.plan_categories.length > 0) {
+      filteredChannels = channels.filter(ch => client.plan_categories.includes(ch.category));
+    }
+    
+    // Determinar base URL para los streams
+    // Cloudflare tunnel pone el dominio en Host header y proto en X-Forwarded-Proto
+    // X-Forwarded-Host tiene prioridad si existe, luego Host header
+    const proto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+    const host = req.headers['x-forwarded-host'] || req.headers.host || `localhost:${PORT}`;
+    const baseUrl = `${proto}://${host}`;
+    
+    // Generar M3U
+    let m3u = '#EXTM3U\n';
+    m3u += `#PLAYLIST:${client.username}\n`;
+    m3u += `# StreamBox - Generado para ${client.username}\n`;
+    m3u += `# Canales: ${filteredChannels.length}\n\n`;
+    
+    for (const ch of filteredChannels) {
+      const isYouTube = /youtube\.com|youtu\.be/.test(ch.url);
+      
+      // Logo attribute
+      const logoAttr = ch.logo_url ? ` tvg-logo="${ch.logo_url.startsWith('http') ? ch.logo_url : baseUrl + ch.logo_url}"` : '';
+      
+      m3u += `#EXTINF:-1 group-title="${ch.category}"${logoAttr},${ch.name}\n`;
+      
+      if (isYouTube) {
+        // YouTube: URL directa (no se puede restream)
+        m3u += `${ch.url}\n`;
+      } else {
+        // Todo lo demás: via restream para ocultar origen
+        m3u += `${baseUrl}/api/restream/${ch.id}\n`;
+      }
+    }
+    
     res.set({
       'Content-Type': 'audio/mpegurl',
-      'Content-Disposition': `inline; filename="${client.username}_${format}.${ext}"`,
+      'Content-Disposition': `inline; filename="${client.username}.m3u"`,
       'Cache-Control': 'no-cache',
     });
     res.send(m3u);
+    
   } catch (err) {
     console.error('Playlist error:', err);
     res.status(500).send('#EXTM3U\n#EXTINF:-1,Error del servidor\nhttp://error');
@@ -4175,7 +2959,7 @@ console.log('📺 Series system habilitado: /api/vod/series, /api/vod/seasons, /
 // =============================================
 app.get('/api/admin/system-info', async (req, res) => {
   try {
-    // execSync ya importado arriba
+    const { execSync } = require('child_process');
     const os = require('os');
 
     // Helper para ejecutar comandos seguros
@@ -4340,22 +3124,6 @@ app.get('/api/admin/system-info', async (req, res) => {
     // Kernel version
     const kernelVersion = run("uname -r");
 
-    // Network bandwidth (bytes from /proc/net/dev for main interface)
-    const getNetBytes = () => {
-      try {
-        const iface = run("ip route | grep default | awk '{print $5}'") || 'eth0';
-        const netLine = run(`cat /proc/net/dev | grep '${iface}:'`);
-        if (!netLine) return null;
-        const parts = netLine.split(':')[1].trim().split(/\s+/);
-        return {
-          interface: iface,
-          rx_bytes: parseInt(parts[0]) || 0,
-          tx_bytes: parseInt(parts[8]) || 0,
-        };
-      } catch { return null; }
-    };
-    const netBytes = getNetBytes();
-
     // BBR module loaded
     const bbrLoaded = run("lsmod | grep bbr") ? true : false;
 
@@ -4392,7 +3160,6 @@ app.get('/api/admin/system-info', async (req, res) => {
         avail_gb: (parseInt(hlsDiskInfo.split(' ')[2]) / 1073741824).toFixed(1),
         percent: hlsDiskInfo.split(' ')[3],
       } : null,
-      network: netBytes,
       files: {
         open: openFiles || '?',
         max: maxFiles || '?',
@@ -4419,10 +3186,6 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`📺 Panel Admin: http://TU_IP:80`);
   console.log(`🔐 Setup inicial: POST http://localhost:${PORT}/api/admin/setup\n`);
   
-  // Iniciar canales keep-alive después de 15 segundos
-  // para que la API responda al health check primero
-  setTimeout(() => {
-    console.log('⏳ Iniciando canales keep-alive en background...');
-    initKeepAliveChannels();
-  }, 15000);
+  // Iniciar canales keep-alive después de 3 segundos (esperar conexión DB)
+  setTimeout(() => initKeepAliveChannels(), 3000);
 });

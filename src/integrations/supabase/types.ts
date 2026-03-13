@@ -143,7 +143,6 @@ export type Database = {
           logo_url: string | null
           name: string
           sort_order: number | null
-          stream_mode: string
           url: string
         }
         Insert: {
@@ -158,7 +157,6 @@ export type Database = {
           logo_url?: string | null
           name: string
           sort_order?: number | null
-          stream_mode?: string
           url: string
         }
         Update: {
@@ -173,7 +171,6 @@ export type Database = {
           logo_url?: string | null
           name?: string
           sort_order?: number | null
-          stream_mode?: string
           url?: string
         }
         Relationships: []

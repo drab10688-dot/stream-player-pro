@@ -60,7 +60,6 @@ CREATE TABLE IF NOT EXISTS channels (
   logo_url TEXT,
   is_active BOOLEAN NOT NULL DEFAULT true,
   keep_alive BOOLEAN NOT NULL DEFAULT false,
-  stream_mode TEXT NOT NULL DEFAULT 'direct',
   sort_order INTEGER DEFAULT 0,
   consecutive_failures INTEGER NOT NULL DEFAULT 0,
   auto_disabled BOOLEAN NOT NULL DEFAULT false,

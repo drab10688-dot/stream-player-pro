@@ -1,8 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { apiGet } from '@/lib/api';
-import { copyToClipboard } from '@/lib/clipboard';
 import { useToast } from '@/hooks/use-toast';
-import { Cpu, HardDrive, MemoryStick, Network, Shield, CheckCircle2, XCircle, AlertTriangle, RefreshCw, Copy, ChevronDown, ChevronRight, Server, Gauge, ArrowDownToLine, ArrowUpFromLine } from 'lucide-react';
+import { Cpu, HardDrive, MemoryStick, Network, Shield, CheckCircle2, XCircle, AlertTriangle, RefreshCw, Copy, ChevronDown, ChevronRight, Server, Gauge } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
@@ -13,12 +12,6 @@ interface SysctlParam {
   recommended: string | null;
   optimal: boolean | null;
   description: string;
-}
-
-interface NetworkBytes {
-  interface: string;
-  rx_bytes: number;
-  tx_bytes: number;
 }
 
 interface SystemInfo {
@@ -38,7 +31,6 @@ interface SystemInfo {
   };
   disk: { total_gb: string; used_gb: string; avail_gb: string; percent: string };
   hls_cache_disk: { total_gb: string; used_gb: string; avail_gb: string; percent: string } | null;
-  network: NetworkBytes | null;
   files: { open: string; max: string; ulimit: string };
   status: {
     config_applied: boolean;
@@ -63,50 +55,27 @@ const SystemTuning = () => {
   const [data, setData] = useState<SystemInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [expandedCats, setExpandedCats] = useState<Record<string, boolean>>({});
-  const [bandwidth, setBandwidth] = useState<{ rx_mbps: number; tx_mbps: number } | null>(null);
-  const prevNetRef = useRef<{ rx: number; tx: number; time: number } | null>(null);
-  const bandwidthIntervalRef = useRef<ReturnType<typeof setInterval>>();
   const { toast } = useToast();
 
-  const fetchData = async (silent = false) => {
-    if (!silent) setLoading(true);
+  const fetchData = async () => {
+    setLoading(true);
     try {
       const res = await apiGet('/api/admin/system-info');
       setData(res);
-
-      // Calculate bandwidth from delta
-      if (res.network) {
-        const now = Date.now();
-        const prev = prevNetRef.current;
-        if (prev) {
-          const dtSec = (now - prev.time) / 1000;
-          if (dtSec > 0) {
-            const rxMbps = ((res.network.rx_bytes - prev.rx) * 8) / (dtSec * 1_000_000);
-            const txMbps = ((res.network.tx_bytes - prev.tx) * 8) / (dtSec * 1_000_000);
-            setBandwidth({ rx_mbps: Math.max(0, rxMbps), tx_mbps: Math.max(0, txMbps) });
-          }
-        }
-        prevNetRef.current = { rx: res.network.rx_bytes, tx: res.network.tx_bytes, time: now };
-      }
     } catch {
-      if (!silent) toast({ title: 'Error', description: 'No se pudo obtener info del sistema. Verifica que el servidor esté actualizado.', variant: 'destructive' });
+      toast({ title: 'Error', description: 'No se pudo obtener info del sistema. Verifica que el servidor esté actualizado.', variant: 'destructive' });
     } finally {
-      if (!silent) setLoading(false);
+      setLoading(false);
     }
   };
 
-  useEffect(() => {
-    fetchData();
-    // Auto-refresh every 5s for bandwidth
-    bandwidthIntervalRef.current = setInterval(() => fetchData(true), 5000);
-    return () => { if (bandwidthIntervalRef.current) clearInterval(bandwidthIntervalRef.current); };
-  }, []);
+  useEffect(() => { fetchData(); }, []);
 
   const toggleCat = (cat: string) => setExpandedCats(prev => ({ ...prev, [cat]: !prev[cat] }));
 
-  const copyFixCommand = async () => {
+  const copyFixCommand = () => {
     const cmd = `sudo curl -sL https://raw.githubusercontent.com/tu-repo/main/server/install.sh | grep -A100 'sysctl.d/99-streambox' | head -80 > /etc/sysctl.d/99-streambox.conf && sudo sysctl -p /etc/sysctl.d/99-streambox.conf`;
-    await copyToClipboard(cmd);
+    navigator.clipboard.writeText(cmd);
     toast({ title: 'Copiado', description: 'Comando copiado al portapapeles' });
   };
 
@@ -124,7 +93,7 @@ const SystemTuning = () => {
         <Server className="w-12 h-12 mx-auto mb-4 opacity-50" />
         <p>No se pudo conectar al servidor</p>
         <p className="text-sm mt-1">Este módulo requiere la API local del VPS</p>
-        <Button onClick={() => fetchData()} className="mt-4" variant="outline" size="sm">
+        <Button onClick={fetchData} className="mt-4" variant="outline" size="sm">
           <RefreshCw className="w-4 h-4 mr-2" /> Reintentar
         </Button>
       </div>
@@ -145,13 +114,13 @@ const SystemTuning = () => {
           </h2>
           <p className="text-sm text-muted-foreground mt-1">Parámetros del kernel y recursos del servidor</p>
         </div>
-        <Button onClick={() => fetchData()} variant="outline" size="sm">
+        <Button onClick={fetchData} variant="outline" size="sm">
           <RefreshCw className="w-4 h-4 mr-2" /> Actualizar
         </Button>
       </div>
 
       {/* Score + Hardware Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Score */}
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="glass-strong rounded-xl p-4 border border-border/30">
           <div className="flex items-center gap-3 mb-3">
@@ -205,39 +174,6 @@ const SystemTuning = () => {
           <div className="text-lg font-bold text-foreground">{data.disk.used_gb} / {data.disk.total_gb} GB</div>
           <Progress value={diskPercent} className="mt-2 h-2" />
           <p className="text-xs text-muted-foreground mt-1">{data.disk.avail_gb} GB libres ({data.disk.percent} uso)</p>
-        </motion.div>
-
-        {/* Bandwidth */}
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="glass-strong rounded-xl p-4 border border-border/30">
-          <div className="flex items-center gap-3 mb-3">
-            <Network className="w-5 h-5 text-primary" />
-            <span className="text-sm font-medium text-muted-foreground">Red</span>
-          </div>
-          {bandwidth ? (
-            <>
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5">
-                    <ArrowDownToLine className="w-3.5 h-3.5 text-green-400" />
-                    <span className="text-xs text-muted-foreground">Entrada</span>
-                  </div>
-                  <span className="text-sm font-bold text-green-400 font-mono">{bandwidth.rx_mbps.toFixed(1)} Mbps</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5">
-                    <ArrowUpFromLine className="w-3.5 h-3.5 text-blue-400" />
-                    <span className="text-xs text-muted-foreground">Salida</span>
-                  </div>
-                  <span className="text-sm font-bold text-blue-400 font-mono">{bandwidth.tx_mbps.toFixed(1)} Mbps</span>
-                </div>
-              </div>
-              {data.network && (
-                <p className="text-[10px] text-muted-foreground mt-2">Interfaz: {data.network.interface}</p>
-              )}
-            </>
-          ) : (
-            <p className="text-xs text-muted-foreground">Calculando...</p>
-          )}
         </motion.div>
       </div>
 

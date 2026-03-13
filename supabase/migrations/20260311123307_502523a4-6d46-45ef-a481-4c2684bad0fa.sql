@@ -1,1 +1,0 @@
-ALTER TABLE public.channels ADD COLUMN IF NOT EXISTS stream_mode text NOT NULL DEFAULT 'direct';

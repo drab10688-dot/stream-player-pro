@@ -1,336 +1,418 @@
-import { useRef, useEffect, useState, useCallback, memo } from 'react';
+import { useRef, useEffect, useState, useCallback } from 'react';
 import Hls from 'hls.js';
-import { Settings, AlertTriangle, RefreshCw, ChevronDown, Disc, Loader2 } from 'lucide-react';
+import mpegts from 'mpegts.js';
 
 interface VideoPlayerProps {
   src: string;
   channelId?: string;
-  streamMode?: 'direct' | 'buffer' | 'transcode';
   muted?: boolean;
-  onError?: (channelId: string, message: string) => void;
+  onError?: (message: string) => void;
+}
+
+interface QualityInfo {
+  label: string;
+  current: number;
+  levels: number;
+  bandwidth: number;
+  auto: boolean;
 }
 
 const getYouTubeId = (url: string): string | null => {
-  const m = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|live\/|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
-  return m?.[1] || null;
+  const patterns = [
+    /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/,
+    /youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/,
+    /youtube\.com\/live\/([a-zA-Z0-9_-]{11})/,
+  ];
+  for (const pattern of patterns) {
+    const match = url.match(pattern);
+    if (match) return match[1];
+  }
+  return null;
 };
 
-const VideoPlayer = memo(({ src, channelId, streamMode, muted = false, onError }: VideoPlayerProps) => {
+const detectStreamType = (url: string): 'hls' | 'ts' | 'youtube' | 'native' => {
+  if (getYouTubeId(url)) return 'youtube';
+  if (/\.m3u8?(\?|$)/i.test(url)) return 'hls';
+  if (/\/api\/restream\//.test(url)) return 'hls';
+  if (/\.ts(\?|$)/i.test(url) || /\/\d+\.ts/.test(url)) return 'ts';
+  return 'native';
+};
+
+const getQualityLabel = (height: number | undefined, bandwidth: number | undefined): string => {
+  if (height) {
+    if (height <= 480) return '480p';
+    if (height <= 720) return '720p';
+    if (height <= 1080) return '1080p';
+    return `${height}p`;
+  }
+  if (bandwidth) {
+    if (bandwidth < 1000000) return '480p';
+    if (bandwidth < 2500000) return '720p';
+    return 'HD';
+  }
+  return 'Auto';
+};
+
+const getQualityColor = (label: string): string => {
+  if (label === '480p') return 'bg-yellow-500/90';
+  if (label === '720p') return 'bg-blue-500/90';
+  if (label === '1080p' || label === 'HD') return 'bg-green-500/90';
+  return 'bg-white/70';
+};
+
+const MAX_RETRIES = 12;          // más reintentos antes de rendirse
+const MAX_FULL_RECONNECTS = 3;   // reconexiones completas (destruir y recrear)
+
+const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
-  const retryTimer = useRef<ReturnType<typeof setTimeout>>();
-  const retryCount = useRef(0);
-  const stallTimer = useRef<ReturnType<typeof setInterval>>();
-  const lastTimeRef = useRef(0);
-  const stallCountRef = useRef(0);
-  const bufferRetryTimer = useRef<ReturnType<typeof setTimeout>>();
-
-  const [loading, setLoading] = useState(true);
+  const mpegtsRef = useRef<mpegts.Player | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [loadingSec, setLoadingSec] = useState(0);
-  const [qualities, setQualities] = useState<{ id: string; label: string; height: number }[]>([]);
-  const [activeQuality, setActiveQuality] = useState('auto');
-  const [showQMenu, setShowQMenu] = useState(false);
-  const [bufferWaiting, setBufferWaiting] = useState(false);
-  const [bufferRetries, setBufferRetries] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [quality, setQuality] = useState<QualityInfo | null>(null);
+  const [showQualityMenu, setShowQualityMenu] = useState(false);
+  const [qualityVisible, setQualityVisible] = useState(true);
+  const [bufferAhead, setBufferAhead] = useState(0);
+  const [retryInfo, setRetryInfo] = useState<string | null>(null);
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const retryCountRef = useRef(0);
+  const fullReconnectCountRef = useRef(0);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const isPlayingRef = useRef(false); // tracks if we ever got playback
+  const initializerRef = useRef<(() => void) | null>(null);
 
-  const isBufferMode = streamMode === 'buffer' || streamMode === 'transcode';
-
-  // Resolve the actual playback URL
-  const resolveUrl = useCallback((rawSrc: string): string => {
-    // If it's already a restream URL, use as-is
-    if (rawSrc.includes('/api/restream/')) return rawSrc;
-    // If we have a channelId and it's not YouTube, route through restream
-    if (channelId && !getYouTubeId(rawSrc)) {
-      return `/api/restream/${channelId}`;
-    }
-    return rawSrc;
-  }, [channelId]);
-
-  // Bridge streams use port 3002 (xtream-bridge), not the main API
-  const resolvedSrc = resolveUrl(src);
-  const isBridge = resolvedSrc?.includes(':3002/api/restream/');
-  const streamId = resolvedSrc?.match(/\/api\/restream\/([^/?]+)/)?.[1] || channelId;
-
-  // ── Cleanup ──
-  const destroy = useCallback(() => {
-    if (retryTimer.current) clearTimeout(retryTimer.current);
-    if (stallTimer.current) clearInterval(stallTimer.current);
-    if (bufferRetryTimer.current) clearTimeout(bufferRetryTimer.current);
-    if (hlsRef.current) {
-      try { hlsRef.current.destroy(); } catch {}
-      hlsRef.current = null;
-    }
-    if (videoRef.current) {
-      videoRef.current.removeAttribute('src');
-      videoRef.current.load();
-    }
-    stallCountRef.current = 0;
-    lastTimeRef.current = 0;
+  // Auto-hide quality badge after 5s of no interaction
+  const resetHideTimer = useCallback(() => {
+    setQualityVisible(true);
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    hideTimerRef.current = setTimeout(() => setQualityVisible(false), 5000);
   }, []);
 
-  // ── Start playback with buffer-aware retry ──
-  const play = useCallback((url: string) => {
+  const cleanup = useCallback(() => {
+    if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
+    }
+    if (mpegtsRef.current) {
+      try {
+        mpegtsRef.current.pause();
+        mpegtsRef.current.unload();
+        mpegtsRef.current.detachMediaElement();
+        mpegtsRef.current.destroy();
+      } catch { /* ignore */ }
+      mpegtsRef.current = null;
+    }
+  }, []);
+
+  const initStream = useCallback(() => {
     const video = videoRef.current;
-    if (!video) return;
+    if (!video || !src) return;
+
+    const streamType = detectStreamType(src);
+    if (streamType === 'youtube') return;
 
     setError(null);
     setLoading(true);
-    setLoadingSec(0);
-    setBufferWaiting(false);
-    retryCount.current = 0;
-    destroy();
+    setQuality(null);
+    setRetryInfo(null);
+    retryCountRef.current = 0;
+    isPlayingRef.current = false;
+    cleanup();
 
-    // For buffer/transcode modes, first check if manifest is ready
-    if (isBufferMode && url.includes('/api/restream/')) {
-      setBufferWaiting(true);
-      setBufferRetries(0);
-
-      const tryFetchManifest = (attempt: number) => {
-        fetch(url, { method: 'GET', headers: { 'Accept': 'application/vnd.apple.mpegurl' } })
-          .then(res => {
-            if (res.ok) {
-              // Manifest is ready, proceed with playback
-              setBufferWaiting(false);
-              setBufferRetries(0);
-              startHlsPlayback(url, video);
-            } else if (res.status === 504 || res.status === 503 || res.status === 502) {
-              // Server still preparing buffer, retry in 5s
-              setBufferRetries(attempt + 1);
-              if (attempt < 24) { // max ~2 min of retries
-                bufferRetryTimer.current = setTimeout(() => tryFetchManifest(attempt + 1), 5000);
-              } else {
-                setBufferWaiting(false);
-                setError('El buffer no pudo inicializarse. Intenta de nuevo.');
-                setLoading(false);
-              }
-            } else {
-              setBufferWaiting(false);
-              setError(`Error del servidor (${res.status})`);
-              setLoading(false);
-            }
-          })
-          .catch(() => {
-            setBufferRetries(attempt + 1);
-            if (attempt < 24) {
-              bufferRetryTimer.current = setTimeout(() => tryFetchManifest(attempt + 1), 5000);
-            } else {
-              setBufferWaiting(false);
-              setError('No se pudo conectar al servidor.');
-              setLoading(false);
-            }
-          });
-      };
-
-      tryFetchManifest(0);
-      return;
-    }
-
-    startHlsPlayback(url, video);
-  }, [muted, destroy, isBufferMode]);
-
-  const startHlsPlayback = useCallback((url: string, video: HTMLVideoElement) => {
-    // Native HLS (Safari / iOS)
-    if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      video.src = url;
-      video.muted = muted;
-      video.play().catch(() => { video.muted = true; video.play().catch(() => {}); });
-      return;
-    }
-
-    if (!Hls.isSupported()) {
-      setError('Tu navegador no soporta reproducción de video.');
+    const reportError = (msg: string) => {
+      setError(msg);
       setLoading(false);
-      return;
-    }
+      setRetryInfo(null);
+      onError?.(msg);
+    };
 
-    const hls = new Hls({
-      enableWorker: true,
-      lowLatencyMode: true,
-      backBufferLength: 30,
-      maxBufferLength: 20,
-      maxMaxBufferLength: 60,
-      startLevel: -1,
-      fragLoadingMaxRetry: 10,
-      manifestLoadingMaxRetry: 10,
-      levelLoadingMaxRetry: 10,
-      fragLoadingRetryDelay: 1000,
-      manifestLoadingRetryDelay: 1000,
-      levelLoadingRetryDelay: 1000,
-      fragLoadingMaxRetryTimeout: 15000,
-      manifestLoadingMaxRetryTimeout: 15000,
-      levelLoadingMaxRetryTimeout: 15000,
-    });
-
-    hlsRef.current = hls;
-    hls.attachMedia(video);
-
-    hls.on(Hls.Events.MEDIA_ATTACHED, () => hls.loadSource(url));
-
-    hls.on(Hls.Events.MANIFEST_PARSED, (_e, data) => {
-      if (!isBridge && data.levels.length > 1) {
-        setQualities(data.levels.map((l: any, i: number) => ({
-          id: String(i),
-          label: l.height ? `${l.height}p` : `Nivel ${i + 1}`,
-          height: l.height || 0,
-        })).sort((a: any, b: any) => b.height - a.height));
-      }
-
-      video.muted = muted;
-      video.play().then(() => {
-        setLoading(false);
-        retryCount.current = 0;
-      }).catch(() => {
-        video.muted = true;
-        video.play().then(() => { setLoading(false); retryCount.current = 0; }).catch(() => {});
-      });
-    });
-
-    hls.on(Hls.Events.ERROR, (_e, data) => {
-      if (!data.fatal) return;
-
-      if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-        hls.recoverMediaError();
+    // Full reconnect: destroy everything and re-initialize from scratch
+    const fullReconnect = () => {
+      if (fullReconnectCountRef.current >= MAX_FULL_RECONNECTS) {
+        reportError('No se pudo conectar al stream después de varios intentos.');
         return;
       }
+      fullReconnectCountRef.current++;
+      const delay = 3000 * fullReconnectCountRef.current;
+      setRetryInfo(`Reconectando (${fullReconnectCountRef.current}/${MAX_FULL_RECONNECTS})...`);
+      retryTimerRef.current = setTimeout(() => {
+        retryCountRef.current = 0;
+        cleanup();
+        initStream();
+      }, delay);
+    };
 
-      // Network / other fatal → retry
-      if (retryCount.current < 8) {
-        retryCount.current++;
-        const delay = Math.min(retryCount.current * 1500, 8000);
-        console.warn(`[Player] Retry ${retryCount.current}/8 en ${delay}ms`);
-        retryTimer.current = setTimeout(() => hls.loadSource(url), delay);
-      } else {
-        setError('No se pudo reproducir. El canal puede estar caído.');
-        setLoading(false);
-        if (channelId) onError?.(channelId, 'Playback failed after retries');
+    const retryStream = () => {
+      if (retryCountRef.current >= MAX_RETRIES) {
+        // Try full reconnect instead of giving up
+        fullReconnect();
+        return;
       }
-    });
-
-    // Playing event as backup for loading state
-    const onPlaying = () => { setLoading(false); setError(null); setBufferWaiting(false); };
-    video.addEventListener('playing', onPlaying, { once: true });
-    video.addEventListener('timeupdate', onPlaying, { once: true });
-
-    // ── Stall detection ──
-    if (stallTimer.current) clearInterval(stallTimer.current);
-    stallCountRef.current = 0;
-    lastTimeRef.current = 0;
-    stallTimer.current = setInterval(() => {
-      if (!video || video.paused || video.ended) return;
-      const ct = video.currentTime;
-      if (ct > 0 && ct === lastTimeRef.current) {
-        stallCountRef.current++;
-        if (stallCountRef.current >= 3) {
-          console.warn(`[Player] Stall detectado (${stallCountRef.current * 2}s), recuperando...`);
-          stallCountRef.current = 0;
-          if (hls) {
-            try { hls.recoverMediaError(); } catch { hls.loadSource(url); }
-          }
+      retryCountRef.current++;
+      const delay = Math.min(2000 * retryCountRef.current, 10000);
+      setRetryInfo(`Reintentando (${retryCountRef.current}/${MAX_RETRIES})...`);
+      retryTimerRef.current = setTimeout(() => {
+        if (mpegtsRef.current) {
+          try {
+            mpegtsRef.current.unload();
+            mpegtsRef.current.load();
+          } catch { /* ignore */ }
+        } else if (hlsRef.current) {
+          hlsRef.current.startLoad();
         }
-      } else {
-        stallCountRef.current = 0;
+      }, delay);
+    };
+
+    const attemptPlay = async (v: HTMLVideoElement) => {
+      try {
+        v.muted = false;
+        await v.play();
+        setLoading(false);
+        setRetryInfo(null);
+        isPlayingRef.current = true;
+      } catch {
+        v.muted = true;
+        try {
+          await v.play();
+          setLoading(false);
+          setRetryInfo(null);
+          isPlayingRef.current = true;
+          setTimeout(() => { v.muted = false; }, 500);
+        } catch {
+          setLoading(false);
+        }
       }
-      lastTimeRef.current = ct;
-    }, 2000);
-  }, [muted, channelId, onError, isBridge]);
+    };
 
-  // ── Fetch bridge qualities ──
-  useEffect(() => {
-    if (!streamId) return;
-    // Always set default qualities for restream channels
-    if (resolvedSrc.includes('/api/restream/')) {
-      setQualities([
-        { id: 'original', label: 'Original', height: 1080 },
-        { id: '720', label: '720p', height: 720 },
-        { id: '480', label: '480p', height: 480 },
-        { id: '360', label: '360p', height: 360 },
-      ]);
+    if (streamType === 'ts') {
+      if (mpegts.isSupported()) {
+        const player = mpegts.createPlayer({
+          type: 'mpegts',
+          isLive: true,
+          url: src,
+        }, {
+          enableWorker: true,
+          enableStashBuffer: true,
+          stashInitialSize: 1024 * 1024,
+          liveBufferLatencyChasing: true,
+          liveBufferLatencyMaxLatency: 8,
+          liveBufferLatencyMinRemain: 1,
+          lazyLoad: false,
+          autoCleanupSourceBuffer: true,
+          autoCleanupMaxBackwardDuration: 30,
+          autoCleanupMinBackwardDuration: 15,
+        });
+        mpegtsRef.current = player;
+        player.attachMediaElement(video);
+        player.load();
 
-      fetch(`/api/restream/${streamId}/qualities`)
-        .then(r => r.ok ? r.json() : null)
-        .then((data: any) => {
-          if (Array.isArray(data) && data.length > 0) {
-            setQualities(data.map((q: any) => ({
-              id: q.id,
-              label: q.label,
-              height: q.height || 0,
-            })));
+        player.on(mpegts.Events.ERROR, (errorType: string, errorDetail: string) => {
+          console.error('mpegts error:', errorType, errorDetail);
+          retryStream();
+        });
+
+        player.on(mpegts.Events.STATISTICS_INFO, () => {
+          if (loading && video.readyState >= 2) {
+            setLoading(false);
+            setRetryInfo(null);
           }
-        })
-        .catch(() => {});
+          if (video.videoHeight) {
+            setQuality({
+              label: getQualityLabel(video.videoHeight, undefined),
+              current: 0,
+              levels: 1,
+              bandwidth: 0,
+              auto: false,
+            });
+            resetHideTimer();
+          }
+        });
+
+        attemptPlay(video);
+      } else {
+        video.src = src;
+        attemptPlay(video);
+      }
+    } else if (streamType === 'hls') {
+      if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = src;
+        attemptPlay(video);
+      } else if (Hls.isSupported()) {
+        const hls = new Hls({
+          enableWorker: true,
+          lowLatencyMode: true,           // arranque más rápido
+          abrEwmaDefaultEstimate: 1000000, // asumir 1Mbps para iniciar rápido
+          abrEwmaFastLive: 3,
+          abrEwmaSlowLive: 9,
+          abrEwmaFastVoD: 3,
+          abrEwmaSlowVoD: 9,
+          abrBandWidthFactor: 0.8,
+          abrBandWidthUpFactor: 0.6,
+          // Buffer: arrancar rápido, luego acumular
+          maxBufferLength: 1800,
+          maxMaxBufferLength: 3600,
+          maxBufferSize: 500 * 1000 * 1000,
+          maxBufferHole: 0.8,              // tolerar huecos más grandes
+          backBufferLength: 120,
+          // Arranque instantáneo
+          liveSyncDurationCount: 2,        // empezar cerca del live edge
+          liveMaxLatencyDurationCount: 5,
+          liveDurationInfinity: true,
+          // Reintentos agresivos
+          fragLoadingMaxRetry: 30,
+          fragLoadingRetryDelay: 1500,
+          fragLoadingMaxRetryTimeout: 64000,
+          manifestLoadingMaxRetry: 25,
+          manifestLoadingRetryDelay: 1500,
+          manifestLoadingMaxRetryTimeout: 64000,
+          levelLoadingMaxRetry: 25,
+          levelLoadingRetryDelay: 1500,
+          levelLoadingMaxRetryTimeout: 64000,
+          startLevel: 0,                   // empezar en la calidad más baja = más rápido
+          startFragPrefetch: true,
+          testBandwidth: true,
+          progressive: true,
+        });
+        hlsRef.current = hls;
+        hls.loadSource(src);
+        hls.attachMedia(video);
+
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          setLoading(false);
+          setRetryInfo(null);
+          attemptPlay(video);
+          updateQualityInfo(hls);
+        });
+
+        hls.on(Hls.Events.LEVEL_SWITCHED, () => {
+          updateQualityInfo(hls);
+          resetHideTimer();
+        });
+
+        hls.on(Hls.Events.FRAG_LOADED, () => {
+          // Reset retry counter on successful fragment load
+          retryCountRef.current = 0;
+          setRetryInfo(null);
+          isPlayingRef.current = true;
+          updateQualityInfo(hls);
+          if (video.buffered.length > 0) {
+            const buffered = video.buffered.end(video.buffered.length - 1) - video.currentTime;
+            setBufferAhead(Math.max(0, Math.round(buffered)));
+          }
+        });
+
+        hls.on(Hls.Events.ERROR, (_, data) => {
+          if (data.fatal) {
+            switch (data.type) {
+              case Hls.ErrorTypes.NETWORK_ERROR:
+                console.warn('HLS network error, retrying...', data.details);
+                retryStream();
+                break;
+              case Hls.ErrorTypes.MEDIA_ERROR:
+                console.warn('HLS media error, recovering...', data.details);
+                hls.recoverMediaError();
+                break;
+              default:
+                // Si nunca llegamos a reproducir, intentar reconexión completa
+                if (!isPlayingRef.current) {
+                  console.warn('HLS fatal error before playback, full reconnect...', data.details);
+                  fullReconnect();
+                } else {
+                  reportError(`Error HLS: ${data.details || 'Error fatal del stream'}`);
+                }
+                break;
+            }
+          }
+        });
+
+        hls.on(Hls.Events.BUFFER_EOS, () => {
+          if (!video.ended) retryStream();
+        });
+      } else {
+        reportError('Tu navegador no soporta HLS');
+      }
+    } else {
+      video.src = src;
+      attemptPlay(video);
     }
-  }, [streamId, resolvedSrc]);
 
-  // ── Quality switch ──
-  const switchQuality = useCallback((qId: string) => {
-    setActiveQuality(qId);
-    setShowQMenu(false);
+    const stallCheck = setInterval(() => {
+      if (video && !video.paused && video.readyState < 3 && !loading) {
+        retryStream();
+      }
+    }, 10000);
 
-    if (!isBridge && !resolvedSrc.includes('/api/restream/') && hlsRef.current) {
-      hlsRef.current.currentLevel = qId === 'auto' ? -1 : parseInt(qId, 10);
-      return;
-    }
+    resetHideTimer();
 
-    if (streamId) {
-      const newUrl = qId === 'auto'
-        ? `/api/restream/${streamId}`
-        : qId === 'original'
-          ? `/api/restream/${streamId}/variant/original.m3u8`
-          : `/api/restream/${streamId}/variant/${qId}.m3u8`;
-      play(newUrl);
-    }
-  }, [isBridge, streamId, play, resolvedSrc]);
+    // Store cleanup for this initialization
+    const localCleanup = () => {
+      clearInterval(stallCheck);
+      cleanup();
+    };
 
-  // ── Init on src change ──
+    // We need to return cleanup, but since we're in a callback we store it
+    initializerRef.current = localCleanup;
+
+    return localCleanup;
+  }, [src, cleanup, resetHideTimer, onError]);
+
   useEffect(() => {
-    if (!src || getYouTubeId(src)) return;
-    setActiveQuality('auto');
-    setQualities([]);
-    play(resolveUrl(src));
-    return () => destroy();
+    fullReconnectCountRef.current = 0;
+    const localCleanup = initStream();
+    return () => {
+      localCleanup?.();
+    };
   }, [src]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Mute sync ──
+  const updateQualityInfo = (hls: Hls) => {
+    const currentLevel = hls.currentLevel;
+    const levels = hls.levels;
+    if (!levels || levels.length === 0) return;
+
+    const level = levels[currentLevel] || levels[0];
+    const bw = hls.bandwidthEstimate || 0;
+
+    setQuality({
+      label: getQualityLabel(level?.height, level?.bitrate),
+      current: currentLevel,
+      levels: levels.length,
+      bandwidth: Math.round(bw / 1000),
+      auto: hls.autoLevelEnabled,
+    });
+  };
+
+  const switchQuality = (levelIndex: number) => {
+    const hls = hlsRef.current;
+    if (!hls) return;
+    if (levelIndex === -1) {
+      hls.currentLevel = -1;
+    } else {
+      hls.currentLevel = levelIndex;
+    }
+    setShowQualityMenu(false);
+    resetHideTimer();
+  };
+
   useEffect(() => {
-    if (videoRef.current) videoRef.current.muted = muted;
+    if (videoRef.current) {
+      videoRef.current.muted = muted;
+    }
   }, [muted]);
 
-  // ── Loading timer ──
-  useEffect(() => {
-    if (!loading || error) return;
-    setLoadingSec(0);
-    const t = setInterval(() => setLoadingSec(p => p + 1), 1000);
-    return () => clearInterval(t);
-  }, [loading, error]);
-
-  // ── Loading timeout ──
-  useEffect(() => {
-    if (loadingSec >= 60 && loading) {
-      const video = videoRef.current;
-      if (video && video.currentTime > 0 && !video.paused) {
-        setLoading(false);
-        setError(null);
-        return;
-      }
-      if (!bufferWaiting) {
-        setError('El canal tardó demasiado en responder.');
-        setLoading(false);
-      }
-    }
-  }, [loadingSec, loading, bufferWaiting]);
-
-  // ── YouTube ──
-  const ytId = getYouTubeId(src);
-  if (ytId) {
+  // YouTube render
+  const youtubeId = getYouTubeId(src);
+  if (youtubeId) {
     return (
       <div className="relative w-full h-full bg-black">
         <iframe
           className="w-full h-full"
-          src={`https://www.youtube-nocookie.com/embed/${ytId}?autoplay=1&mute=${muted ? 1 : 0}&rel=0&modestbranding=1&playsinline=1`}
-          title="YouTube"
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          src={`https://www.youtube-nocookie.com/embed/${youtubeId}?autoplay=1&mute=${muted ? 1 : 0}&rel=0&modestbranding=1&playsinline=1&enablejsapi=1&origin=${window.location.origin}`}
+          title="YouTube video"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
           allowFullScreen
+          referrerPolicy="no-referrer"
           style={{ border: 'none' }}
         />
       </div>
@@ -338,109 +420,129 @@ const VideoPlayer = memo(({ src, channelId, streamMode, muted = false, onError }
   }
 
   return (
-    <div className="relative w-full h-full bg-black group">
+    <div
+      className="relative w-full h-full bg-black group"
+      onMouseMove={resetHideTimer}
+      onTouchStart={resetHideTimer}
+    >
       <video
         ref={videoRef}
         className="w-full h-full object-contain"
         playsInline
         controls
+        muted={muted}
+        preload="auto"
+        {...(detectStreamType(src) !== 'ts' ? { crossOrigin: 'anonymous' as const } : {})}
+        onCanPlay={() => { setLoading(false); setRetryInfo(null); }}
+        onWaiting={() => setLoading(true)}
+        onPlaying={() => { setLoading(false); setRetryInfo(null); isPlayingRef.current = true; }}
+        onError={() => {
+          // Solo mostrar error si NO hay un HLS/mpegts manejando reintentos
+          if (!hlsRef.current && !mpegtsRef.current) {
+            const msg = 'No se pudo reproducir este canal. Verifica la URL.';
+            setError(msg);
+            setLoading(false);
+            onError?.(msg);
+          }
+          // Si hay HLS/mpegts, dejar que ellos manejen el error
+        }}
       />
 
-      {/* Quality selector — top right, visible on hover */}
-      {qualities.length > 0 && !loading && !error && (
-        <div className="absolute top-3 right-3 z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+      {/* Quality Badge */}
+      {quality && !error && !loading && (
+        <div
+          className={`absolute top-3 right-3 z-20 transition-opacity duration-300 ${
+            qualityVisible || showQualityMenu ? 'opacity-100' : 'opacity-0'
+          }`}
+        >
           <button
-            onClick={() => setShowQMenu(p => !p)}
-            className="flex items-center gap-1.5 px-3 py-2 bg-black/80 hover:bg-black/90 rounded-lg text-xs text-white/90 hover:text-white backdrop-blur-sm border border-white/10 transition-colors"
+            onClick={() => {
+              setShowQualityMenu(!showQualityMenu);
+              resetHideTimer();
+            }}
+            className={`${getQualityColor(quality.label)} text-white text-xs font-bold px-2.5 py-1 rounded-md shadow-lg backdrop-blur-sm flex items-center gap-1.5 hover:scale-105 transition-transform cursor-pointer`}
           >
-            <Settings className="w-4 h-4" />
-            <span className="font-medium">
-              {activeQuality === 'auto' ? 'Auto' : qualities.find(q => q.id === activeQuality)?.label || 'Auto'}
-            </span>
-            <ChevronDown className={`w-3 h-3 transition-transform ${showQMenu ? 'rotate-180' : ''}`} />
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+            {quality.label}
+            {bufferAhead > 0 && (
+              <span className="text-[10px] opacity-70 ml-0.5">
+                {bufferAhead >= 60 ? `${Math.floor(bufferAhead / 60)}m` : `${bufferAhead}s`}
+              </span>
+            )}
+            {quality.auto && quality.levels > 1 && (
+              <span className="text-[10px] opacity-80">AUTO</span>
+            )}
           </button>
 
-          {showQMenu && (
-            <>
-              <div className="fixed inset-0 z-40" onClick={() => setShowQMenu(false)} />
-              <div className="absolute right-0 top-full mt-1 z-50 bg-black/95 backdrop-blur-xl rounded-xl border border-white/10 shadow-2xl min-w-[160px] overflow-hidden">
-                <div className="px-3 py-2 border-b border-white/10">
-                  <span className="text-[10px] text-white/40 font-semibold uppercase tracking-wider">Calidad</span>
-                </div>
-                <div className="py-1">
+          {/* Quality Selector Menu */}
+          {showQualityMenu && hlsRef.current && hlsRef.current.levels.length > 1 && (
+            <div className="absolute top-full right-0 mt-1 bg-black/90 backdrop-blur-md rounded-lg shadow-2xl border border-white/10 overflow-hidden min-w-[140px]">
+              <button
+                onClick={() => switchQuality(-1)}
+                className={`w-full text-left px-3 py-2 text-xs font-medium flex items-center justify-between hover:bg-white/10 transition-colors ${
+                  quality.auto ? 'text-primary' : 'text-white/80'
+                }`}
+              >
+                <span>Auto</span>
+                {quality.auto && <span className="text-primary">●</span>}
+              </button>
+              <div className="h-px bg-white/10" />
+              {hlsRef.current.levels.map((level, idx) => {
+                const label = getQualityLabel(level.height, level.bitrate);
+                const bitrateMbps = (level.bitrate / 1000000).toFixed(1);
+                const isActive = !quality.auto && quality.current === idx;
+                return (
                   <button
-                    onClick={() => switchQuality('auto')}
-                    className={`w-full text-left px-3 py-2.5 text-sm transition-colors ${
-                      activeQuality === 'auto' ? 'text-primary bg-primary/10' : 'text-white/80 hover:bg-white/10'
+                    key={idx}
+                    onClick={() => switchQuality(idx)}
+                    className={`w-full text-left px-3 py-2 text-xs font-medium flex items-center justify-between hover:bg-white/10 transition-colors ${
+                      isActive ? 'text-primary' : 'text-white/80'
                     }`}
                   >
-                    Auto
+                    <span>{label}</span>
+                    <span className="text-[10px] text-white/40 ml-2">{bitrateMbps}M</span>
+                    {isActive && <span className="text-primary ml-1">●</span>}
                   </button>
-                  {qualities.map(q => (
-                    <button
-                      key={q.id}
-                      onClick={() => switchQuality(q.id)}
-                      className={`w-full text-left px-3 py-2.5 text-sm transition-colors ${
-                        activeQuality === q.id ? 'text-primary bg-primary/10' : 'text-white/80 hover:bg-white/10'
-                      }`}
-                    >
-                      {q.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </>
+                );
+              })}
+              {quality.bandwidth > 0 && (
+                <>
+                  <div className="h-px bg-white/10" />
+                  <div className="px-3 py-1.5 text-[10px] text-white/30">
+                    ↓ {quality.bandwidth} kbps
+                  </div>
+                </>
+              )}
+            </div>
           )}
         </div>
       )}
 
-      {/* Buffer waiting state */}
-      {bufferWaiting && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/80 pointer-events-none z-20">
-          <div className="flex flex-col items-center gap-3 max-w-xs text-center">
-            <div className="relative">
-              <Disc className="w-10 h-10 text-primary animate-spin" style={{ animationDuration: '3s' }} />
-              <Loader2 className="w-5 h-5 text-primary/60 animate-spin absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
-            </div>
-            <p className="text-white/80 text-sm font-medium">
-              Iniciando buffer de estabilidad…
-            </p>
-            <p className="text-white/40 text-xs">
-              {bufferRetries > 0 
-                ? `Esperando segmentos… intento ${bufferRetries} (reintentando cada 5s)`
-                : 'El servidor está preparando los segmentos de video'}
+      {/* Loading / Retry indicator */}
+      {loading && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/80 pointer-events-none">
+          <div className="text-center">
+            <div className="w-10 h-10 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+            <p className="text-muted-foreground text-sm">
+              {retryInfo || 'Cargando stream...'}
             </p>
           </div>
         </div>
       )}
-
-      {/* Loading */}
-      {loading && !error && !bufferWaiting && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/70 pointer-events-none z-20">
-          <div className="flex flex-col items-center gap-3">
-            <div className="w-10 h-10 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-            {loadingSec >= 3 && (
-              <p className="text-white/50 text-xs">Conectando… {loadingSec}s</p>
-            )}
-            {loadingSec >= 15 && (
-              <p className="text-white/40 text-[10px]">La conexión está lenta</p>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Error */}
       {error && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-20">
+        <div className="absolute inset-0 flex items-center justify-center bg-black/80">
           <div className="text-center max-w-sm px-4">
-            <AlertTriangle className="w-8 h-8 text-destructive mx-auto mb-3" />
             <p className="text-destructive font-semibold mb-2">Error de reproducción</p>
             <p className="text-muted-foreground text-sm mb-4">{error}</p>
             <button
-              onClick={() => play(resolveUrl(src))}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors"
+              onClick={() => {
+                setError(null);
+                fullReconnectCountRef.current = 0;
+                retryCountRef.current = 0;
+                initStream();
+              }}
+              className="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors"
             >
-              <RefreshCw className="w-4 h-4" />
               Reintentar
             </button>
           </div>
@@ -448,8 +550,6 @@ const VideoPlayer = memo(({ src, channelId, streamMode, muted = false, onError }
       )}
     </div>
   );
-});
-
-VideoPlayer.displayName = 'VideoPlayer';
+};
 
 export default VideoPlayer;

@@ -293,7 +293,7 @@ sleep 1
 # =============================================
 # PASO 3: Actualizar sistema e instalar dependencias
 # =============================================
-log_step "📦 [2/8] Actualizando sistema e instalando dependencias..."
+log_step "📦 [2/9] Actualizando sistema e instalando dependencias..."
 
 log_info "Actualizando paquetes del sistema (esto puede tardar)..."
 apt update -qq 2>/dev/null
@@ -301,29 +301,6 @@ apt upgrade -y -qq > /dev/null 2>&1
 log_ok "Sistema actualizado"
 
 apt install -y -qq postgresql postgresql-contrib nginx curl git build-essential netcat-openbsd lsof > /dev/null 2>&1
-
-# Instalar FFmpeg con soporte H.265/HEVC
-if ! command -v ffmpeg &> /dev/null; then
-  log_info "Instalando FFmpeg con soporte H.265 (HEVC)..."
-  apt install -y -qq ffmpeg > /dev/null 2>&1
-fi
-
-# Verificar que FFmpeg tiene libx265
-if ffmpeg -encoders 2>/dev/null | grep -q "libx265"; then
-  log_ok "FFmpeg con H.265/HEVC (libx265) ✓"
-else
-  log_warn "FFmpeg instalado pero sin libx265. Instalando codecs adicionales..."
-  apt install -y -qq libx265-dev libx264-dev > /dev/null 2>&1
-  # En Ubuntu/Debian, ffmpeg del repo oficial ya trae libx265
-  # Si no, intentar desde ppa
-  if ! ffmpeg -encoders 2>/dev/null | grep -q "libx265"; then
-    log_warn "libx265 no disponible. El servidor usará H.264 (mayor consumo de datos)"
-    log_info "Para habilitar H.265 manualmente: apt install ffmpeg libx265-dev"
-  else
-    log_ok "FFmpeg H.265 habilitado tras instalar codecs"
-  fi
-fi
-log_ok "FFmpeg $(ffmpeg -version 2>/dev/null | head -1 | awk '{print $3}')"
 
 # Instalar Node.js 20 si no está o es muy viejo
 if ! command -v node &> /dev/null || [[ $(node -v | cut -d'.' -f1 | tr -d 'v') -lt 18 ]]; then
@@ -452,15 +429,15 @@ echo -e "║  Espacio total:    ${DISK_TOTAL_GB}GB$(printf '%*s' $((27 - ${#DISK
 echo -e "║  Espacio libre:    ${DISK_AVAIL_GB}GB$(printf '%*s' $((27 - ${#DISK_AVAIL_GB})) '')║"
 echo -e "║  RAM total:        ${TOTAL_RAM_MB}MB$(printf '%*s' $((27 - ${#TOTAL_RAM_MB})) '')║"
 echo "╠══════════════════════════════════════════════════╣"
-echo "║  📊 Recomendación (ABR 5 calidades):      ║"
+echo "║  📊 Recomendación de disco por canales:          ║"
 echo "║                                                  ║"
 echo "║  Canales    Caché   Disco     RAM (FFmpeg)       ║"
 echo "║  ────────   ─────   ────────  ──────────         ║"
-echo "║  10 ch      30min   ~15 GB    ~8 GB              ║"
-echo "║  25 ch      30min   ~35 GB    ~16 GB             ║"
-echo "║  50 ch      30min   ~70 GB    ~25 GB             ║"
-echo "║  100 ch     30min   ~140 GB   ~40 GB             ║"
-echo "║  200 ch     30min   ~280 GB   ~70 GB             ║"
+echo "║  10 ch      30min   ~5 GB     ~4 GB              ║"
+echo "║  25 ch      30min   ~12 GB    ~8 GB              ║"
+echo "║  50 ch      30min   ~25 GB    ~12 GB             ║"
+echo "║  100 ch     30min   ~50 GB    ~20 GB             ║"
+echo "║  200 ch     30min   ~100 GB   ~35 GB             ║"
 echo "║                                                  ║"
 echo "║  💡 Tip: Solo canales keep-alive usan caché      ║"
 echo "║     Los demás se conectan bajo demanda (0 disco) ║"
@@ -494,7 +471,15 @@ mkdir -p "$HLS_DIR" "$HLS_CACHE_DIR"
 chmod 777 "$HLS_DIR" "$HLS_CACHE_DIR"
 
 log_ok "Almacenamiento HLS en disco SSD: $HLS_DIR"
-log_info "Capacidad estimada: ~$((DISK_AVAIL_GB * 10 / 14)) canales keep-alive (30min caché, ABR 5 calidades)"
+log_info "Capacidad estimada: ~$((DISK_AVAIL_GB / 500 * 1000)) canales keep-alive (30min caché)"
+
+# Instalar FFmpeg si no está
+if ! command -v ffmpeg &> /dev/null; then
+  log_info "Instalando FFmpeg..."
+  apt install -y -qq ffmpeg > /dev/null 2>&1
+fi
+FFMPEG_VERSION=$(ffmpeg -version 2>/dev/null | head -1 | awk '{print $3}')
+log_ok "FFmpeg ${FFMPEG_VERSION} listo"
 
 log_ok "Almacenamiento configurado - streams HLS en SSD"
 
@@ -510,11 +495,8 @@ pm2 delete omnisync-api > /dev/null 2>&1 || true
 # Liberar puerto API por si acaso
 kill_port $API_PORT 2>/dev/null
 
-# Crear directorios
+# Crear directorio
 mkdir -p /opt/streambox/server
-mkdir -p /opt/streambox/server/uploads/logos
-mkdir -p /opt/streambox/server/uploads/vod
-mkdir -p /opt/streambox/server/uploads/vod-posters
 cp -r "${SCRIPT_DIR}"/* /opt/streambox/server/
 
 # Configurar index.js con los valores correctos
@@ -546,68 +528,15 @@ cat > .env.production << EOF
 VITE_LOCAL_API_URL=${API_URL}
 EOF
 
-# Instalar dependencias del frontend
-log_info "Instalando dependencias del frontend (esto puede tardar)..."
-if ! npm install --legacy-peer-deps 2>&1 | tail -3; then
-  log_warn "npm install con --legacy-peer-deps falló, intentando sin flag..."
-  if ! npm install 2>&1 | tail -3; then
-    log_err "No se pudieron instalar las dependencias del frontend"
-    log_info "Intenta manualmente: cd ${PROJECT_DIR} && npm install"
+npm install --legacy-peer-deps > /dev/null 2>&1
+if ! npm run build > /dev/null 2>&1; then
+  log_warn "Error en build, reintentando con limpieza..."
+  rm -rf node_modules/.vite
+  npm run build > /dev/null 2>&1
+  if [ $? -ne 0 ]; then
+    log_err "Error compilando frontend. Revisa errores con: cd ${PROJECT_DIR} && npm run build"
     exit 1
   fi
-fi
-log_ok "Dependencias del frontend instaladas"
-
-# Compilar frontend - intentar múltiples métodos
-log_info "Compilando frontend..."
-BUILD_SUCCESS=false
-
-# Método 1: npm run build (usa el script de package.json)
-if npm run build 2>&1 | tail -5; then
-  if [ -f "dist/index.html" ]; then
-    BUILD_SUCCESS=true
-    log_ok "Build exitoso con npm run build"
-  fi
-fi
-
-# Método 2: npx vite build (ejecuta vite directamente)
-if [ "$BUILD_SUCCESS" = false ]; then
-  log_warn "Reintentando con npx vite build..."
-  rm -rf dist node_modules/.vite
-  if npx vite build 2>&1 | tail -5; then
-    if [ -f "dist/index.html" ]; then
-      BUILD_SUCCESS=true
-      log_ok "Build exitoso con npx vite build"
-    fi
-  fi
-fi
-
-# Método 3: Limpiar todo y reintentar
-if [ "$BUILD_SUCCESS" = false ]; then
-  log_warn "Reintentando con limpieza completa..."
-  rm -rf node_modules dist
-  npm install --legacy-peer-deps 2>&1 | tail -3
-  npx vite build 2>&1 | tail -5
-  if [ -f "dist/index.html" ]; then
-    BUILD_SUCCESS=true
-    log_ok "Build exitoso después de limpieza completa"
-  fi
-fi
-
-if [ "$BUILD_SUCCESS" = false ]; then
-  log_err "No se pudo compilar el frontend después de 3 intentos"
-  log_info "Ejecuta manualmente para ver el error completo:"
-  echo "   cd ${PROJECT_DIR}"
-  echo "   npm install"
-  echo "   npx vite build"
-  exit 1
-fi
-
-# Verificar que el build tiene contenido
-FILE_COUNT=$(find dist -type f | wc -l)
-if [ "$FILE_COUNT" -lt 3 ]; then
-  log_err "El build parece incompleto (solo $FILE_COUNT archivos)"
-  exit 1
 fi
 
 # Copiar build
@@ -615,13 +544,7 @@ mkdir -p /var/www/streambox
 rm -rf /var/www/streambox/*
 cp -r dist/* /var/www/streambox/
 
-# Verificación final
-if [ -f "/var/www/streambox/index.html" ]; then
-  log_ok "Frontend compilado y desplegado ($FILE_COUNT archivos)"
-else
-  log_err "Error: index.html no se copió a /var/www/streambox/"
-  exit 1
-fi
+log_ok "Frontend compilado y desplegado"
 
 # =============================================
 # PASO 7: Configurar Nginx
@@ -634,9 +557,6 @@ server {
     server_name _;
     server_tokens off;
 
-    # Sin límite para subida de VOD (videos grandes)
-    client_max_body_size 0;
-
     root /var/www/streambox;
     index index.html;
 
@@ -645,90 +565,29 @@ server {
         try_files \$uri \$uri/ /index.html;
     }
 
-    # API proxy (todas las rutas /api/)
+    # API proxy
     location /api/ {
         proxy_pass http://127.0.0.1:${API_PORT};
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection 'upgrade';
         proxy_set_header Host \$host;
-        proxy_set_header X-Forwarded-Host \$host;
-        proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_cache_bypass \$http_upgrade;
         proxy_set_header X-Real-IP \$remote_addr;
 
-        # Timeout para restreaming y uploads VOD grandes
-        proxy_connect_timeout 1800;
-        proxy_send_timeout 1800;
-        proxy_read_timeout 1800;
+        # Timeout para restreaming
+        proxy_connect_timeout 300;
+        proxy_send_timeout 300;
+        proxy_read_timeout 300;
 
         # Sin buffering para streams
         proxy_buffering off;
     }
 
-    # =============================================
-    # Xtream Codes API — Compatible con TiviMate, Smarters, etc.
-    # =============================================
-    location = /player_api.php {
-        proxy_pass http://127.0.0.1:${API_PORT};
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Forwarded-Host \$host;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_buffering off;
-    }
-
-    location = /get.php {
-        proxy_pass http://127.0.0.1:${API_PORT};
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Forwarded-Host \$host;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_buffering off;
-    }
-
-    location = /xmltv.php {
-        proxy_pass http://127.0.0.1:${API_PORT};
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Forwarded-Host \$host;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_buffering off;
-    }
-
-    location /live/ {
-        proxy_pass http://127.0.0.1:${API_PORT};
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Forwarded-Host \$host;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_buffering off;
-        proxy_read_timeout 300;
-    }
-
-    # Archivos estáticos: logos y posters VOD
-    location /uploads/ {
-        proxy_pass http://127.0.0.1:${API_PORT};
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_cache_bypass \$http_upgrade;
-    }
-
-    # Seguridad: ocultar headers del origen
+    # Seguridad
     proxy_hide_header X-Powered-By;
     proxy_hide_header Server;
     proxy_hide_header Via;
-    proxy_hide_header X-Real-IP;
-    proxy_hide_header X-Forwarded-For;
-    proxy_hide_header X-Forwarded-Host;
-
-    # Headers de seguridad
-    add_header X-Content-Type-Options nosniff always;
-    add_header X-Frame-Options SAMEORIGIN always;
-    add_header Referrer-Policy no-referrer always;
 
     location ~ /\. {
         deny all;
@@ -862,31 +721,26 @@ cd /opt/streambox/server
 # Asegurar que el puerto está libre antes de iniciar
 kill_port $API_PORT 2>/dev/null
 
-DB_PASS="${DB_PASS}" pm2 start index.js --name streambox-api --max-restarts 10 --restart-delay 3000 --update-env > /dev/null 2>&1
+pm2 start index.js --name streambox-api --max-restarts 10 --restart-delay 3000 > /dev/null 2>&1
 pm2 startup systemd -u root --hp /root > /dev/null 2>&1 || true
 pm2 save > /dev/null 2>&1
 
-# Esperar a que la API esté lista (más tiempo porque FFmpeg puede tardar)
+# Esperar a que la API esté lista
 log_info "Esperando que la API responda..."
-if wait_for_port $API_PORT "API" 30; then
+if wait_for_port $API_PORT "API" 15; then
   log_ok "API corriendo en puerto $API_PORT"
 else
-  log_warn "La API no respondió en 30 segundos"
+  log_err "La API no respondió en 15 segundos"
   log_info "Revisando logs..."
   pm2 logs streambox-api --lines 10 --nostream
   echo ""
-  log_warn "Intentando reiniciar (matando FFmpeg zombies)..."
-  pkill -f ffmpeg > /dev/null 2>&1 || true
+  log_warn "Intentando reiniciar..."
   pm2 restart streambox-api > /dev/null 2>&1
   sleep 5
-  if wait_for_port $API_PORT "API" 30; then
+  if wait_for_port $API_PORT "API" 10; then
     log_ok "API corriendo después de reinicio"
   else
     log_err "API no arranca. Revisa: pm2 logs streambox-api"
-    log_info "Intenta manualmente:"
-    echo "   pkill -f ffmpeg"
-    echo "   pm2 delete streambox-api"
-    echo "   cd /opt/streambox/server && pm2 start index.js --name streambox-api"
     exit 1
   fi
 fi
@@ -994,13 +848,9 @@ echo ""
 if [ "$WEB_PORT" = "80" ]; then
   echo -e "${CYAN}🌐 Panel Admin:    http://${SERVER_IP}/admin${NC}"
   echo -e "${CYAN}📺 App Clientes:   http://${SERVER_IP}/login${NC}"
-  echo -e "${CYAN}📡 Xtream API:     http://${SERVER_IP}/player_api.php${NC}"
-  echo -e "${CYAN}📋 M3U Playlist:   http://${SERVER_IP}/get.php?username=X&password=X&type=m3u_plus${NC}"
 else
   echo -e "${CYAN}🌐 Panel Admin:    http://${SERVER_IP}:${WEB_PORT}/admin${NC}"
   echo -e "${CYAN}📺 App Clientes:   http://${SERVER_IP}:${WEB_PORT}/login${NC}"
-  echo -e "${CYAN}📡 Xtream API:     http://${SERVER_IP}:${WEB_PORT}/player_api.php${NC}"
-  echo -e "${CYAN}📋 M3U Playlist:   http://${SERVER_IP}:${WEB_PORT}/get.php?username=X&password=X&type=m3u_plus${NC}"
 fi
 echo -e "${CYAN}🔑 Admin Email:    ${ADMIN_EMAIL}${NC}"
 echo -e "${CYAN}⚙️  API Puerto:     ${API_PORT}${NC}"
@@ -1015,14 +865,7 @@ echo ""
 echo -e "${YELLOW}📁 Archivos instalados:${NC}"
 echo "   /var/www/streambox/            → Frontend"
 echo "   /opt/streambox/server/         → API Node.js"
-echo "   /opt/streambox/server/uploads/ → Logos, VOD, Posters"
 echo "   /etc/nginx/sites-available/    → Nginx config"
-echo ""
-echo -e "${YELLOW}📡 Xtream Codes (TiviMate, Smarters, etc.):${NC}"
-echo "   Host:     ${SERVER_IP}"
-echo "   Puerto:   ${WEB_PORT}"
-echo "   Usuario:  (username del cliente)"
-echo "   Password: (password del cliente)"
 echo ""
 echo -e "${YELLOW}🔧 Si hay problemas:${NC}"
 echo "   pm2 logs streambox-api --lines 50  → Ver errores"

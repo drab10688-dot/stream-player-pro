@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
-import { Plus, Trash2, Edit2, Save, X, Tv, Upload, Link, FileText, Loader2, Zap, ImagePlus, Play, Square, Activity, HardDrive, CheckSquare, Square as SquareIcon, Radio, Disc, Cpu } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, Tv, Upload, Link, FileText, Loader2, Zap, ImagePlus, Play, Square, Activity, HardDrive, CheckSquare, Square as SquareIcon } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { motion, AnimatePresence } from 'framer-motion';
 import VideoPlayer from '@/components/VideoPlayer';
@@ -22,7 +22,6 @@ interface Channel {
   keep_alive: boolean;
   sort_order: number;
   logo_url: string | null;
-  stream_mode: 'direct' | 'buffer' | 'transcode';
 }
 
 interface CacheStatus {
@@ -44,7 +43,7 @@ const ChannelsManager = () => {
   const [showForm, setShowForm] = useState(false);
   const [showM3UImport, setShowM3UImport] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState({ name: '', url: '', category: 'General', sort_order: 0, logo_url: '', stream_mode: 'direct' as 'direct' | 'buffer' | 'transcode' });
+  const [form, setForm] = useState({ name: '', url: '', category: 'General', sort_order: 0, logo_url: '' });
   const [m3uContent, setM3uContent] = useState('');
   const [m3uUrl, setM3uUrl] = useState('');
   const [importing, setImporting] = useState(false);
@@ -100,7 +99,7 @@ const ChannelsManager = () => {
       return;
     }
     try {
-      const payload = { ...form, logo_url: form.logo_url.trim() || null, stream_mode: form.stream_mode };
+      const payload = { ...form, logo_url: form.logo_url.trim() || null };
       if (isLovablePreview()) {
         if (editingId) {
           const { error } = await supabase.from('channels').update(payload).eq('id', editingId);
@@ -120,7 +119,7 @@ const ChannelsManager = () => {
           toast({ title: 'Canal creado' });
         }
       }
-      setForm({ name: '', url: '', category: 'General', sort_order: 0, logo_url: '', stream_mode: 'direct' });
+      setForm({ name: '', url: '', category: 'General', sort_order: 0, logo_url: '' });
       setShowForm(false);
       setEditingId(null);
       fetchChannels();
@@ -130,7 +129,7 @@ const ChannelsManager = () => {
   };
 
   const handleEdit = (ch: Channel) => {
-    setForm({ name: ch.name, url: ch.url, category: ch.category, sort_order: ch.sort_order, logo_url: ch.logo_url || '', stream_mode: ch.stream_mode || 'direct' });
+    setForm({ name: ch.name, url: ch.url, category: ch.category, sort_order: ch.sort_order, logo_url: ch.logo_url || '' });
     setLogoPreview(ch.logo_url || null);
     setEditingId(ch.id);
     setShowForm(true);
@@ -295,7 +294,7 @@ const ChannelsManager = () => {
           <Button onClick={() => { setShowM3UImport(!showM3UImport); setShowForm(false); }} variant="outline" className="gap-2 border-border text-foreground" size="sm">
             <Upload className="w-4 h-4" /> Importar M3U
           </Button>
-          <Button onClick={() => { setShowForm(true); setShowM3UImport(false); setEditingId(null); setLogoPreview(null); setForm({ name: '', url: '', category: 'General', sort_order: 0, logo_url: '', stream_mode: 'direct' }); }} className="gradient-primary text-primary-foreground gap-2" size="sm">
+          <Button onClick={() => { setShowForm(true); setShowM3UImport(false); setEditingId(null); setLogoPreview(null); setForm({ name: '', url: '', category: 'General', sort_order: 0, logo_url: '' }); }} className="gradient-primary text-primary-foreground gap-2" size="sm">
             <Plus className="w-4 h-4" /> Agregar Canal
           </Button>
         </div>
@@ -415,33 +414,6 @@ const ChannelsManager = () => {
             )}
           </div>
           <Input type="number" placeholder="Orden" value={form.sort_order} onChange={e => setForm({ ...form, sort_order: parseInt(e.target.value) || 0 })} className="bg-secondary border-border text-foreground w-32" />
-          <div className="space-y-2">
-            <label className="text-xs text-muted-foreground block">Modo de Transmisión</label>
-            <div className="flex gap-2 flex-wrap">
-              {([
-                { value: 'direct' as const, label: 'Directo (Proxy HLS)', icon: Radio, desc: 'Ideal para deportes' },
-                { value: 'buffer' as const, label: 'Buffer de Estabilidad', icon: Disc, desc: 'Grabación circular 10min' },
-                { value: 'transcode' as const, label: 'Transcodificación Activa', icon: Cpu, desc: 'H.264/AAC permanente' },
-              ]).map(mode => (
-                <button
-                  key={mode.value}
-                  type="button"
-                  onClick={() => setForm({ ...form, stream_mode: mode.value })}
-                  className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition-all ${
-                    form.stream_mode === mode.value
-                      ? 'border-primary bg-primary/10 text-primary'
-                      : 'border-border bg-secondary text-muted-foreground hover:border-primary/50'
-                  }`}
-                >
-                  <mode.icon className="w-4 h-4 shrink-0" />
-                  <div className="text-left">
-                    <div className="font-medium text-xs">{mode.label}</div>
-                    <div className="text-[10px] opacity-70">{mode.desc}</div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
           <div className="flex gap-2 justify-end">
             <Button variant="ghost" onClick={() => { setShowForm(false); setEditingId(null); }} className="text-muted-foreground"><X className="w-4 h-4 mr-1" /> Cancelar</Button>
             <Button onClick={handleSave} className="gradient-primary text-primary-foreground"><Save className="w-4 h-4 mr-1" /> {editingId ? 'Actualizar' : 'Guardar'}</Button>
@@ -496,14 +468,6 @@ const ChannelsManager = () => {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className="font-semibold text-foreground text-sm truncate">{ch.name}</p>
-                        <Badge variant="outline" className={`text-[10px] py-0 px-1.5 gap-1 ${
-                          !ch.stream_mode || ch.stream_mode === 'direct' ? 'border-primary/30 text-primary' :
-                          ch.stream_mode === 'buffer' ? 'border-amber-500/30 text-amber-500' : 'border-cyan-500/30 text-cyan-500'
-                        }`}>
-                          {!ch.stream_mode || ch.stream_mode === 'direct' ? <Radio className="w-2.5 h-2.5" /> :
-                           ch.stream_mode === 'buffer' ? <Disc className="w-2.5 h-2.5" /> : <Cpu className="w-2.5 h-2.5" />}
-                          {!ch.stream_mode || ch.stream_mode === 'direct' ? 'Directo' : ch.stream_mode === 'buffer' ? 'Buffer' : 'Transcode'}
-                        </Badge>
                         {cache?.transcoder_active && (
                           <div className="flex items-center gap-1">
                             <Badge variant="outline" className="text-[10px] py-0 px-1.5 border-green-500/30 text-green-500 gap-1">
@@ -528,40 +492,6 @@ const ChannelsManager = () => {
                     </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
-                    {/* Inline stream_mode quick-switcher */}
-                    {!isLovablePreview() && (
-                      <div className="flex items-center border border-border rounded-lg overflow-hidden mr-1">
-                        {([
-                          { value: 'direct' as const, icon: Radio, tip: 'Directo' },
-                          { value: 'buffer' as const, icon: Disc, tip: 'Buffer' },
-                          { value: 'transcode' as const, icon: Cpu, tip: 'Transcode' },
-                        ]).map(mode => (
-                          <button
-                            key={mode.value}
-                            title={mode.tip}
-                            onClick={async () => {
-                              if (ch.stream_mode === mode.value) return;
-                              try {
-                                await apiPut(`/api/channels/${ch.id}`, { stream_mode: mode.value });
-                                // Restart the stream process with the new mode
-                                try { await apiPost(`/api/streams/restart/${ch.id}`, {}); } catch {}
-                                toast({ title: `Modo cambiado a ${mode.tip}`, description: `${ch.name} reiniciado con modo ${mode.tip}` });
-                                fetchChannels();
-                              } catch (err: any) {
-                                toast({ title: 'Error', description: err.message, variant: 'destructive' });
-                              }
-                            }}
-                            className={`p-1.5 transition-colors ${
-                              (ch.stream_mode || 'direct') === mode.value
-                                ? 'bg-primary/15 text-primary'
-                                : 'text-muted-foreground/50 hover:text-foreground hover:bg-secondary'
-                            }`}
-                          >
-                            <mode.icon className="w-3.5 h-3.5" />
-                          </button>
-                        ))}
-                      </div>
-                    )}
                     <Button
                       variant="ghost"
                       size="icon"
@@ -581,8 +511,8 @@ const ChannelsManager = () => {
                         />
                       </div>
                     )}
-                    <Button variant="ghost" size="icon" onClick={() => toggleActive(ch)} title={ch.is_active ? 'Desactivar canal' : 'Activar canal'}>
-                      <div className={`w-3 h-3 rounded-full ${ch.is_active ? 'bg-green-500' : 'bg-red-500'}`} />
+                    <Button variant="ghost" size="sm" onClick={() => toggleActive(ch)} className="text-xs text-muted-foreground">
+                      {ch.is_active ? 'Desactivar' : 'Activar'}
                     </Button>
                     <Button variant="ghost" size="icon" onClick={() => handleEdit(ch)} className="text-muted-foreground hover:text-primary">
                       <Edit2 className="w-4 h-4" />
@@ -601,7 +531,7 @@ const ChannelsManager = () => {
                       transition={{ duration: 0.3 }}
                       className="border-t border-border bg-black"
                     >
-                      <VideoPlayer src={ch.url} channelId={ch.id} streamMode={ch.stream_mode} />
+                      <VideoPlayer src={ch.url} channelId={ch.id} />
                     </motion.div>
                   )}
                 </AnimatePresence>

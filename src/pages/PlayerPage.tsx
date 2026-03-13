@@ -9,7 +9,6 @@ import VideoPlayer from '@/components/VideoPlayer';
 import { useLocation } from 'react-router-dom';
 import omnisyncLogo from '@/assets/omnisync-logo.png';
 
-
 const PlayerPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -54,8 +53,6 @@ const PlayerPage = () => {
     setSearch('');
     const idx = channels.findIndex(ch => ch.id === channel.id);
     showChannelChange(channel, idx);
-
-
     // Auto-hide controls after channel selection
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     hideTimerRef.current = setTimeout(() => setShowControls(false), 2500);
@@ -419,7 +416,7 @@ const PlayerPage = () => {
             src={selectedChannel.url}
             channelId={selectedChannel.id}
             muted={muted}
-            onError={(chId, msg) => reportChannelError(chId, msg)}
+            onError={(msg) => reportChannelError(selectedChannel.id, msg)}
           />
 
           {/* Ad Banner */}

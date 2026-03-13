@@ -107,24 +107,29 @@ export const AdminAuthProvider = ({ children }: { children: ReactNode }) => {
   const setup = async (email: string, password: string) => {
     try {
       if (isLovablePreview()) {
-        // Sign up
-        const { data, error } = await supabase.auth.signUp({ email, password });
+        // Sign up and auto-assign admin role
+        const { data, error } = await supabase.auth.signUp({ 
+          email, 
+          password,
+          options: { data: { auto_confirm: true } }
+        });
         if (error) return { success: false, error: error.message };
         if (!data.user) return { success: false, error: 'No se pudo crear el usuario' };
         
-        // Sign in (auto-confirm is enabled)
-        const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+        // Wait a moment for user to be created
+        await new Promise(r => setTimeout(r, 1000));
+        
+        // Sign in
+        const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
         if (signInError) return { success: false, error: signInError.message };
         
-        // Assign admin role via edge function (bypasses RLS)
-        const { data: roleResult, error: roleError } = await supabase.functions.invoke('client-auth', {
-          body: { action: 'make_first_admin', user_id: data.user.id },
+        // Insert admin role - use service role via edge function if needed
+        const { error: roleError } = await supabase.from('user_roles').insert({
+          user_id: data.user.id,
+          role: 'admin' as any,
         });
         if (roleError) {
-          console.warn('Role assign error:', roleError.message);
-        }
-        if (roleResult?.error) {
-          console.warn('Role assign response error:', roleResult.error);
+          console.warn('Role insert error (may already exist):', roleError.message);
         }
         
         setAdmin({ id: data.user.id, email });

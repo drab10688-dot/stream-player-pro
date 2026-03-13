@@ -1,12 +1,11 @@
 import { useState, useEffect } from 'react';
 import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
-import { copyToClipboard } from '@/lib/clipboard';
 import { supabase } from '@/integrations/supabase/client';
 import { isLovablePreview } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Plus, Trash2, Edit2, Save, X, Users, UserX, UserCheck, Monitor, Package, Link2, Copy, RefreshCw, Film, List, Tv, FileText, Radio } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, Users, UserX, UserCheck, Monitor, Package, Link2, Copy, RefreshCw, Film } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { motion } from 'framer-motion';
 import { format } from 'date-fns';
@@ -162,17 +161,17 @@ const ClientsManager = () => {
 
   const isExpired = (date: string) => new Date(date) < new Date();
 
-  const getPlaylistUrl = (token: string | null, format?: string) => {
+  const getPlaylistUrl = (token: string | null) => {
     if (!token) return '';
     const base = window.location.origin;
-    return format ? `${base}/api/playlist/${token}/${format}` : `${base}/api/playlist/${token}`;
+    return `${base}/api/playlist/${token}`;
   };
 
-  const copyPlaylistUrl = async (token: string | null, format?: string, label?: string) => {
-    const url = getPlaylistUrl(token, format);
+  const copyPlaylistUrl = (token: string | null) => {
+    const url = getPlaylistUrl(token);
     if (!url) return;
-    await copyToClipboard(url);
-    toast({ title: '📋 URL copiada', description: `Link ${label || 'M3U Plus'} copiado al portapapeles` });
+    navigator.clipboard.writeText(url);
+    toast({ title: '📋 URL copiada', description: 'Link de playlist M3U copiado al portapapeles' });
   };
 
   const regenerateToken = async (clientId: string) => {
@@ -292,52 +291,18 @@ const ClientsManager = () => {
               {/* Playlist M3U URL expandable */}
               {expandedPlaylist === c.id && (
                 <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="mt-3 pt-3 border-t border-border/50">
+                  <label className="text-xs text-muted-foreground mb-1.5 block flex items-center gap-1">
+                    <Link2 className="w-3 h-3" /> Link M3U para OTT Player / Smart IPTV
+                  </label>
                   {c.playlist_token ? (
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <label className="text-xs text-muted-foreground flex items-center gap-1">
-                          <Link2 className="w-3 h-3" /> Formatos de Playlist
-                        </label>
-                        <Button variant="outline" size="sm" onClick={() => regenerateToken(c.id)} className="text-xs gap-1 border-border text-muted-foreground hover:text-destructive h-7">
-                          <RefreshCw className="w-3 h-3" /> Regenerar Token
-                        </Button>
-                      </div>
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                        {[
-                          { format: 'm3u_plus', label: 'M3U Plus', desc: 'Con logos, grupos y metadatos', icon: List },
-                          { format: 'ts', label: 'MPEG-TS', desc: 'Extensión .ts para FFmpeg', icon: Radio },
-                          { format: 'simple', label: 'Lista Simple', desc: 'Solo URLs, sin extras', icon: FileText },
-                          { format: 'ott', label: 'Smart TV (OTT)', desc: 'Optimizado para TV', icon: Tv },
-                        ].map(({ format, label, desc, icon: Icon }) => (
-                          <div key={format} className="glass rounded-lg p-3 space-y-2">
-                            <div className="flex items-center gap-2">
-                              <Icon className="w-4 h-4 text-primary shrink-0" />
-                              <span className="text-xs font-semibold text-foreground">{label}</span>
-                            </div>
-                            <p className="text-[10px] text-muted-foreground leading-tight">{desc}</p>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => copyPlaylistUrl(c.playlist_token, format, label)}
-                              className="w-full text-xs gap-1 h-7 border-border"
-                            >
-                              <Copy className="w-3 h-3" /> Copiar
-                            </Button>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="space-y-1.5">
-                        <label className="text-[10px] text-muted-foreground block">URL Base (M3U Plus)</label>
-                        <div className="flex gap-2">
-                          <Input readOnly value={getPlaylistUrl(c.playlist_token)} className="bg-secondary border-border text-foreground text-xs font-mono" onClick={(e) => (e.target as HTMLInputElement).select()} />
-                          <Button variant="outline" size="icon" onClick={() => copyPlaylistUrl(c.playlist_token)} className="shrink-0 border-border" title="Copiar URL">
-                            <Copy className="w-4 h-4" />
-                          </Button>
-                        </div>
-                      </div>
-                      <p className="text-[10px] text-muted-foreground">
-                        💡 <strong>M3U Plus</strong> para la mayoría de apps. <strong>MPEG-TS</strong> si el reproductor no soporta HLS. <strong>OTT</strong> para Smart TV con tvg-name.
-                      </p>
+                    <div className="flex gap-2">
+                      <Input readOnly value={getPlaylistUrl(c.playlist_token)} className="bg-secondary border-border text-foreground text-xs font-mono" onClick={(e) => (e.target as HTMLInputElement).select()} />
+                      <Button variant="outline" size="icon" onClick={() => copyPlaylistUrl(c.playlist_token)} className="shrink-0 border-border" title="Copiar URL">
+                        <Copy className="w-4 h-4" />
+                      </Button>
+                      <Button variant="outline" size="icon" onClick={() => regenerateToken(c.id)} className="shrink-0 border-border text-muted-foreground hover:text-destructive" title="Regenerar token (invalida el link anterior)">
+                        <RefreshCw className="w-4 h-4" />
+                      </Button>
                     </div>
                   ) : (
                     <div className="flex gap-2 items-center">
@@ -347,6 +312,10 @@ const ClientsManager = () => {
                       </Button>
                     </div>
                   )}
+                  <p className="text-[10px] text-muted-foreground mt-1.5">
+                    💡 Este link funciona en OTT Player, Smart IPTV, SS IPTV y cualquier app que acepte M3U. 
+                    En red LAN usa la IP local. Con Cloudflare usa el dominio del túnel.
+                  </p>
                 </motion.div>
               )}
             </motion.div>

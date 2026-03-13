@@ -114,7 +114,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           await fetch('/api/client/heartbeat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ client_id: client.id, device_id: getDeviceId(), channel_id: currentChannelIdRef.current, username: client.username }),
+            body: JSON.stringify({ client_id: client.id, device_id: getDeviceId(), channel_id: currentChannelIdRef.current }),
           });
         }
       } catch (err) {
@@ -178,13 +178,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         const res = await fetch('/api/channels/public');
         if (res.ok) {
           const data = await res.json();
-          // YouTube keeps original URL, everything else goes through restream proxy
-          // This avoids CORS issues since browsers block direct cross-origin HLS requests
+          // YouTube keeps original URL, everything else uses restream
+          // If stream_base_url is set (hybrid mode), use direct IP for streams
           const base = streamBaseUrl || '';
-          const isYouTube = (url: string) => /youtube\.com|youtu\.be/.test(url || '');
           const mapped = data.map((ch: any) => ({
             ...ch,
-            url: isYouTube(ch.url) ? ch.url : `${base}/api/restream/${ch.id}`,
+            url: ch.url || `${base}/api/restream/${ch.id}`,
           }));
           setChannels(mapped);
         }
@@ -270,21 +269,17 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         return { success: false, error: data.error };
       }
 
-      // Guardar stream_base_url si el servidor la envía (modo hybrid)
-      streamBaseUrl = data.stream_base_url || null;
-
-      // Proxy URLs: in Lovable preview use edge function, in production use restream proxy
-      const isYouTube = (url: string) => /youtube\.com|youtu\.be/.test(url || '');
+      // In Lovable preview, proxy TS/stream URLs through edge function to bypass CORS
       const processedChannels = (data.channels || []).map((ch: any) => {
-        if (!ch.url || isYouTube(ch.url)) return ch;
-        if (isLovablePreview()) {
+        if (isLovablePreview() && ch.url && !ch.url.includes('youtube.com') && !ch.url.includes('youtu.be')) {
           const proxyBase = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/video-proxy`;
           return { ...ch, url: `${proxyBase}?url=${encodeURIComponent(ch.url)}` };
         }
-        // Production: route through server restream proxy to avoid CORS
-        const base = streamBaseUrl || '';
-        return { ...ch, url: `${base}/api/restream/${ch.id}` };
+        return ch;
       });
+
+      // Guardar stream_base_url si el servidor la envía (modo hybrid)
+      streamBaseUrl = data.stream_base_url || null;
 
       setClient(data.client);
       setChannels(processedChannels);
