@@ -19,6 +19,7 @@ import BackupManager from '@/components/admin/BackupManager';
 import VodManager from '@/components/admin/VodManager';
 import SeriesManager from '@/components/admin/SeriesManager';
 import ActiveViewers from '@/components/admin/ActiveViewers';
+import BandwidthMonitor from '@/components/admin/BandwidthMonitor';
 import SystemTuning from '@/components/admin/SystemTuning';
 import omnisyncLogo from '@/assets/omnisync-logo.png';
 import ChangePasswordDialog from '@/components/admin/ChangePasswordDialog';
