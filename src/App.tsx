@@ -13,29 +13,14 @@ import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
 
-const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
-  const { isLoggedIn } = useAuth();
-  return isLoggedIn ? <>{children}</> : <Navigate to="/login" replace />;
-};
-
 const AppRoutes = () => {
-  const { isLoggedIn } = useAuth();
-
   return (
     <Routes>
-      <Route path="/login" element={isLoggedIn ? <Navigate to="/player" replace /> : <LoginPage />} />
-      <Route path="/" element={<ProtectedRoute><Navigate to="/player" replace /></ProtectedRoute>} />
-      <Route path="/channels" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-      <Route path="/player" element={<ProtectedRoute><PlayerPage /></ProtectedRoute>} />
-      <Route path="/player/:category" element={<ProtectedRoute><PlayerPage /></ProtectedRoute>} />
-      <Route path="/vod/:id" element={<ProtectedRoute><VodPlayerPage /></ProtectedRoute>} />
-      <Route path="/series/:id" element={<ProtectedRoute><SeriesDetailPage /></ProtectedRoute>} />
-      <Route path="/series/:seriesId/play/:episodeId" element={<ProtectedRoute><SeriesPlayerPage /></ProtectedRoute>} />
+      <Route path="/" element={<Navigate to="/admin" replace />} />
       <Route path="/admin" element={<AdminLogin />} />
       <Route path="/admin/panel" element={<AdminDashboard />} />
       <Route path="/reseller" element={<ResellerLogin />} />
       <Route path="/reseller/panel" element={<ResellerDashboard />} />
-      <Route path="/install" element={<InstallPage />} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   );
