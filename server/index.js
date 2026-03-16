@@ -3516,15 +3516,14 @@ app.get('/api/channels/:id/stream', authApk, async (req, res) => {
     updatedSessions.add(sessionEntry);
     apkSessions.set(userId, updatedSessions);
 
-    // Registrar en active_connections para monitoreo del panel admin
-    const apkClientId = `apk-${userId}`;
+    // Actualizar monitoreo APK con el canal que está viendo
     const device_id = req.apkUser.device_id || `apk-${userId}`;
-    try {
-      await pool.query(
-        `UPDATE active_connections SET watching_channel_id = $3, last_heartbeat = now() WHERE client_id = $1 AND device_id = $2`,
-        [apkClientId, device_id, channelId]
-      );
-    } catch { /* ignore */ }
+    const connKey = `${userId}:${device_id}`;
+    const connInfo = apkConnectionInfo.get(connKey);
+    if (connInfo) {
+      connInfo.channelId = channelId;
+      connInfo.lastHeartbeat = new Date().toISOString();
+    }
 
     // Soporte quality=dataSaver → stream de menor bitrate si existe
     const quality = req.query.quality;
