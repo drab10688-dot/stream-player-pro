@@ -497,8 +497,9 @@ app.put('/api/channels/:id', authAdmin, async (req, res) => {
     if (keep_alive && !c.keep_alive && is_active) {
       startKeepAliveChannel(req.params.id, urlValidation.normalizedUrl);
     }
-    // If keep_alive was toggled OFF, let normal grace period apply
+    // If keep_alive was toggled OFF, stop poller and release
     if (!keep_alive && c.keep_alive) {
+      stopHLSKeepAlivePoller(req.params.id); // detener poller si existe
       const entry = activeTranscoders.get(req.params.id);
       if (entry) {
         entry.keepAlive = false;
@@ -1261,14 +1262,15 @@ function releaseTranscoder(channelId) {
     // Keep alive channels NEVER stop
     if (entry.keepAlive) {
       entry.clients = 0; // Floor at 0
-      console.log(`💚 [${channelId}] Keep-alive activo, FFmpeg permanece encendido`);
+      console.log(`💚 [${channelId}] Keep-alive activo, ${entry.type === 'hls-proxy' ? 'poller' : 'FFmpeg'} permanece encendido`);
       return;
     }
     // Esperar 30 segundos antes de matar, por si alguien vuelve
     setTimeout(() => {
       const current = activeTranscoders.get(channelId);
       if (current && current.clients <= 0 && !current.keepAlive) {
-        console.log(`🔴 [${channelId}] Sin clientes, deteniendo FFmpeg`);
+        console.log(`🔴 [${channelId}] Sin clientes, deteniendo`);
+        stopHLSKeepAlivePoller(channelId); // detener poller si existe
         if ((current.type === 'ffmpeg' || current.type === 'ffmpeg-adaptive') && current.ffmpeg) {
           current.ffmpeg.kill('SIGTERM');
         }
@@ -1300,7 +1302,9 @@ function startKeepAliveChannel(channelId, sourceUrl) {
     if (entry) {
       entry.keepAlive = true;
       entry.clients = 0;
-      console.log(`💚 [${channelId}] Keep-alive HLS proxy iniciado`);
+      // Iniciar poller activo que pre-descarga manifiestos y segmentos
+      startHLSKeepAlivePoller(channelId, streamUrl);
+      console.log(`💚 [${channelId}] Keep-alive HLS proxy + poller activo`);
     }
   } else {
     const entry = startFFmpegTranscoder(channelId, streamUrl, true); // isKeepAlive = true → 30 min caché
@@ -1441,13 +1445,130 @@ function startHLSProxy(channelId, sourceUrl) {
   const entry = {
     clients: 1,
     lastAccess: Date.now(),
+    startTime: Date.now(),
     type: 'hls-proxy',
     sourceUrl,
     ready: true,
+    keepAlivePoller: null, // interval for active keep-alive polling
   };
   activeTranscoders.set(channelId, entry);
   console.log(`📡 [${channelId}] Proxy HLS iniciado: ${sourceUrl}`);
   return entry;
+}
+
+// =============================================
+// KEEP-ALIVE ACTIVO para HLS Proxy
+// Pre-descarga manifiestos y segmentos cada ~5s
+// para mantener el caché caliente (como Xtream UI)
+// =============================================
+function startHLSKeepAlivePoller(channelId, sourceUrl) {
+  const entry = activeTranscoders.get(channelId);
+  if (!entry || entry.keepAlivePoller) return; // ya tiene poller
+
+  let lastSegments = new Set();
+
+  const poll = async () => {
+    try {
+      // 1. Descargar el manifiesto maestro/variante
+      const parsedUrl = new URL(sourceUrl);
+      const httpClient = parsedUrl.protocol === 'https:' ? https : http;
+      
+      const fetchUrl = (url) => new Promise((resolve, reject) => {
+        const req = httpClient.request(url, {
+          method: 'GET',
+          headers: { 'User-Agent': 'StreamBox/1.0' },
+        }, (res) => {
+          if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+            fetchUrl(res.headers.location).then(resolve).catch(reject);
+            return;
+          }
+          const chunks = [];
+          res.on('data', chunk => chunks.push(chunk));
+          res.on('end', () => resolve(Buffer.concat(chunks)));
+          res.on('error', reject);
+        });
+        req.on('error', reject);
+        req.setTimeout(10000, () => { req.destroy(); reject(new Error('Timeout')); });
+        req.end();
+      });
+
+      const manifestBuf = await fetchUrl(sourceUrl);
+      const manifest = manifestBuf.toString();
+      const baseUrl = sourceUrl.substring(0, sourceUrl.lastIndexOf('/') + 1);
+
+      // Si es master playlist, seguir el primer variant
+      let mediaPlaylistUrl = sourceUrl;
+      let mediaManifest = manifest;
+      
+      const variantMatch = manifest.match(/^(?!#)(.+\.m3u8.*)$/m);
+      if (variantMatch) {
+        mediaPlaylistUrl = variantMatch[1].startsWith('http') 
+          ? variantMatch[1] 
+          : baseUrl + variantMatch[1];
+        const mediaBuf = await fetchUrl(mediaPlaylistUrl);
+        mediaManifest = mediaBuf.toString();
+      }
+
+      // Cachear el manifiesto
+      const cacheKey = `m3u8_${channelId}`;
+      const mediaBase = mediaPlaylistUrl.substring(0, mediaPlaylistUrl.lastIndexOf('/') + 1);
+      
+      // Reescribir URLs en el manifiesto para el proxy
+      const rewritten = mediaManifest.replace(/^(?!#)(.+\.ts.*)$/gm, (match) => {
+        const fullUrl = match.startsWith('http') ? match : mediaBase + match;
+        return `/api/hls-segment/${channelId}?url=${encodeURIComponent(fullUrl)}`;
+      }).replace(/^(?!#)(.+\.m3u8.*)$/gm, (match) => {
+        const fullUrl = match.startsWith('http') ? match : mediaBase + match;
+        return `/api/hls-manifest/${channelId}?url=${encodeURIComponent(fullUrl)}`;
+      });
+      streamCache.set(cacheKey, { data: rewritten, timestamp: Date.now() });
+
+      // 2. Pre-descargar los últimos segmentos .ts (solo los nuevos)
+      const segmentLines = mediaManifest.match(/^(?!#)(.+\.ts.*)$/gm) || [];
+      // Solo los últimos 3 segmentos (para no saturar)
+      const recentSegments = segmentLines.slice(-3);
+      const newSegments = new Set();
+
+      for (const seg of recentSegments) {
+        const segUrl = seg.startsWith('http') ? seg : mediaBase + seg;
+        newSegments.add(segUrl);
+        
+        // Solo descargar si es un segmento nuevo que no teníamos
+        if (!lastSegments.has(segUrl) && !segmentCache.has(segUrl)) {
+          try {
+            const segData = await fetchUrl(segUrl);
+            segmentCache.set(segUrl, { data: segData, timestamp: Date.now() });
+          } catch (segErr) {
+            // Segmento individual falló, no es crítico
+          }
+        }
+      }
+      lastSegments = newSegments;
+
+      // Marcar como ready
+      const currentEntry = activeTranscoders.get(channelId);
+      if (currentEntry) currentEntry.ready = true;
+
+    } catch (err) {
+      // Si falla la descarga, no hacer nada (reintentará en el próximo ciclo)
+      const currentEntry = activeTranscoders.get(channelId);
+      if (currentEntry) currentEntry.ready = false;
+    }
+  };
+
+  // Primera descarga inmediata, luego cada 5 segundos
+  poll();
+  entry.keepAlivePoller = setInterval(poll, 5000);
+  console.log(`💚 [${channelId}] Keep-alive HLS poller activo (cada 5s)`);
+}
+
+function stopHLSKeepAlivePoller(channelId) {
+  const entry = activeTranscoders.get(channelId);
+  if (entry && entry.keepAlivePoller) {
+    clearInterval(entry.keepAlivePoller);
+    entry.keepAlivePoller = null;
+    console.log(`🔴 [${channelId}] Keep-alive HLS poller detenido`);
+  }
 }
 
 // Obtener manifiesto m3u8 con caché y reescritura de URLs
