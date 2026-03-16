@@ -294,6 +294,19 @@ const ActiveViewers = () => {
                   <TableCell>
                     <span className="text-xs text-muted-foreground">{formatTime(viewer.last_heartbeat)}</span>
                   </TableCell>
+                  <TableCell>
+                    {viewer.source === 'apk' && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                        onClick={() => kickApkUser(viewer.client_username, viewer.device_id)}
+                        title="Desconectar"
+                      >
+                        <XCircle className="w-4 h-4" />
+                      </Button>
+                    )}
+                  </TableCell>
                 </motion.tr>
               ))}
             </TableBody>
