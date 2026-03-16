@@ -3577,7 +3577,7 @@ app.post('/api/apk/delete', authAdmin, (req, res) => {
 // =============================================
 // APK MIDDLEWARE API - Capa sobre Xtream Codes
 // =============================================
-const XTREAM_BASE_URL = process.env.XTREAM_BASE_URL || 'https://tu-dominio-o-tunel:25461';
+const XTREAM_BASE_URL = process.env.XTREAM_BASE_URL || `http://${require('os').hostname() === 'localhost' ? '127.0.0.1' : require('child_process').execSync("hostname -I | awk '{print $1}'").toString().trim()}:25461`;
 
 // Sesiones activas en memoria: Map<userId, Set<{channelId, connectedAt}>>
 const apkSessions = new Map();

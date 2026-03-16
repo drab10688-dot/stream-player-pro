@@ -503,6 +503,7 @@ cp -r "${SCRIPT_DIR}"/* /opt/streambox/server/
 sed -i "s|cambia-este-secreto-por-uno-seguro-abc123|${JWT_SECRET}|g" /opt/streambox/server/index.js
 sed -i "s|tu_password_seguro|${DB_PASS}|g" /opt/streambox/server/index.js
 sed -i "s|const PORT = 3001;|const PORT = ${API_PORT};|g" /opt/streambox/server/index.js
+sed -i "s|https://tu-dominio-o-tunel:25461|http://${SERVER_IP}:25461|g" /opt/streambox/server/index.js
 
 # Instalar dependencias
 cd /opt/streambox/server
