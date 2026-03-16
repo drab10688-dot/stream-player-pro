@@ -3775,7 +3775,7 @@ app.get('/api/sessions/active-apk', authApk, (req, res) => {
 // =============================================
 // APK: Heartbeat (mantener sesión activa)
 // =============================================
-app.post('/api/heartbeat', authApk, (req, res) => {
+app.post('/api/heartbeat', authApk, async (req, res) => {
   const { id: userId, device_id } = req.apkUser;
   const { channelId } = req.body || {};
   const connKey = `${userId}:${device_id || `apk-${userId}`}`;
@@ -3784,6 +3784,33 @@ app.post('/api/heartbeat', authApk, (req, res) => {
     connInfo.lastHeartbeat = new Date().toISOString();
     if (channelId) connInfo.channelId = channelId;
   }
+
+  // APK Activity logging
+  const logKey = `apk:${connKey}`;
+  const currentLog = activeActivityLogs.get(logKey);
+  if (channelId && (!currentLog || currentLog.channelId !== channelId)) {
+    if (currentLog && currentLog.logId) {
+      try {
+        await pool.query(`UPDATE activity_logs SET ended_at = now(), duration_seconds = EXTRACT(EPOCH FROM (now() - started_at))::int WHERE id = $1`, [currentLog.logId]);
+      } catch {}
+    }
+    try {
+      const { rows } = await pool.query(
+        `INSERT INTO activity_logs (client_id, client_username, channel_name, ip_address, country, city, device_id, source)
+         VALUES ((SELECT id FROM clients WHERE username = $1 LIMIT 1), $1, $2, $3, $4, $5, $6, 'apk') RETURNING id`,
+        [userId, channelId, connInfo?.ip || null, connInfo?.country || null, connInfo?.city || null, device_id || null]
+      );
+      activeActivityLogs.set(logKey, { logId: rows[0].id, channelId });
+    } catch (err) {
+      console.error('APK activity log error:', err.message);
+    }
+  } else if (!channelId && currentLog) {
+    try {
+      await pool.query(`UPDATE activity_logs SET ended_at = now(), duration_seconds = EXTRACT(EPOCH FROM (now() - started_at))::int WHERE id = $1`, [currentLog.logId]);
+    } catch {}
+    activeActivityLogs.delete(logKey);
+  }
+
   res.json({ ok: true });
 });
 
