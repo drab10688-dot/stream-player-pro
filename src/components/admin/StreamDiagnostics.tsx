@@ -239,7 +239,7 @@ const StreamDiagnostics = () => {
       if (textarea) { textarea.select(); }
       setCopied(true);
       setTimeout(() => setCopied(false), 3000);
-    });
+    }
   };
 
   const filteredChannels = channels.filter(c => 
