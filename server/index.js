@@ -1300,7 +1300,9 @@ function startKeepAliveChannel(channelId, sourceUrl) {
     if (entry) {
       entry.keepAlive = true;
       entry.clients = 0;
-      console.log(`💚 [${channelId}] Keep-alive HLS proxy iniciado`);
+      // Iniciar poller activo que pre-descarga manifiestos y segmentos
+      startHLSKeepAlivePoller(channelId, streamUrl);
+      console.log(`💚 [${channelId}] Keep-alive HLS proxy + poller activo`);
     }
   } else {
     const entry = startFFmpegTranscoder(channelId, streamUrl, true); // isKeepAlive = true → 30 min caché
