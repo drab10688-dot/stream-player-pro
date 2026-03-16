@@ -33,6 +33,7 @@ function parseM3U(content: string) {
         logo_url: currentLogo,
         sort_order: channels.length,
         is_active: true,
+        keep_alive: false,
       });
       currentName = '';
       currentCategory = 'General';
