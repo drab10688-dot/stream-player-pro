@@ -3399,8 +3399,9 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     const userInfo = xtreamData.user_info;
+    const device_id = req.body.device_id || `apk-${username}-${Date.now()}`;
 
-    // Emitir JWT propio
+    // Emitir JWT propio (incluir device_id)
     const token = jwt.sign(
       {
         id: userInfo.username,
@@ -3409,10 +3410,28 @@ app.post('/api/auth/login', async (req, res) => {
         xtreamPass: password,
         maxConnections: parseInt(userInfo.max_connections) || 1,
         expDate: userInfo.exp_date,
+        device_id,
       },
       JWT_SECRET,
       { expiresIn: '24h' }
     );
+
+    // Registrar conexión en active_connections para que aparezca en el panel admin
+    const clientIP = getClientIP(req);
+    const geo = await geoLookup(clientIP);
+    // Usar username como client_id virtual (prefijo apk-)
+    const apkClientId = `apk-${userInfo.username}`;
+    try {
+      // Insertar o actualizar en active_connections
+      await pool.query(
+        `INSERT INTO active_connections (client_id, device_id, ip_address, country, city, last_heartbeat) 
+         VALUES ($1, $2, $3, $4, $5, now()) 
+         ON CONFLICT (client_id, device_id) DO UPDATE SET last_heartbeat = now(), ip_address = $3, country = $4, city = $5`,
+        [apkClientId, device_id, clientIP, geo.country, geo.city]
+      );
+    } catch (connErr) {
+      console.error('APK register connection error:', connErr.message);
+    }
 
     // Obtener ads, VOD y series de la base de datos local
     const [adsRes, vodRes, seriesRes] = await Promise.all([
