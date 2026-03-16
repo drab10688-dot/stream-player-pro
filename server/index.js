@@ -3351,6 +3351,8 @@ const XTREAM_BASE_URL = process.env.XTREAM_BASE_URL || 'https://tu-dominio-o-tun
 
 // Sesiones activas en memoria: Map<userId, Set<{channelId, connectedAt}>>
 const apkSessions = new Map();
+// Info de conexión APK para monitoreo: Map<`userId:device_id`, {username, device_id, ip, country, city, connectedAt, lastHeartbeat, channelId}>
+const apkConnectionInfo = new Map();
 
 // Helper: fetch JSON desde Xtream
 const fetchXtream = (urlPath) => {
