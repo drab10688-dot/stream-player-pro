@@ -78,7 +78,7 @@ serve(async (req) => {
       });
     }
 
-    const { m3u_content, m3u_url } = await req.json();
+    const { m3u_content, m3u_url, keep_alive } = await req.json();
     let content = m3u_content;
 
     // Download from URL if provided
