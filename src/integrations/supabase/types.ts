@@ -65,6 +65,72 @@ export type Database = {
           },
         ]
       }
+      activity_logs: {
+        Row: {
+          action: string
+          channel_id: string | null
+          channel_name: string | null
+          city: string | null
+          client_id: string
+          client_username: string
+          country: string | null
+          device_id: string | null
+          duration_seconds: number | null
+          ended_at: string | null
+          id: string
+          ip_address: string | null
+          source: string | null
+          started_at: string
+        }
+        Insert: {
+          action?: string
+          channel_id?: string | null
+          channel_name?: string | null
+          city?: string | null
+          client_id: string
+          client_username: string
+          country?: string | null
+          device_id?: string | null
+          duration_seconds?: number | null
+          ended_at?: string | null
+          id?: string
+          ip_address?: string | null
+          source?: string | null
+          started_at?: string
+        }
+        Update: {
+          action?: string
+          channel_id?: string | null
+          channel_name?: string | null
+          city?: string | null
+          client_id?: string
+          client_username?: string
+          country?: string | null
+          device_id?: string | null
+          duration_seconds?: number | null
+          ended_at?: string | null
+          id?: string
+          ip_address?: string | null
+          source?: string | null
+          started_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "activity_logs_channel_id_fkey"
+            columns: ["channel_id"]
+            isOneToOne: false
+            referencedRelation: "channels"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "activity_logs_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ads: {
         Row: {
           created_at: string
