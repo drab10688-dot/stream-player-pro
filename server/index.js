@@ -1777,8 +1777,8 @@ app.post('/api/channels/import-m3u', authAdmin, async (req, res) => {
     for (const ch of channels) {
       try {
         await pool.query(
-          'INSERT INTO channels (name, url, category, logo_url, sort_order, is_active) VALUES ($1, $2, $3, $4, $5, $6)',
-          [ch.name, ch.url, ch.category, ch.logo_url, ch.sort_order, ch.is_active]
+          'INSERT INTO channels (name, url, category, logo_url, sort_order, is_active, keep_alive) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+          [ch.name, ch.url, ch.category, ch.logo_url, ch.sort_order, ch.is_active, keep_alive ? true : false]
         );
         inserted++;
       } catch (err) {
