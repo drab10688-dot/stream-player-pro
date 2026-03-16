@@ -445,12 +445,21 @@ app.post('/api/channels/upload-logo', authAdmin, uploadLogo.single('logo'), (req
 });
 
 app.post('/api/channels', authAdmin, async (req, res) => {
-  const { name, url, category, sort_order, logo_url } = req.body;
-  const { rows } = await pool.query(
-    'INSERT INTO channels (name, url, category, sort_order, logo_url) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-    [name, url, category || 'General', sort_order || 0, logo_url || null]
-  );
-  res.json(rows[0]);
+  try {
+    const { name, url, category, sort_order, logo_url } = req.body;
+    const validation = validateStreamSourceUrl(url);
+    if (!validation.valid) {
+      return res.status(400).json({ error: `URL de canal inválida: ${validation.reason}` });
+    }
+
+    const { rows } = await pool.query(
+      'INSERT INTO channels (name, url, category, sort_order, logo_url) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+      [name, validation.normalizedUrl, category || 'General', sort_order || 0, logo_url || null]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 app.put('/api/channels/:id', authAdmin, async (req, res) => {
@@ -467,14 +476,26 @@ app.put('/api/channels/:id', authAdmin, async (req, res) => {
     const keep_alive = req.body.keep_alive !== undefined ? req.body.keep_alive : c.keep_alive;
     const logo_url = req.body.logo_url !== undefined ? req.body.logo_url : c.logo_url;
 
+    const urlValidation = validateStreamSourceUrl(url);
+    if (!urlValidation.valid) {
+      return res.status(400).json({ error: `URL de canal inválida: ${urlValidation.reason}` });
+    }
+
+    if (keep_alive) {
+      const keepAliveValidation = validateStreamSourceUrl(urlValidation.normalizedUrl);
+      if (!keepAliveValidation.valid) {
+        return res.status(400).json({ error: `No se puede activar Keep Alive: ${keepAliveValidation.reason}` });
+      }
+    }
+
     const { rows } = await pool.query(
       'UPDATE channels SET name=$1, url=$2, category=$3, sort_order=$4, is_active=$5, keep_alive=$6, logo_url=$7 WHERE id=$8 RETURNING *',
-      [name, url, category, sort_order, is_active, keep_alive, logo_url, req.params.id]
+      [name, urlValidation.normalizedUrl, category, sort_order, is_active, keep_alive, logo_url, req.params.id]
     );
 
     // If keep_alive was toggled ON, start the transcoder immediately
     if (keep_alive && !c.keep_alive && is_active) {
-      startKeepAliveChannel(req.params.id, url);
+      startKeepAliveChannel(req.params.id, urlValidation.normalizedUrl);
     }
     // If keep_alive was toggled OFF, let normal grace period apply
     if (!keep_alive && c.keep_alive) {
