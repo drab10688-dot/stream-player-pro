@@ -23,6 +23,7 @@ import BandwidthMonitor from '@/components/admin/BandwidthMonitor';
 import SystemTuning from '@/components/admin/SystemTuning';
 import ResourceMonitor from '@/components/admin/ResourceMonitor';
 import ApkManager from '@/components/admin/ApkManager';
+import ActivityLogs from '@/components/admin/ActivityLogs';
 import omnisyncLogo from '@/assets/omnisync-logo.png';
 import ChangePasswordDialog from '@/components/admin/ChangePasswordDialog';
 
