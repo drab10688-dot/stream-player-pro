@@ -3321,7 +3321,15 @@ app.get('/api/channels/:id/stream', authApk, async (req, res) => {
     updatedSessions.add(sessionEntry);
     apkSessions.set(userId, updatedSessions);
 
-    const streamUrl = `${XTREAM_BASE_URL}/live/${encodeURIComponent(xtreamUser)}/${encodeURIComponent(xtreamPass)}/${channelId}.m3u8`;
+    // Soporte quality=dataSaver → stream de menor bitrate si existe
+    const quality = req.query.quality;
+    let streamUrl;
+    if (quality === 'dataSaver') {
+      // Intentar obtener variante de bajo bitrate (sufijo _low o parámetro output=ts)
+      streamUrl = `${XTREAM_BASE_URL}/live/${encodeURIComponent(xtreamUser)}/${encodeURIComponent(xtreamPass)}/${channelId}.m3u8?output=low`;
+    } else {
+      streamUrl = `${XTREAM_BASE_URL}/live/${encodeURIComponent(xtreamUser)}/${encodeURIComponent(xtreamPass)}/${channelId}.m3u8`;
+    }
 
     // Obtener anuncio activo (si hay)
     let ad = null;
