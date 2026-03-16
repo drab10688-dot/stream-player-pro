@@ -3525,35 +3525,43 @@ app.get('/api/channels/:id/stream', authApk, async (req, res) => {
       connInfo.lastHeartbeat = new Date().toISOString();
     }
 
-    // Soporte quality=dataSaver → stream de menor bitrate si existe
-    const quality = req.query.quality;
+    // Soporte múltiples calidades
+    const quality = req.query.quality || 'auto';
+    const baseStream = `${XTREAM_BASE_URL}/live/${encodeURIComponent(xtreamUser)}/${encodeURIComponent(xtreamPass)}/${channelId}`;
     let streamUrl;
-    if (quality === 'dataSaver') {
-      // Intentar obtener variante de bajo bitrate (sufijo _low o parámetro output=ts)
-      streamUrl = `${XTREAM_BASE_URL}/live/${encodeURIComponent(xtreamUser)}/${encodeURIComponent(xtreamPass)}/${channelId}.m3u8?output=low`;
-    } else {
-      streamUrl = `${XTREAM_BASE_URL}/live/${encodeURIComponent(xtreamUser)}/${encodeURIComponent(xtreamPass)}/${channelId}.m3u8`;
+    switch (quality) {
+      case 'low':       streamUrl = `${baseStream}.m3u8?output=low`; break;      // SD ~480p
+      case 'dataSaver': streamUrl = `${baseStream}.m3u8?output=low`; break;      // Alias de low
+      case 'medium':    streamUrl = `${baseStream}.m3u8?output=medium`; break;   // HD 720p
+      case 'high':      streamUrl = `${baseStream}.m3u8`; break;                 // FHD 1080p (original)
+      case 'auto':
+      default:          streamUrl = `${baseStream}.m3u8`; break;                 // Auto/ABR
     }
 
-    // Obtener anuncio activo (si hay)
-    let ad = null;
+    // Obtener TODOS los anuncios activos (no solo 1)
+    let ads = [];
     try {
       const adResult = await pool.query(
-        'SELECT title, message, image_url FROM ads WHERE is_active = true ORDER BY created_at DESC LIMIT 1'
+        'SELECT id, title, message, image_url FROM ads WHERE is_active = true ORDER BY created_at DESC'
       );
-      if (adResult.rows.length > 0) {
-        const activeAd = adResult.rows[0];
-        ad = {
-          url: activeAd.image_url || null,
-          title: activeAd.title,
-          message: activeAd.message,
-          durationSeconds: 10,
-          type: activeAd.image_url ? 'image' : 'text',
-        };
-      }
-    } catch { /* sin anuncio */ }
+      ads = adResult.rows.map(a => ({
+        id: a.id,
+        title: a.title,
+        message: a.message,
+        imageUrl: a.image_url || null,
+        durationSeconds: 10,
+        type: a.image_url ? 'image' : 'text',
+      }));
+    } catch { /* sin anuncios */ }
 
-    res.json({ streamUrl, ad });
+    res.json({
+      streamUrl,
+      quality,
+      availableQualities: ['auto', 'high', 'medium', 'low'],
+      ads,
+      // Mantener compatibilidad con campo "ad" (primer anuncio)
+      ad: ads.length > 0 ? ads[0] : null,
+    });
   } catch (err) {
     console.error('APK stream error:', err.message);
     res.status(500).json({ error: 'Error al obtener stream' });
