@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { LogOut, X, Bell, Search, Play, Film, Tv2 } from 'lucide-react';
+import { LogOut, X, Bell, Search, Play, Film, Tv2, Download, Smartphone } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -8,12 +8,18 @@ import { Input } from '@/components/ui/input';
 import omnisyncLogo from '@/assets/omnisync-logo.png';
 
 const Dashboard = () => {
-  const { client, channels, ads, vodItems, seriesItems, logout } = useAuth();
+  const { client, channels, ads, vodItems, seriesItems, logout, isLoggedIn } = useAuth();
   const navigate = useNavigate();
   const [showAd, setShowAd] = useState(true);
   const [currentAd, setCurrentAd] = useState(0);
   const [search, setSearch] = useState('');
   const [activeTab, setActiveTab] = useState<'channels' | 'vod' | 'series'>('channels');
+
+  // Redirect to login if not authenticated
+  if (!isLoggedIn) {
+    navigate('/');
+    return null;
+  }
 
   const categories = [...new Set(channels.map(ch => ch.category))];
 
@@ -43,6 +49,11 @@ const Dashboard = () => {
     .filter(g => g.items.length > 0);
 
   const hasVod = client?.vod_enabled && (vodItems.length > 0 || seriesItems.length > 0);
+
+  const handleLogout = () => {
+    logout();
+    navigate('/');
+  };
 
   return (
     <div className="min-h-screen bg-background bg-grid">
@@ -127,7 +138,7 @@ const Dashboard = () => {
               <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
               <span className="text-sm text-muted-foreground">{client?.username}</span>
             </div>
-            <Button variant="ghost" size="icon" onClick={logout} className="text-muted-foreground hover:text-destructive h-9 w-9">
+            <Button variant="ghost" size="icon" onClick={handleLogout} className="text-muted-foreground hover:text-destructive h-9 w-9">
               <LogOut className="w-4 h-4" />
             </Button>
           </div>
@@ -149,6 +160,26 @@ const Dashboard = () => {
       </div>
 
       <main className="container px-4 py-6 space-y-8">
+        {/* APK Download Banner */}
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="glass-strong rounded-2xl p-5 border border-primary/20 flex items-center justify-between"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+              <Smartphone className="w-5 h-5 text-primary" />
+            </div>
+            <div>
+              <p className="font-medium text-foreground text-sm">Descarga la App para ver TV en vivo</p>
+              <p className="text-xs text-muted-foreground">Disponible para Android y Android TV</p>
+            </div>
+          </div>
+          <Button size="sm" className="gradient-primary text-primary-foreground gap-1.5">
+            <Download className="w-4 h-4" /> Descargar APK
+          </Button>
+        </motion.div>
+
         {/* CHANNELS TAB */}
         {activeTab === 'channels' && (
           <>
@@ -176,44 +207,26 @@ const Dashboard = () => {
 
                   <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3 sm:gap-4">
                     {group.channels.map((ch, i) => (
-                      <motion.button
+                      <motion.div
                         key={ch.id}
                         initial={{ opacity: 0, scale: 0.95 }}
                         animate={{ opacity: 1, scale: 1 }}
                         transition={{ delay: i * 0.02 }}
-                        tabIndex={0}
-                        onClick={() => navigate(`/player/${ch.category}`, { state: { channel: ch } })}
-                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') navigate(`/player/${ch.category}`, { state: { channel: ch } }); }}
-                        className="group glass-strong rounded-2xl p-4 sm:p-5 2xl:p-6 text-left hover:border-primary/30 transition-all duration-300 cursor-pointer relative overflow-hidden tv-focusable"
+                        className="group glass-strong rounded-2xl p-4 sm:p-5 text-left hover:border-primary/30 transition-all duration-300 relative overflow-hidden"
                       >
                         <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 bg-gradient-to-br from-primary/5 to-transparent" />
                         <div className="relative">
-                          <div className="w-14 h-14 sm:w-16 sm:h-16 2xl:w-20 2xl:h-20 rounded-xl bg-secondary/60 flex items-center justify-center mb-3 overflow-hidden group-hover:scale-105 transition-transform duration-300">
+                          <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-xl bg-secondary/60 flex items-center justify-center mb-3 overflow-hidden group-hover:scale-105 transition-transform duration-300">
                             {ch.logo_url ? (
-                              <img
-                                src={ch.logo_url}
-                                alt={ch.name}
-                                className="w-full h-full object-cover rounded-xl"
-                                onError={(e) => {
-                                  const img = e.target as HTMLImageElement;
-                                  img.style.display = 'none';
-                                  const parent = img.parentElement;
-                                  if (parent && !parent.querySelector('.logo-fallback')) {
-                                    const fallback = document.createElement('div');
-                                    fallback.className = 'logo-fallback flex items-center justify-center w-full h-full';
-                                    fallback.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-primary"><polygon points="6 3 20 12 6 21 6 3"></polygon></svg>`;
-                                    parent.appendChild(fallback);
-                                  }
-                                }}
-                              />
+                              <img src={ch.logo_url} alt={ch.name} className="w-full h-full object-cover rounded-xl" />
                             ) : (
-                              <Play className="w-6 h-6 sm:w-7 sm:h-7 2xl:w-8 2xl:h-8 text-primary" />
+                              <Play className="w-6 h-6 sm:w-7 sm:h-7 text-primary" />
                             )}
                           </div>
-                          <p className="font-medium text-foreground text-sm sm:text-base 2xl:text-lg truncate">{ch.name}</p>
+                          <p className="font-medium text-foreground text-sm sm:text-base truncate">{ch.name}</p>
                           <p className="text-muted-foreground text-xs sm:text-sm mt-1 truncate">{ch.category}</p>
                         </div>
-                      </motion.button>
+                      </motion.div>
                     ))}
                   </div>
                 </motion.section>
@@ -247,36 +260,30 @@ const Dashboard = () => {
 
                   <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3 sm:gap-4">
                     {group.items.map((vod, i) => (
-                      <motion.button
+                      <motion.div
                         key={vod.id}
                         initial={{ opacity: 0, scale: 0.95 }}
                         animate={{ opacity: 1, scale: 1 }}
                         transition={{ delay: i * 0.02 }}
-                        tabIndex={0}
-                        onClick={() => navigate(`/vod/${vod.id}`, { state: { vod } })}
-                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') navigate(`/vod/${vod.id}`, { state: { vod } }); }}
-                        className="group glass-strong rounded-2xl overflow-hidden text-left hover:border-primary/30 transition-all duration-300 cursor-pointer relative tv-focusable"
+                        className="group glass-strong rounded-2xl overflow-hidden text-left hover:border-primary/30 transition-all duration-300 relative"
                       >
-                        <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 bg-gradient-to-br from-primary/5 to-transparent" />
-                        <div className="relative">
-                          <div className="w-full aspect-[2/3] bg-secondary/60 flex items-center justify-center overflow-hidden">
-                            {vod.poster_url ? (
-                              <img src={vod.poster_url} alt={vod.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
-                            ) : (
-                              <Film className="w-10 h-10 text-muted-foreground" />
+                        <div className="w-full aspect-[2/3] bg-secondary/60 flex items-center justify-center overflow-hidden">
+                          {vod.poster_url ? (
+                            <img src={vod.poster_url} alt={vod.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                          ) : (
+                            <Film className="w-10 h-10 text-muted-foreground" />
+                          )}
+                        </div>
+                        <div className="p-3">
+                          <p className="font-medium text-foreground text-sm truncate">{vod.title}</p>
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className="text-muted-foreground text-xs truncate">{vod.category}</span>
+                            {vod.duration_minutes && (
+                              <span className="text-muted-foreground text-xs">{vod.duration_minutes} min</span>
                             )}
                           </div>
-                          <div className="p-3">
-                            <p className="font-medium text-foreground text-sm truncate">{vod.title}</p>
-                            <div className="flex items-center gap-2 mt-1">
-                              <span className="text-muted-foreground text-xs truncate">{vod.category}</span>
-                              {vod.duration_minutes && (
-                                <span className="text-muted-foreground text-xs">{vod.duration_minutes} min</span>
-                              )}
-                            </div>
-                          </div>
                         </div>
-                      </motion.button>
+                      </motion.div>
                     ))}
                   </div>
                 </motion.section>
@@ -308,9 +315,8 @@ const Dashboard = () => {
                     </div>
                     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3 sm:gap-4">
                       {group.items.map((s, i) => (
-                        <motion.button key={s.id} initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: i * 0.02 }}
-                          onClick={() => navigate(`/series/${s.id}`)}
-                          className="group glass-strong rounded-2xl overflow-hidden text-left hover:border-primary/30 transition-all duration-300 cursor-pointer relative tv-focusable">
+                        <motion.div key={s.id} initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: i * 0.02 }}
+                          className="group glass-strong rounded-2xl overflow-hidden text-left hover:border-primary/30 transition-all duration-300 relative">
                           <div className="w-full aspect-[2/3] bg-secondary/60 flex items-center justify-center overflow-hidden">
                             {s.poster_url ? <img src={s.poster_url} alt={s.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
                               : <Tv2 className="w-10 h-10 text-muted-foreground" />}
@@ -319,7 +325,7 @@ const Dashboard = () => {
                             <p className="font-medium text-foreground text-sm truncate">{s.title}</p>
                             <span className="text-muted-foreground text-xs">{s.category}</span>
                           </div>
-                        </motion.button>
+                        </motion.div>
                       ))}
                     </div>
                   </motion.section>
