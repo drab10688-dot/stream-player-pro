@@ -5,18 +5,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { AdminAuthProvider } from "@/contexts/AdminAuthContext";
-import LoginPage from "./pages/LoginPage";
-import Dashboard from "./pages/Dashboard";
-import PlayerPage from "./pages/PlayerPage";
-import VodPlayerPage from "./pages/VodPlayerPage";
-import SeriesDetailPage from "./pages/SeriesDetailPage";
-import SeriesPlayerPage from "./pages/SeriesPlayerPage";
 import AdminLogin from "./pages/AdminLogin";
 import AdminDashboard from "./pages/AdminDashboard";
 import ResellerLogin from "./pages/ResellerLogin";
 import ResellerDashboard from "./pages/ResellerDashboard";
 import NotFound from "./pages/NotFound";
-import InstallPage from "./pages/InstallPage";
 
 const queryClient = new QueryClient();
 
