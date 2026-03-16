@@ -11,7 +11,7 @@ const AdminLogin = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [isSignup, setIsSignup] = useState(false);
+  const isSignup = false;
   const { toast } = useToast();
   const navigate = useNavigate();
   const { login, setup } = useAdminAuth();
