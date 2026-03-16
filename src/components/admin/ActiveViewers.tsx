@@ -103,6 +103,16 @@ const ActiveViewers = () => {
     setLoading(false);
   }, [autoRefresh, toast]);
 
+  const kickApkUser = useCallback(async (username: string, device_id?: string) => {
+    try {
+      await apiPost('/api/admin/apk-connections/kick', { username, device_id });
+      toast({ title: 'Conexión APK cerrada', description: username });
+      fetchViewers();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+  }, [toast, fetchViewers]);
+
   useEffect(() => {
     fetchViewers();
 
