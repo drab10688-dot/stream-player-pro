@@ -3233,6 +3233,71 @@ app.get('/api/admin/bandwidth', async (req, res) => {
 });
 
 // =============================================
+// ENDPOINT: Real-time CPU/RAM/Disk resources
+// =============================================
+let prevCpuTimes = null;
+
+app.get('/api/admin/resources', async (req, res) => {
+  try {
+    const os = require('os');
+    const { execSync } = require('child_process');
+    const run = (cmd) => { try { return execSync(cmd, { timeout: 3000 }).toString().trim(); } catch { return null; } };
+
+    // CPU usage via /proc/stat delta
+    const cpus = os.cpus();
+    const totalIdle = cpus.reduce((a, c) => a + c.times.idle, 0);
+    const totalTick = cpus.reduce((a, c) => a + c.times.user + c.times.nice + c.times.sys + c.times.idle + c.times.irq, 0);
+
+    let cpuPercent = 0;
+    if (prevCpuTimes) {
+      const idleDiff = totalIdle - prevCpuTimes.idle;
+      const totalDiff = totalTick - prevCpuTimes.total;
+      cpuPercent = totalDiff > 0 ? Math.round((1 - idleDiff / totalDiff) * 100) : 0;
+    }
+    prevCpuTimes = { idle: totalIdle, total: totalTick };
+
+    // RAM
+    const totalMem = os.totalmem();
+    const freeMem = os.freemem();
+    const usedMem = totalMem - freeMem;
+    const ramPercent = Math.round((usedMem / totalMem) * 100);
+
+    // Disk
+    const diskLine = run("df -B1 / | tail -1");
+    let diskTotal = 0, diskUsed = 0, diskPercent = 0;
+    if (diskLine) {
+      const dp = diskLine.split(/\s+/);
+      diskTotal = parseInt(dp[1]) || 0;
+      diskUsed = parseInt(dp[2]) || 0;
+      diskPercent = diskTotal > 0 ? Math.round((diskUsed / diskTotal) * 100) : 0;
+    }
+
+    // Load average
+    const loadAvg = os.loadavg();
+
+    // Uptime
+    const uptimeSec = os.uptime();
+
+    res.json({
+      cpu_percent: cpuPercent,
+      cpu_cores: cpus.length,
+      cpu_model: cpus[0]?.model || 'Unknown',
+      ram_total_gb: parseFloat((totalMem / 1073741824).toFixed(2)),
+      ram_used_gb: parseFloat((usedMem / 1073741824).toFixed(2)),
+      ram_free_gb: parseFloat((freeMem / 1073741824).toFixed(2)),
+      ram_percent: ramPercent,
+      disk_total_gb: parseFloat((diskTotal / 1073741824).toFixed(1)),
+      disk_used_gb: parseFloat((diskUsed / 1073741824).toFixed(1)),
+      disk_percent: diskPercent,
+      load_avg: loadAvg.map(l => parseFloat(l.toFixed(2))),
+      uptime_hours: parseFloat((uptimeSec / 3600).toFixed(1)),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// =============================================
 // APK MIDDLEWARE API - Capa sobre Xtream Codes
 // =============================================
 const XTREAM_BASE_URL = process.env.XTREAM_BASE_URL || 'https://tu-dominio-o-tunel:25461';

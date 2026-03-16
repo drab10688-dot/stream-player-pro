@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAdminAuth } from '@/contexts/AdminAuthContext';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Tv, Users, Megaphone, Store, LogOut, LayoutDashboard, Bell, Activity, Globe, Radio, Bug, Package, HardDrive, Film, Tv2, Eye, Shield, Wifi } from 'lucide-react';
+import { Tv, Users, Megaphone, Store, LogOut, LayoutDashboard, Bell, Activity, Globe, Radio, Bug, Package, HardDrive, Film, Tv2, Eye, Shield, Wifi, Cpu } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import AdminStats from '@/components/admin/AdminStats';
 import ChannelsManager from '@/components/admin/ChannelsManager';
@@ -21,6 +21,7 @@ import SeriesManager from '@/components/admin/SeriesManager';
 import ActiveViewers from '@/components/admin/ActiveViewers';
 import BandwidthMonitor from '@/components/admin/BandwidthMonitor';
 import SystemTuning from '@/components/admin/SystemTuning';
+import ResourceMonitor from '@/components/admin/ResourceMonitor';
 import omnisyncLogo from '@/assets/omnisync-logo.png';
 import ChangePasswordDialog from '@/components/admin/ChangePasswordDialog';
 
@@ -125,6 +126,9 @@ const AdminDashboard = () => {
             <TabsTrigger value="bandwidth" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
               <Wifi className="w-4 h-4" /> Red
             </TabsTrigger>
+            <TabsTrigger value="resources" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
+              <Cpu className="w-4 h-4" /> Recursos
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="dashboard" forceMount className="data-[state=inactive]:hidden"><AdminStats /></TabsContent>
@@ -144,6 +148,7 @@ const AdminDashboard = () => {
           <TabsContent value="viewers" forceMount className="data-[state=inactive]:hidden"><ActiveViewers /></TabsContent>
           <TabsContent value="system" forceMount className="data-[state=inactive]:hidden"><SystemTuning /></TabsContent>
           <TabsContent value="bandwidth" forceMount className="data-[state=inactive]:hidden"><BandwidthMonitor /></TabsContent>
+          <TabsContent value="resources" forceMount className="data-[state=inactive]:hidden"><ResourceMonitor /></TabsContent>
         </Tabs>
       </main>
     </div>
