@@ -195,6 +195,26 @@ CREATE TABLE IF NOT EXISTS vod_episodes (
 );
 
 -- =============================================
+-- LOGS DE ACTIVIDAD (sesiones de visualización)
+-- =============================================
+CREATE TABLE IF NOT EXISTS activity_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  client_id UUID NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  client_username TEXT NOT NULL,
+  channel_id UUID REFERENCES channels(id) ON DELETE SET NULL,
+  channel_name TEXT,
+  action TEXT NOT NULL DEFAULT 'watch',
+  ip_address TEXT,
+  country TEXT,
+  city TEXT,
+  device_id TEXT,
+  source TEXT DEFAULT 'panel',
+  started_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+  ended_at TIMESTAMP WITH TIME ZONE,
+  duration_seconds INTEGER
+);
+
+-- =============================================
 -- TRIGGER: auto-update updated_at
 -- =============================================
 CREATE OR REPLACE FUNCTION update_updated_at_column()
