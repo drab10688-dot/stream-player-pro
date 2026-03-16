@@ -239,7 +239,7 @@ const ChannelsManager = () => {
     try {
       if (isLovablePreview()) {
         const { data, error } = await supabase.functions.invoke('import-m3u', {
-          body: { m3u_content: m3uContent.trim() || undefined, m3u_url: m3uUrl.trim() || undefined },
+          body: { m3u_content: m3uContent.trim() || undefined, m3u_url: m3uUrl.trim() || undefined, keep_alive: m3uKeepAlive },
         });
         if (error) throw error;
         toast({ title: '¡Importación completada!', description: `${data.imported} de ${data.total} canales importados` });
@@ -247,6 +247,7 @@ const ChannelsManager = () => {
         const data = await apiPost('/api/channels/import-m3u', {
           m3u_content: m3uContent.trim() || undefined,
           m3u_url: m3uUrl.trim() || undefined,
+          keep_alive: m3uKeepAlive,
         });
         toast({ title: '¡Importación completada!', description: `${data.imported} de ${data.total} canales importados` });
       }
