@@ -3799,25 +3799,49 @@ app.get('/api/channels/:id/stream', authApk, async (req, res) => {
 });
 
 // POST /api/sessions/close
+// Cierra sesión por token (userId) + device_id para no duplicar
 app.post('/api/sessions/close', authApk, (req, res) => {
   try {
-    const { id: userId } = req.apkUser;
-    const { channelId } = req.body || {};
+    const { id: userId, device_id: tokenDeviceId } = req.apkUser;
+    const { channelId, device_id: bodyDeviceId } = req.body || {};
+    const device_id = bodyDeviceId || tokenDeviceId || `apk-${userId}`;
+    const connKey = `${userId}:${device_id}`;
 
-    const userSessions = apkSessions.get(userId);
-    if (!userSessions || userSessions.size === 0) {
-      return res.json({ message: 'Sin sesiones activas', activeSessions: 0 });
+    // Limpiar activity log activo para este dispositivo
+    const logKey = `apk:${connKey}`;
+    const currentLog = activeActivityLogs.get(logKey);
+    if (currentLog && currentLog.logId) {
+      pool.query(
+        `UPDATE activity_logs SET ended_at = now(), duration_seconds = EXTRACT(EPOCH FROM (now() - started_at))::int WHERE id = $1`,
+        [currentLog.logId]
+      ).catch(() => {});
+      activeActivityLogs.delete(logKey);
     }
 
     if (channelId) {
-      // Cerrar sesión específica
-      const updated = new Set([...userSessions].filter(s => s.channelId !== channelId));
-      apkSessions.set(userId, updated);
-      res.json({ message: 'Sesión cerrada', channelId, activeSessions: updated.size });
+      // Solo limpiar el canal actual de la sesión (no cerrar conexión completa)
+      const connInfo = apkConnectionInfo.get(connKey);
+      if (connInfo) {
+        connInfo.channelId = null;
+      }
+      // Limpiar de apkSessions también
+      const userSessions = apkSessions.get(userId);
+      if (userSessions) {
+        const updated = new Set([...userSessions].filter(s => s.channelId !== channelId));
+        apkSessions.set(userId, updated);
+      }
+      res.json({ message: 'Canal cerrado', channelId, device_id });
     } else {
-      // Cerrar todas
-      apkSessions.delete(userId);
-      res.json({ message: 'Todas las sesiones cerradas', activeSessions: 0 });
+      // Cerrar sesión completa de este dispositivo
+      apkConnectionInfo.delete(connKey);
+      // Limpiar apkSessions
+      const userSessions = apkSessions.get(userId);
+      if (userSessions) {
+        const updated = new Set([...userSessions].filter(s => s.device_id !== device_id));
+        if (updated.size === 0) apkSessions.delete(userId);
+        else apkSessions.set(userId, updated);
+      }
+      res.json({ message: 'Sesión cerrada', device_id, activeSessions: 0 });
     }
   } catch (err) {
     console.error('APK session close error:', err.message);
