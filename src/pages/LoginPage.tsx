@@ -79,6 +79,7 @@ const LoginPage = () => {
       } else {
         localStorage.removeItem(SAVED_CREDS_KEY);
       }
+      navigate('/dashboard');
     } else {
       toast({ title: 'Acceso denegado', description: result.error || 'Credenciales incorrectas', variant: 'destructive' });
     }
