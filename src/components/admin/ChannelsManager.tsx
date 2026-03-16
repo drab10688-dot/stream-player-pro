@@ -46,6 +46,7 @@ const ChannelsManager = () => {
   const [form, setForm] = useState({ name: '', url: '', category: 'General', sort_order: 0, logo_url: '' });
   const [m3uContent, setM3uContent] = useState('');
   const [m3uUrl, setM3uUrl] = useState('');
+  const [m3uKeepAlive, setM3uKeepAlive] = useState(false);
   const [importing, setImporting] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
@@ -238,7 +239,7 @@ const ChannelsManager = () => {
     try {
       if (isLovablePreview()) {
         const { data, error } = await supabase.functions.invoke('import-m3u', {
-          body: { m3u_content: m3uContent.trim() || undefined, m3u_url: m3uUrl.trim() || undefined },
+          body: { m3u_content: m3uContent.trim() || undefined, m3u_url: m3uUrl.trim() || undefined, keep_alive: m3uKeepAlive },
         });
         if (error) throw error;
         toast({ title: '¡Importación completada!', description: `${data.imported} de ${data.total} canales importados` });
@@ -246,6 +247,7 @@ const ChannelsManager = () => {
         const data = await apiPost('/api/channels/import-m3u', {
           m3u_content: m3uContent.trim() || undefined,
           m3u_url: m3uUrl.trim() || undefined,
+          keep_alive: m3uKeepAlive,
         });
         toast({ title: '¡Importación completada!', description: `${data.imported} de ${data.total} canales importados` });
       }
@@ -327,6 +329,19 @@ const ChannelsManager = () => {
               </label>
             </div>
             <Textarea placeholder={`#EXTM3U\n#EXTINF:-1 group-title="Deportes",ESPN\nhttp://ip:port/espn.ts`} value={m3uContent} onChange={e => setM3uContent(e.target.value)} className="bg-secondary border-border text-foreground font-mono text-xs min-h-[150px]" rows={8} />
+          </div>
+          <div className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg border border-border/30">
+            <input
+              type="checkbox"
+              id="m3u-keepalive"
+              checked={m3uKeepAlive}
+              onChange={e => setM3uKeepAlive(e.target.checked)}
+              className="w-4 h-4 rounded border-border accent-primary"
+            />
+            <label htmlFor="m3u-keepalive" className="text-sm text-foreground cursor-pointer">
+              <span className="font-medium">Activar Keep Alive</span>
+              <p className="text-xs text-muted-foreground mt-0.5">Mantener todos los canales importados conectados permanentemente al origen</p>
+            </label>
           </div>
           <div className="flex gap-2 justify-end">
             <Button variant="ghost" onClick={() => setShowM3UImport(false)} className="text-muted-foreground"><X className="w-4 h-4 mr-1" /> Cancelar</Button>

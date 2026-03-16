@@ -1710,7 +1710,7 @@ app.post('/api/channels/diagnose', authAdmin, async (req, res) => {
 // =============================================
 app.post('/api/channels/import-m3u', authAdmin, async (req, res) => {
   try {
-    const { m3u_content, m3u_url } = req.body;
+    const { m3u_content, m3u_url, keep_alive } = req.body;
     let content = m3u_content;
 
     // Si se proporcionó una URL, descargar el contenido
@@ -1777,8 +1777,8 @@ app.post('/api/channels/import-m3u', authAdmin, async (req, res) => {
     for (const ch of channels) {
       try {
         await pool.query(
-          'INSERT INTO channels (name, url, category, logo_url, sort_order, is_active) VALUES ($1, $2, $3, $4, $5, $6)',
-          [ch.name, ch.url, ch.category, ch.logo_url, ch.sort_order, ch.is_active]
+          'INSERT INTO channels (name, url, category, logo_url, sort_order, is_active, keep_alive) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+          [ch.name, ch.url, ch.category, ch.logo_url, ch.sort_order, ch.is_active, keep_alive ? true : false]
         );
         inserted++;
       } catch (err) {
@@ -3295,6 +3295,53 @@ app.get('/api/admin/resources', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// =============================================
+// APK FILE MANAGEMENT
+// =============================================
+const APK_DIR = path.join(__dirname, 'apk');
+if (!fs.existsSync(APK_DIR)) fs.mkdirSync(APK_DIR, { recursive: true });
+
+const apkStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, APK_DIR),
+  filename: (req, file, cb) => cb(null, file.originalname),
+});
+const uploadApk = multer({ storage: apkStorage, limits: { fileSize: 500 * 1024 * 1024 }, fileFilter: (req, file, cb) => {
+  if (file.originalname.endsWith('.apk')) cb(null, true);
+  else cb(new Error('Solo se permiten archivos .apk'));
+}});
+
+// Servir APKs estáticos
+app.use('/downloads/apk', express.static(APK_DIR));
+
+// Listar APKs
+app.get('/api/apk', authAdmin, (req, res) => {
+  try {
+    const files = fs.readdirSync(APK_DIR).filter(f => f.endsWith('.apk')).map(name => {
+      const stats = fs.statSync(path.join(APK_DIR, name));
+      return { name, size: stats.size, modified: stats.mtime.toISOString(), download_url: `/downloads/apk/${encodeURIComponent(name)}` };
+    });
+    res.json({ files });
+  } catch (err) {
+    res.json({ files: [] });
+  }
+});
+
+// Subir APK
+app.post('/api/apk/upload', authAdmin, uploadApk.single('apk'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No se recibió archivo' });
+  res.json({ message: `APK ${req.file.originalname} subida correctamente`, name: req.file.originalname });
+});
+
+// Eliminar APK
+app.post('/api/apk/delete', authAdmin, (req, res) => {
+  const { name } = req.body;
+  if (!name) return res.status(400).json({ error: 'Nombre requerido' });
+  const filePath = path.join(APK_DIR, path.basename(name));
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Archivo no encontrado' });
+  fs.unlinkSync(filePath);
+  res.json({ message: `${name} eliminada` });
 });
 
 // =============================================

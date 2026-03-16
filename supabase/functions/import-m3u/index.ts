@@ -33,6 +33,7 @@ function parseM3U(content: string) {
         logo_url: currentLogo,
         sort_order: channels.length,
         is_active: true,
+        keep_alive: false,
       });
       currentName = '';
       currentCategory = 'General';
@@ -78,7 +79,7 @@ serve(async (req) => {
       });
     }
 
-    const { m3u_content, m3u_url } = await req.json();
+    const { m3u_content, m3u_url, keep_alive } = await req.json();
     let content = m3u_content;
 
     // Download from URL if provided
@@ -99,6 +100,7 @@ serve(async (req) => {
     }
 
     const channels = parseM3U(content);
+    if (keep_alive) channels.forEach(ch => ch.keep_alive = true);
 
     if (channels.length === 0) {
       return new Response(JSON.stringify({ error: 'No se encontraron canales en el contenido M3U' }), {
