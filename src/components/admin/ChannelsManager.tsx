@@ -46,6 +46,7 @@ const ChannelsManager = () => {
   const [form, setForm] = useState({ name: '', url: '', category: 'General', sort_order: 0, logo_url: '' });
   const [m3uContent, setM3uContent] = useState('');
   const [m3uUrl, setM3uUrl] = useState('');
+  const [m3uKeepAlive, setM3uKeepAlive] = useState(false);
   const [importing, setImporting] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
