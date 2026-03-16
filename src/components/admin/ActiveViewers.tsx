@@ -28,6 +28,7 @@ interface Viewer {
   channel_name: string | null;
   channel_category: string | null;
   channel_logo: string | null;
+  source?: 'panel' | 'apk';
 }
 
 interface ViewersData {
