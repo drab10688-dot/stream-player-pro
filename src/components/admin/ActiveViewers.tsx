@@ -74,6 +74,7 @@ const ActiveViewers = () => {
     }
   }, [toast]);
 
+  const fetchViewers = useCallback(async () => {
     try {
       const [result, apkConns] = await Promise.all([
         apiGet('/api/viewers/active'),
