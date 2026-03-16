@@ -3414,6 +3414,13 @@ app.post('/api/auth/login', async (req, res) => {
       { expiresIn: '24h' }
     );
 
+    // Obtener ads, VOD y series de la base de datos local
+    const [adsRes, vodRes, seriesRes] = await Promise.all([
+      pool.query('SELECT id, title, message, image_url FROM ads WHERE is_active = true ORDER BY created_at DESC'),
+      pool.query('SELECT id, title, description, category, poster_url, duration_minutes FROM vod_items WHERE is_active = true ORDER BY sort_order, created_at DESC'),
+      pool.query('SELECT id, title, description, category, poster_url FROM vod_series WHERE is_active = true ORDER BY sort_order, title'),
+    ]);
+
     res.json({
       token,
       user: {
@@ -3425,6 +3432,9 @@ app.post('/api/auth/login', async (req, res) => {
         isTrial: userInfo.is_trial === '1',
         activeCons: parseInt(userInfo.active_cons) || 0,
       },
+      ads: adsRes.rows,
+      vod: vodRes.rows,
+      series: seriesRes.rows,
     });
   } catch (err) {
     console.error('APK login error:', err.message);
