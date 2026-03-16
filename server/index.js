@@ -737,7 +737,10 @@ app.post('/api/client/login', async (req, res) => {
   }
 });
 
-// Heartbeat (mantener conexión activa + canal que ve)
+// Heartbeat (mantener conexión activa + canal que ve + log de actividad)
+// Map para tracking de actividad activa: `clientId:deviceId` → { logId, channelId }
+const activeActivityLogs = new Map();
+
 app.post('/api/client/heartbeat', async (req, res) => {
   const { client_id, device_id, channel_id } = req.body;
   if (client_id && device_id) {
@@ -751,6 +754,53 @@ app.post('/api/client/heartbeat', async (req, res) => {
       `UPDATE active_connections SET ${updates.join(', ')} WHERE client_id = $1 AND device_id = $2`,
       vals
     );
+
+    // Activity logging: track channel changes
+    const logKey = `${client_id}:${device_id}`;
+    const currentLog = activeActivityLogs.get(logKey);
+    
+    if (channel_id && (!currentLog || currentLog.channelId !== channel_id)) {
+      // Close previous log if exists
+      if (currentLog && currentLog.logId) {
+        try {
+          await pool.query(
+            `UPDATE activity_logs SET ended_at = now(), duration_seconds = EXTRACT(EPOCH FROM (now() - started_at))::int WHERE id = $1`,
+            [currentLog.logId]
+          );
+        } catch {}
+      }
+      
+      // Start new activity log
+      try {
+        // Get client info and channel name
+        const { rows: clientRows } = await pool.query('SELECT username FROM clients WHERE id = $1', [client_id]);
+        const { rows: channelRows } = await pool.query('SELECT name FROM channels WHERE id = $1', [channel_id]);
+        const { rows: connRows } = await pool.query(
+          'SELECT ip_address, country, city FROM active_connections WHERE client_id = $1 AND device_id = $2', [client_id, device_id]
+        );
+        
+        if (clientRows.length > 0) {
+          const conn = connRows[0] || {};
+          const { rows: logRows } = await pool.query(
+            `INSERT INTO activity_logs (client_id, client_username, channel_id, channel_name, ip_address, country, city, device_id, source)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'panel') RETURNING id`,
+            [client_id, clientRows[0].username, channel_id, channelRows[0]?.name || null, conn.ip_address || null, conn.country || null, conn.city || null, device_id]
+          );
+          activeActivityLogs.set(logKey, { logId: logRows[0].id, channelId: channel_id });
+        }
+      } catch (err) {
+        console.error('Activity log error:', err.message);
+      }
+    } else if (!channel_id && currentLog) {
+      // Client stopped watching - close log
+      try {
+        await pool.query(
+          `UPDATE activity_logs SET ended_at = now(), duration_seconds = EXTRACT(EPOCH FROM (now() - started_at))::int WHERE id = $1`,
+          [currentLog.logId]
+        );
+      } catch {}
+      activeActivityLogs.delete(logKey);
+    }
   }
   res.json({ ok: true });
 });
