@@ -11,7 +11,7 @@ const AdminLogin = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [isSignup, setIsSignup] = useState(false);
+  const isSignup = false;
   const { toast } = useToast();
   const navigate = useNavigate();
   const { login, setup } = useAdminAuth();
@@ -73,10 +73,6 @@ const AdminLogin = () => {
             </Button>
           </form>
 
-          <button onClick={() => setIsSignup(!isSignup)}
-            className="w-full text-center text-sm text-muted-foreground mt-4 hover:text-foreground transition-colors">
-            {isSignup ? 'Ya tengo cuenta' : 'Crear primera cuenta admin'}
-          </button>
         </div>
       </motion.div>
     </div>
