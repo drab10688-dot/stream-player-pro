@@ -3414,6 +3414,13 @@ app.post('/api/auth/login', async (req, res) => {
       { expiresIn: '24h' }
     );
 
+    // Obtener ads, VOD y series de la base de datos local
+    const [adsRes, vodRes, seriesRes] = await Promise.all([
+      pool.query('SELECT id, title, message, image_url FROM ads WHERE is_active = true ORDER BY created_at DESC'),
+      pool.query('SELECT id, title, description, category, poster_url, duration_minutes FROM vod_items WHERE is_active = true ORDER BY sort_order, created_at DESC'),
+      pool.query('SELECT id, title, description, category, poster_url FROM vod_series WHERE is_active = true ORDER BY sort_order, title'),
+    ]);
+
     res.json({
       token,
       user: {
@@ -3425,6 +3432,9 @@ app.post('/api/auth/login', async (req, res) => {
         isTrial: userInfo.is_trial === '1',
         activeCons: parseInt(userInfo.active_cons) || 0,
       },
+      ads: adsRes.rows,
+      vod: vodRes.rows,
+      series: seriesRes.rows,
     });
   } catch (err) {
     console.error('APK login error:', err.message);
@@ -3546,6 +3556,122 @@ app.post('/api/sessions/close', authApk, (req, res) => {
   } catch (err) {
     console.error('APK session close error:', err.message);
     res.status(500).json({ error: 'Error al cerrar sesión' });
+  }
+});
+
+// =============================================
+// APK: Anuncios activos
+// =============================================
+app.get('/api/ads', authApk, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT id, title, message, image_url FROM ads WHERE is_active = true ORDER BY created_at DESC'
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('APK ads error:', err.message);
+    res.status(500).json({ error: 'Error al obtener anuncios' });
+  }
+});
+
+// =============================================
+// APK: VOD películas
+// =============================================
+app.get('/api/vod', authApk, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT id, title, description, category, poster_url, duration_minutes FROM vod_items WHERE is_active = true ORDER BY sort_order, created_at DESC'
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('APK vod error:', err.message);
+    res.status(500).json({ error: 'Error al obtener VOD' });
+  }
+});
+
+// =============================================
+// APK: Series
+// =============================================
+app.get('/api/series', authApk, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT id, title, description, category, poster_url FROM vod_series WHERE is_active = true ORDER BY sort_order, title'
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('APK series error:', err.message);
+    res.status(500).json({ error: 'Error al obtener series' });
+  }
+});
+
+// APK: Temporadas de una serie
+app.get('/api/series/:id/seasons', authApk, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT id, season_number, title, poster_url FROM vod_seasons WHERE series_id = $1 ORDER BY sort_order, season_number',
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('APK seasons error:', err.message);
+    res.status(500).json({ error: 'Error al obtener temporadas' });
+  }
+});
+
+// APK: Episodios de una temporada
+app.get('/api/seasons/:id/episodes', authApk, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT id, episode_number, title, description, video_filename, poster_url, duration_minutes FROM vod_episodes WHERE season_id = $1 AND is_active = true ORDER BY sort_order, episode_number',
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('APK episodes error:', err.message);
+    res.status(500).json({ error: 'Error al obtener episodios' });
+  }
+});
+
+// APK: Stream VOD (película o episodio) con soporte Range
+app.get('/api/vod/stream/:id', authApk, async (req, res) => {
+  try {
+    // Buscar en películas o episodios
+    let { rows } = await pool.query('SELECT video_filename FROM vod_items WHERE id = $1 AND is_active = true', [req.params.id]);
+    if (rows.length === 0) {
+      ({ rows } = await pool.query('SELECT video_filename FROM vod_episodes WHERE id = $1 AND is_active = true', [req.params.id]));
+    }
+    if (rows.length === 0) return res.status(404).json({ error: 'Video no encontrado' });
+
+    const videoPath = path.join(VOD_DIR, rows[0].video_filename);
+    if (!fs.existsSync(videoPath)) return res.status(404).json({ error: 'Archivo no encontrado' });
+
+    const stat = fs.statSync(videoPath);
+    const fileSize = stat.size;
+    const range = req.headers.range;
+
+    if (range) {
+      const parts = range.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+      const chunkSize = (end - start) + 1;
+      res.writeHead(206, {
+        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': chunkSize,
+        'Content-Type': 'video/mp4',
+      });
+      fs.createReadStream(videoPath, { start, end }).pipe(res);
+    } else {
+      res.writeHead(200, {
+        'Content-Length': fileSize,
+        'Content-Type': 'video/mp4',
+        'Accept-Ranges': 'bytes',
+      });
+      fs.createReadStream(videoPath).pipe(res);
+    }
+  } catch (err) {
+    console.error('APK vod stream error:', err.message);
+    res.status(500).json({ error: 'Error al reproducir video' });
   }
 });
 
