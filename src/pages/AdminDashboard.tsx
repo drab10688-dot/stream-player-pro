@@ -21,6 +21,7 @@ import SeriesManager from '@/components/admin/SeriesManager';
 import ActiveViewers from '@/components/admin/ActiveViewers';
 import BandwidthMonitor from '@/components/admin/BandwidthMonitor';
 import SystemTuning from '@/components/admin/SystemTuning';
+import ResourceMonitor from '@/components/admin/ResourceMonitor';
 import omnisyncLogo from '@/assets/omnisync-logo.png';
 import ChangePasswordDialog from '@/components/admin/ChangePasswordDialog';
 
