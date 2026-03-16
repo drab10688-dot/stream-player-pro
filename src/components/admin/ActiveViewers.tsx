@@ -66,8 +66,35 @@ const ActiveViewers = () => {
 
   const fetchViewers = useCallback(async () => {
     try {
-      const result = await apiGet('/api/viewers/active');
-      setData(result);
+      const [result, apkConns] = await Promise.all([
+        apiGet('/api/viewers/active'),
+        apiGet('/api/admin/apk-connections').catch(() => []),
+      ]);
+
+      // Merge APK connections into viewers
+      const apkViewers: Viewer[] = (apkConns || []).map((c: any, i: number) => ({
+        id: `apk-${c.username}-${i}`,
+        device_id: c.device_id || 'apk',
+        ip_address: c.ip || null,
+        country: c.country || null,
+        city: c.city || null,
+        connected_at: c.connectedAt,
+        last_heartbeat: c.lastHeartbeat,
+        client_username: c.username,
+        client_id: `apk-${c.username}`,
+        channel_name: c.channelId || null,
+        channel_category: null,
+        channel_logo: null,
+        source: 'apk' as const,
+      }));
+
+      const panelViewers = (result?.viewers || []).map((v: Viewer) => ({ ...v, source: 'panel' as const }));
+      const allViewers = [...panelViewers, ...apkViewers];
+
+      setData({
+        total_viewers: allViewers.length,
+        viewers: allViewers,
+      });
     } catch (err: any) {
       if (!autoRefresh) {
         toast({ title: 'Error', description: err.message, variant: 'destructive' });
