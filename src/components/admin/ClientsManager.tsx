@@ -2,10 +2,11 @@ import { useState, useEffect } from 'react';
 import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
 import { supabase } from '@/integrations/supabase/client';
 import { isLovablePreview } from '@/lib/utils';
+import { copyToClipboard } from '@/lib/clipboard';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Plus, Trash2, Edit2, Save, X, Users, UserX, UserCheck, Monitor, Package, Link2, Copy, RefreshCw, Film } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, Users, UserX, UserCheck, Monitor, Package, Link2, Copy, RefreshCw, Film, Check } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { motion } from 'framer-motion';
 import { format } from 'date-fns';
@@ -37,6 +38,7 @@ const ClientsManager = () => {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expandedPlaylist, setExpandedPlaylist] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [form, setForm] = useState({ username: '', password: '', max_screens: 1, expiry_date: '', notes: '', plan_id: '', vod_enabled: false });
 
   const fetchClients = async () => {
@@ -161,19 +163,6 @@ const ClientsManager = () => {
 
   const isExpired = (date: string) => new Date(date) < new Date();
 
-  const getPlaylistUrl = (token: string | null) => {
-    if (!token) return '';
-    const base = window.location.origin;
-    return `${base}/api/playlist/${token}`;
-  };
-
-  const copyPlaylistUrl = (token: string | null) => {
-    const url = getPlaylistUrl(token);
-    if (!url) return;
-    navigator.clipboard.writeText(url);
-    toast({ title: '📋 URL copiada', description: 'Link de playlist M3U copiado al portapapeles' });
-  };
-
   const regenerateToken = async (clientId: string) => {
     try {
       if (isLovablePreview()) {
@@ -188,6 +177,56 @@ const ClientsManager = () => {
       fetchClients();
     } catch (err: any) {
       toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+  };
+
+  const getBaseUrl = () => window.location.origin;
+
+  const getPlaylistFormats = (token: string | null, username: string, password: string) => {
+    if (!token) return [];
+    const base = getBaseUrl();
+    return [
+      {
+        label: 'M3U Playlist',
+        description: 'Compatible con OTT Player, Smart IPTV, SS IPTV, TiviMate',
+        url: `${base}/api/playlist/${token}`,
+        format: 'm3u',
+      },
+      {
+        label: 'M3U8 (HLS)',
+        description: 'Para reproductores que prefieren .m3u8',
+        url: `${base}/api/playlist/${token}.m3u8`,
+        format: 'm3u8',
+      },
+      {
+        label: 'Xtream Codes API',
+        description: 'Para apps que usan login Xtream (XCIPTV, TiviMate, etc.)',
+        url: `${base}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`,
+        format: 'xtream',
+      },
+      {
+        label: 'TS Direct Stream',
+        description: 'URL base para streams .ts individuales',
+        url: `${base}/live/${encodeURIComponent(username)}/${encodeURIComponent(password)}/`,
+        format: 'ts',
+      },
+      {
+        label: 'EPG (Guía de Programación)',
+        description: 'URL de la guía electrónica de programación',
+        url: `${base}/xmltv.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`,
+        format: 'epg',
+      },
+    ];
+  };
+
+  const handleCopy = async (text: string, id: string) => {
+    const success = await copyToClipboard(text);
+    if (success) {
+      setCopiedId(id);
+      toast({ title: '📋 Copiado', description: 'URL copiada al portapapeles' });
+      setTimeout(() => setCopiedId(null), 2000);
+    } else {
+      toast({ title: 'Error', description: 'No se pudo copiar. Selecciona y copia manualmente.', variant: 'destructive' });
     }
   };
 
@@ -274,7 +313,7 @@ const ClientsManager = () => {
                   </div>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
-                  <Button variant="ghost" size="icon" onClick={() => setExpandedPlaylist(expandedPlaylist === c.id ? null : c.id)} className={`text-muted-foreground hover:text-primary ${expandedPlaylist === c.id ? 'text-primary' : ''}`} title="Link M3U">
+                  <Button variant="ghost" size="icon" onClick={() => setExpandedPlaylist(expandedPlaylist === c.id ? null : c.id)} className={`text-muted-foreground hover:text-primary ${expandedPlaylist === c.id ? 'text-primary' : ''}`} title="Links de Playlist">
                     <Link2 className="w-4 h-4" />
                   </Button>
                   <Button variant="ghost" size="sm" onClick={() => toggleActive(c)} className="text-xs text-muted-foreground">
@@ -288,33 +327,92 @@ const ClientsManager = () => {
                   </Button>
                 </div>
               </div>
-              {/* Playlist M3U URL expandable */}
+
+              {/* Expanded Playlist URLs */}
               {expandedPlaylist === c.id && (
                 <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="mt-3 pt-3 border-t border-border/50">
-                  <label className="text-xs text-muted-foreground mb-1.5 block flex items-center gap-1">
-                    <Link2 className="w-3 h-3" /> Link M3U para OTT Player / Smart IPTV
-                  </label>
-                  {c.playlist_token ? (
-                    <div className="flex gap-2">
-                      <Input readOnly value={getPlaylistUrl(c.playlist_token)} className="bg-secondary border-border text-foreground text-xs font-mono" onClick={(e) => (e.target as HTMLInputElement).select()} />
-                      <Button variant="outline" size="icon" onClick={() => copyPlaylistUrl(c.playlist_token)} className="shrink-0 border-border" title="Copiar URL">
-                        <Copy className="w-4 h-4" />
+                  <div className="flex items-center justify-between mb-3">
+                    <label className="text-xs font-semibold text-foreground flex items-center gap-1">
+                      <Link2 className="w-3.5 h-3.5 text-primary" /> Links de Playlist y Conexión
+                    </label>
+                    {c.playlist_token ? (
+                      <Button variant="outline" size="sm" onClick={() => regenerateToken(c.id)} className="text-xs gap-1 border-border text-muted-foreground hover:text-destructive" title="Regenerar token (invalida links anteriores)">
+                        <RefreshCw className="w-3 h-3" /> Regenerar Token
                       </Button>
-                      <Button variant="outline" size="icon" onClick={() => regenerateToken(c.id)} className="shrink-0 border-border text-muted-foreground hover:text-destructive" title="Regenerar token (invalida el link anterior)">
-                        <RefreshCw className="w-4 h-4" />
-                      </Button>
-                    </div>
-                  ) : (
-                    <div className="flex gap-2 items-center">
-                      <span className="text-xs text-muted-foreground">Sin token generado</span>
+                    ) : (
                       <Button variant="outline" size="sm" onClick={() => regenerateToken(c.id)} className="text-xs gap-1">
                         <RefreshCw className="w-3 h-3" /> Generar Token
                       </Button>
+                    )}
+                  </div>
+
+                  {c.playlist_token ? (
+                    <div className="space-y-2">
+                      {getPlaylistFormats(c.playlist_token, c.username, c.password).map((fmt) => {
+                        const copyKey = `${c.id}-${fmt.format}`;
+                        const isCopied = copiedId === copyKey;
+                        return (
+                          <div key={fmt.format} className="bg-secondary/50 rounded-lg p-3 border border-border/30">
+                            <div className="flex items-start justify-between gap-2 mb-1.5">
+                              <div>
+                                <span className="text-xs font-semibold text-foreground">{fmt.label}</span>
+                                <p className="text-[10px] text-muted-foreground">{fmt.description}</p>
+                              </div>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleCopy(fmt.url, copyKey)}
+                                className={`shrink-0 text-xs gap-1 h-7 px-2 transition-colors ${isCopied ? 'border-emerald-500/50 text-emerald-400' : 'border-border text-muted-foreground'}`}
+                              >
+                                {isCopied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                                {isCopied ? 'Copiado' : 'Copiar'}
+                              </Button>
+                            </div>
+                            <Input
+                              readOnly
+                              value={fmt.url}
+                              className="bg-muted/50 border-border/50 text-foreground text-[11px] font-mono h-8"
+                              onClick={(e) => (e.target as HTMLInputElement).select()}
+                            />
+                          </div>
+                        );
+                      })}
+
+                      {/* Xtream login info */}
+                      <div className="bg-primary/5 rounded-lg p-3 border border-primary/10 mt-2">
+                        <p className="text-xs font-semibold text-foreground mb-2">📱 Datos para apps Xtream Codes</p>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                          {[
+                            { label: 'Server URL', value: getBaseUrl(), id: `${c.id}-server` },
+                            { label: 'Usuario', value: c.username, id: `${c.id}-user` },
+                            { label: 'Contraseña', value: c.password, id: `${c.id}-pass` },
+                          ].map((field) => (
+                            <div key={field.id} className="flex items-center gap-1">
+                              <div className="flex-1 min-w-0">
+                                <p className="text-[10px] text-muted-foreground">{field.label}</p>
+                                <p className="text-xs font-mono text-foreground truncate">{field.value}</p>
+                              </div>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="shrink-0 w-6 h-6 text-muted-foreground hover:text-primary"
+                                onClick={() => handleCopy(field.value, field.id)}
+                              >
+                                {copiedId === field.id ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="bg-muted/30 rounded-lg p-4 text-center">
+                      <p className="text-xs text-muted-foreground">Sin token generado. Genera uno para obtener los links de playlist.</p>
                     </div>
                   )}
-                  <p className="text-[10px] text-muted-foreground mt-1.5">
-                    💡 Este link funciona en OTT Player, Smart IPTV, SS IPTV y cualquier app que acepte M3U. 
-                    En red LAN usa la IP local. Con Cloudflare usa el dominio del túnel.
+
+                  <p className="text-[10px] text-muted-foreground mt-2">
+                    💡 En red LAN usa la IP local. Con Cloudflare Tunnel usa el dominio del túnel como Server URL.
                   </p>
                 </motion.div>
               )}

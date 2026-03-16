@@ -3179,6 +3179,60 @@ app.get('/api/admin/system-info', async (req, res) => {
 });
 
 // =============================================
+// ENDPOINT: Bandwidth Monitor (real-time)
+// =============================================
+let prevNetStats = null;
+let prevNetTime = null;
+
+app.get('/api/admin/bandwidth', async (req, res) => {
+  try {
+    const { execSync } = require('child_process');
+    const run = (cmd) => { try { return execSync(cmd, { timeout: 3000 }).toString().trim(); } catch { return null; } };
+
+    // Get primary network interface
+    const iface = run("ip route | grep default | awk '{print $5}' | head -1") || 'eth0';
+
+    // Read /proc/net/dev for the interface
+    const netDev = run(`cat /proc/net/dev | grep '${iface}:'`);
+    if (!netDev) {
+      return res.json({ rx_mbps: 0, tx_mbps: 0, rx_total_gb: 0, tx_total_gb: 0, interface: iface });
+    }
+
+    const parts = netDev.trim().split(/\s+/);
+    // Format: iface: rx_bytes rx_packets ... tx_bytes tx_packets ...
+    const rxBytes = parseInt(parts[1]) || 0;
+    const txBytes = parseInt(parts[9]) || 0;
+    const now = Date.now();
+
+    let rxMbps = 0;
+    let txMbps = 0;
+
+    if (prevNetStats && prevNetTime) {
+      const dtSec = (now - prevNetTime) / 1000;
+      if (dtSec > 0) {
+        rxMbps = ((rxBytes - prevNetStats.rx) * 8) / (dtSec * 1000000); // bits to Mbps
+        txMbps = ((txBytes - prevNetStats.tx) * 8) / (dtSec * 1000000);
+        if (rxMbps < 0) rxMbps = 0;
+        if (txMbps < 0) txMbps = 0;
+      }
+    }
+
+    prevNetStats = { rx: rxBytes, tx: txBytes };
+    prevNetTime = now;
+
+    res.json({
+      rx_mbps: parseFloat(rxMbps.toFixed(2)),
+      tx_mbps: parseFloat(txMbps.toFixed(2)),
+      rx_total_gb: parseFloat((rxBytes / 1073741824).toFixed(2)),
+      tx_total_gb: parseFloat((txBytes / 1073741824).toFixed(2)),
+      interface: iface,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// =============================================
 // APK MIDDLEWARE API - Capa sobre Xtream Codes
 // =============================================
 const XTREAM_BASE_URL = process.env.XTREAM_BASE_URL || 'https://tu-dominio-o-tunel:25461';
