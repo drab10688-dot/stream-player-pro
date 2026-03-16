@@ -266,3 +266,5 @@ CREATE INDEX IF NOT EXISTS idx_vod_seasons_series ON vod_seasons(series_id);
 CREATE INDEX IF NOT EXISTS idx_vod_episodes_season ON vod_episodes(season_id);
 CREATE INDEX IF NOT EXISTS idx_vod_episodes_active ON vod_episodes(is_active);
 CREATE INDEX IF NOT EXISTS idx_channel_health_channel ON channel_health_logs(channel_id);
+CREATE INDEX IF NOT EXISTS idx_activity_logs_client ON activity_logs(client_id);
+CREATE INDEX IF NOT EXISTS idx_activity_logs_started ON activity_logs(started_at);
