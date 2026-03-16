@@ -153,6 +153,7 @@ const AdminDashboard = () => {
           <TabsContent value="system" forceMount className="data-[state=inactive]:hidden"><SystemTuning /></TabsContent>
           <TabsContent value="bandwidth" forceMount className="data-[state=inactive]:hidden"><BandwidthMonitor /></TabsContent>
           <TabsContent value="resources" forceMount className="data-[state=inactive]:hidden"><ResourceMonitor /></TabsContent>
+          <TabsContent value="apk" forceMount className="data-[state=inactive]:hidden"><ApkManager /></TabsContent>
         </Tabs>
       </main>
     </div>
