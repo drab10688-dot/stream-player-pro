@@ -1262,7 +1262,7 @@ function releaseTranscoder(channelId) {
     // Keep alive channels NEVER stop
     if (entry.keepAlive) {
       entry.clients = 0; // Floor at 0
-      console.log(`💚 [${channelId}] Keep-alive activo, FFmpeg permanece encendido`);
+      console.log(`💚 [${channelId}] Keep-alive activo, ${entry.type === 'hls-proxy' ? 'poller' : 'FFmpeg'} permanece encendido`);
       return;
     }
     // Esperar 30 segundos antes de matar, por si alguien vuelve
