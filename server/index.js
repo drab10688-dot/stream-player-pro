@@ -497,8 +497,9 @@ app.put('/api/channels/:id', authAdmin, async (req, res) => {
     if (keep_alive && !c.keep_alive && is_active) {
       startKeepAliveChannel(req.params.id, urlValidation.normalizedUrl);
     }
-    // If keep_alive was toggled OFF, let normal grace period apply
+    // If keep_alive was toggled OFF, stop poller and release
     if (!keep_alive && c.keep_alive) {
+      stopHLSKeepAlivePoller(req.params.id); // detener poller si existe
       const entry = activeTranscoders.get(req.params.id);
       if (entry) {
         entry.keepAlive = false;
