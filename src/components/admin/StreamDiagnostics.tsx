@@ -227,15 +227,16 @@ const StreamDiagnostics = () => {
     setShowReport(true);
   };
 
-  const copyReport = () => {
-    navigator.clipboard.writeText(reportText).then(() => {
+  const copyReport = async () => {
+    const { copyToClipboard } = await import('@/lib/clipboard');
+    const ok = await copyToClipboard(reportText);
+    if (ok) {
       setCopied(true);
       toast({ title: 'Reporte copiado', description: 'Pégalo en el chat para que lo revise' });
       setTimeout(() => setCopied(false), 3000);
-    }).catch(() => {
-      // Select all text in textarea as fallback
+    } else {
       const textarea = document.querySelector('#report-textarea') as HTMLTextAreaElement;
-      if (textarea) { textarea.select(); document.execCommand('copy'); }
+      if (textarea) { textarea.select(); }
       setCopied(true);
       setTimeout(() => setCopied(false), 3000);
     });
