@@ -795,7 +795,7 @@ log_info "Esperando que la API responda..."
 if wait_for_port $API_PORT "API" 30; then
   log_ok "API corriendo en puerto $API_PORT"
 else
-  log_err "La API no respondió en 15 segundos"
+  log_err "La API no respondió en 30 segundos"
   log_info "Revisando logs..."
   pm2 logs streambox-api --lines 10 --nostream
   echo ""
