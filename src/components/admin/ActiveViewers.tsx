@@ -64,7 +64,16 @@ const ActiveViewers = () => {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const intervalRef = useRef<ReturnType<typeof setInterval>>();
 
-  const fetchViewers = useCallback(async () => {
+  const kickApkUser = useCallback(async (username: string, device_id?: string) => {
+    try {
+      await apiPost('/api/admin/apk-connections/kick', { username, device_id });
+      toast({ title: 'Conexión APK cerrada', description: username });
+      fetchViewers();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+  }, [toast]);
+
     try {
       const [result, apkConns] = await Promise.all([
         apiGet('/api/viewers/active'),
