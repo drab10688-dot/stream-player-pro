@@ -55,9 +55,7 @@ const LoginPage = () => {
           setLoading(true);
           login(u, p).then((result) => {
             setLoading(false);
-            if (result.success) {
-              navigate('/dashboard');
-            } else {
+            if (!result.success) {
               localStorage.removeItem(SAVED_CREDS_KEY);
             }
           });
@@ -81,7 +79,6 @@ const LoginPage = () => {
       } else {
         localStorage.removeItem(SAVED_CREDS_KEY);
       }
-      navigate('/dashboard');
     } else {
       toast({ title: 'Acceso denegado', description: result.error || 'Credenciales incorrectas', variant: 'destructive' });
     }

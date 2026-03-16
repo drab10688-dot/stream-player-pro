@@ -285,8 +285,7 @@ if [ "$WEB_PORT" != "80" ] || lsof -i :$WEB_PORT &>/dev/null; then
   fi
 fi
 
-APK_PORT=25461
-log_ok "API: puerto $API_PORT | Web: puerto $WEB_PORT | APK (Xtream): puerto $APK_PORT"
+log_ok "API: puerto $API_PORT | Web: puerto $WEB_PORT"
 echo ""
 
 sleep 1
@@ -552,25 +551,21 @@ log_ok "Frontend compilado y desplegado"
 # =============================================
 log_step "🌐 [6/8] Configurando Nginx..."
 
-mkdir -p /opt/streambox/apk
-
 cat > /etc/nginx/sites-available/streambox << NGINXEOF
-# =============================================
-# Panel Web - Puerto ${WEB_PORT}
-# =============================================
 server {
     listen ${WEB_PORT};
     server_name _;
     server_tokens off;
-    client_max_body_size 0;
 
     root /var/www/streambox;
     index index.html;
 
+    # Frontend SPA
     location / {
         try_files \$uri \$uri/ /index.html;
     }
 
+    # API proxy
     location /api/ {
         proxy_pass http://127.0.0.1:${API_PORT};
         proxy_http_version 1.1;
@@ -579,140 +574,20 @@ server {
         proxy_set_header Host \$host;
         proxy_cache_bypass \$http_upgrade;
         proxy_set_header X-Real-IP \$remote_addr;
+
+        # Timeout para restreaming
         proxy_connect_timeout 300;
         proxy_send_timeout 300;
         proxy_read_timeout 300;
+
+        # Sin buffering para streams
         proxy_buffering off;
     }
 
+    # Seguridad
     proxy_hide_header X-Powered-By;
     proxy_hide_header Server;
     proxy_hide_header Via;
-
-    location ~ /\. {
-        deny all;
-    }
-}
-
-# =============================================
-# API Xtream Codes para APKs - Puerto ${APK_PORT}
-# =============================================
-server {
-    listen ${APK_PORT};
-    server_name _;
-    server_tokens off;
-    client_max_body_size 0;
-
-    location /player_api.php {
-        proxy_pass http://127.0.0.1:${API_PORT}/player_api.php;
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host:\$server_port;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Host \$host:\$server_port;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_connect_timeout 60;
-        proxy_send_timeout 300;
-        proxy_read_timeout 300;
-    }
-
-    location /get.php {
-        proxy_pass http://127.0.0.1:${API_PORT}/get.php;
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host:\$server_port;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-Host \$host:\$server_port;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_connect_timeout 60;
-        proxy_send_timeout 300;
-        proxy_read_timeout 300;
-    }
-
-    location /xmltv.php {
-        proxy_pass http://127.0.0.1:${API_PORT}/xmltv.php;
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host:\$server_port;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-Host \$host:\$server_port;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-    }
-
-    location ~ ^/live/ {
-        proxy_pass http://127.0.0.1:${API_PORT};
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host:\$server_port;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-Host \$host:\$server_port;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_connect_timeout 60;
-        proxy_send_timeout 600;
-        proxy_read_timeout 600;
-        proxy_buffering off;
-        proxy_request_buffering off;
-    }
-
-    location ~ ^/movie/ {
-        proxy_pass http://127.0.0.1:${API_PORT};
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host:\$server_port;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-Host \$host:\$server_port;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_connect_timeout 60;
-        proxy_send_timeout 600;
-        proxy_read_timeout 600;
-        proxy_buffering off;
-    }
-
-    location ~ ^/series/ {
-        proxy_pass http://127.0.0.1:${API_PORT};
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host:\$server_port;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-Host \$host:\$server_port;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_connect_timeout 60;
-        proxy_send_timeout 600;
-        proxy_read_timeout 600;
-        proxy_buffering off;
-    }
-
-    location /api/ {
-        proxy_pass http://127.0.0.1:${API_PORT};
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host:\$server_port;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-Host \$host:\$server_port;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_connect_timeout 300;
-        proxy_send_timeout 300;
-        proxy_read_timeout 300;
-        proxy_buffering off;
-    }
-
-    location ~ ^/([^/]+)/([^/]+)/(\d+)\.?(.*)$ {
-        proxy_pass http://127.0.0.1:${API_PORT};
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host:\$server_port;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-Host \$host:\$server_port;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_connect_timeout 60;
-        proxy_send_timeout 600;
-        proxy_read_timeout 600;
-        proxy_buffering off;
-    }
-
-    location /downloads/ {
-        alias /opt/streambox/apk/;
-        autoindex off;
-        add_header Content-Disposition "attachment";
-    }
-
-    proxy_hide_header X-Powered-By;
-    proxy_hide_header Server;
-    proxy_hide_header Via;
-    add_header X-Content-Type-Options nosniff always;
 
     location ~ /\. {
         deny all;
@@ -951,7 +826,6 @@ fi
 # Configurar firewall
 if command -v ufw &> /dev/null; then
   ufw allow ${WEB_PORT}/tcp > /dev/null 2>&1
-  ufw allow ${APK_PORT}/tcp > /dev/null 2>&1
   ufw allow 22/tcp > /dev/null 2>&1
 fi
 
@@ -973,15 +847,14 @@ fi
 echo ""
 if [ "$WEB_PORT" = "80" ]; then
   echo -e "${CYAN}🌐 Panel Admin:    http://${SERVER_IP}/admin${NC}"
+  echo -e "${CYAN}📺 App Clientes:   http://${SERVER_IP}/login${NC}"
 else
   echo -e "${CYAN}🌐 Panel Admin:    http://${SERVER_IP}:${WEB_PORT}/admin${NC}"
+  echo -e "${CYAN}📺 App Clientes:   http://${SERVER_IP}:${WEB_PORT}/login${NC}"
 fi
-echo -e "${CYAN}📺 API Xtream:     http://${SERVER_IP}:${APK_PORT}${NC}"
-echo -e "${CYAN}   Formato APK:    http://${SERVER_IP}:${APK_PORT}/player_api.php?username=X&password=X${NC}"
 echo -e "${CYAN}🔑 Admin Email:    ${ADMIN_EMAIL}${NC}"
 echo -e "${CYAN}⚙️  API Puerto:     ${API_PORT}${NC}"
 echo -e "${CYAN}🌐 Web Puerto:     ${WEB_PORT}${NC}"
-echo -e "${CYAN}📱 APK Puerto:     ${APK_PORT}${NC}"
 echo ""
 echo -e "${YELLOW}📋 Comandos útiles:${NC}"
 echo "   pm2 logs streambox-api     → Ver logs de la API"
