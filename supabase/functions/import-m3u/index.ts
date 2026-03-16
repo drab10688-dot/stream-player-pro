@@ -100,6 +100,7 @@ serve(async (req) => {
     }
 
     const channels = parseM3U(content);
+    if (keep_alive) channels.forEach(ch => ch.keep_alive = true);
 
     if (channels.length === 0) {
       return new Response(JSON.stringify({ error: 'No se encontraron canales en el contenido M3U' }), {
