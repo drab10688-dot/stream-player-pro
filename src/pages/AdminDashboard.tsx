@@ -122,6 +122,9 @@ const AdminDashboard = () => {
             <TabsTrigger value="system" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
               <Shield className="w-4 h-4" /> Sistema
             </TabsTrigger>
+            <TabsTrigger value="bandwidth" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
+              <Wifi className="w-4 h-4" /> Red
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="dashboard" forceMount className="data-[state=inactive]:hidden"><AdminStats /></TabsContent>
