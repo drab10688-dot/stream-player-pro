@@ -330,6 +330,19 @@ const ChannelsManager = () => {
             </div>
             <Textarea placeholder={`#EXTM3U\n#EXTINF:-1 group-title="Deportes",ESPN\nhttp://ip:port/espn.ts`} value={m3uContent} onChange={e => setM3uContent(e.target.value)} className="bg-secondary border-border text-foreground font-mono text-xs min-h-[150px]" rows={8} />
           </div>
+          <div className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg border border-border/30">
+            <input
+              type="checkbox"
+              id="m3u-keepalive"
+              checked={m3uKeepAlive}
+              onChange={e => setM3uKeepAlive(e.target.checked)}
+              className="w-4 h-4 rounded border-border accent-primary"
+            />
+            <label htmlFor="m3u-keepalive" className="text-sm text-foreground cursor-pointer">
+              <span className="font-medium">Activar Keep Alive</span>
+              <p className="text-xs text-muted-foreground mt-0.5">Mantener todos los canales importados conectados permanentemente al origen</p>
+            </label>
+          </div>
           <div className="flex gap-2 justify-end">
             <Button variant="ghost" onClick={() => setShowM3UImport(false)} className="text-muted-foreground"><X className="w-4 h-4 mr-1" /> Cancelar</Button>
             <Button onClick={handleM3UImport} disabled={importing} className="gradient-primary text-primary-foreground">
