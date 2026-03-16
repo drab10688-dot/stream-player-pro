@@ -3916,17 +3916,17 @@ app.put('/api/activity-log/:id/close', async (req, res) => {
 app.get('/api/admin/activity-logs', authAdmin, async (req, res) => {
   try {
     const { client_id, days, limit: lim } = req.query;
-    const limit = parseInt(lim as string) || 100;
-    const daysBack = parseInt(days as string) || 7;
-    
+    const limit = Math.min(500, Math.max(1, parseInt(String(lim), 10) || 100));
+    const daysBack = Math.min(90, Math.max(1, parseInt(String(days), 10) || 7));
+
     let query = `SELECT * FROM activity_logs WHERE started_at >= now() - interval '${daysBack} days'`;
-    const vals: any[] = [];
+    const vals = [];
     if (client_id) {
       vals.push(client_id);
       query += ` AND client_id = $${vals.length}`;
     }
     query += ` ORDER BY started_at DESC LIMIT ${limit}`;
-    
+
     const { rows } = await pool.query(query, vals);
     
     // Stats
