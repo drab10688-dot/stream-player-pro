@@ -1858,9 +1858,14 @@ app.post('/api/channels/import-m3u', authAdmin, async (req, res) => {
         currentLogo = logoMatch ? logoMatch[1] : null;
       } else if (!line.startsWith('#') && line.length > 0) {
         // Es una URL de stream
+        const validation = validateStreamSourceUrl(line);
+        if (!validation.valid) {
+          continue;
+        }
+
         channels.push({
           name: currentName || `Canal ${channels.length + 1}`,
-          url: line,
+          url: validation.normalizedUrl,
           category: currentCategory,
           logo_url: currentLogo,
           sort_order: channels.length,
