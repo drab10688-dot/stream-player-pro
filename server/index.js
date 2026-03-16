@@ -3715,6 +3715,57 @@ app.get('/api/sessions/active-apk', authApk, (req, res) => {
 });
 
 // =============================================
+// APK: Heartbeat (mantener sesión activa)
+// =============================================
+app.post('/api/heartbeat', authApk, (req, res) => {
+  const { id: userId, device_id } = req.apkUser;
+  const { channelId } = req.body || {};
+  const connKey = `${userId}:${device_id || `apk-${userId}`}`;
+  const connInfo = apkConnectionInfo.get(connKey);
+  if (connInfo) {
+    connInfo.lastHeartbeat = new Date().toISOString();
+    if (channelId) connInfo.channelId = channelId;
+  }
+  res.json({ ok: true });
+});
+
+// =============================================
+// ADMIN: Monitoreo de conexiones APK
+// Limpia conexiones sin heartbeat > 5 min
+// =============================================
+app.get('/api/admin/apk-connections', authAdmin, (req, res) => {
+  const fiveMinAgo = Date.now() - 5 * 60 * 1000;
+  const connections = [];
+  for (const [key, info] of apkConnectionInfo.entries()) {
+    if (new Date(info.lastHeartbeat).getTime() < fiveMinAgo) {
+      apkConnectionInfo.delete(key);
+      continue;
+    }
+    connections.push(info);
+  }
+  res.json(connections);
+});
+
+// ADMIN: Kick conexión APK
+app.post('/api/admin/apk-connections/kick', authAdmin, (req, res) => {
+  const { username, device_id } = req.body;
+  if (!username) return res.status(400).json({ error: 'username requerido' });
+  if (device_id) {
+    apkConnectionInfo.delete(`${username}:${device_id}`);
+    // También limpiar sesiones
+    const userSessions = apkSessions.get(username);
+    if (userSessions) apkSessions.delete(username);
+  } else {
+    // Kick todas las conexiones del usuario
+    for (const key of apkConnectionInfo.keys()) {
+      if (key.startsWith(`${username}:`)) apkConnectionInfo.delete(key);
+    }
+    apkSessions.delete(username);
+  }
+  res.json({ ok: true, message: `Conexión APK de ${username} cerrada` });
+});
+
+//
 // INICIAR SERVIDOR
 // =============================================
 app.listen(PORT, '0.0.0.0', () => {
