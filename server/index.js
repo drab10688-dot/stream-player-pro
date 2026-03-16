@@ -3179,11 +3179,221 @@ app.get('/api/admin/system-info', async (req, res) => {
 });
 
 // =============================================
+// APK MIDDLEWARE API - Capa sobre Xtream Codes
+// =============================================
+const XTREAM_BASE_URL = process.env.XTREAM_BASE_URL || 'https://tu-dominio-o-tunel:25461';
+
+// Sesiones activas en memoria: Map<userId, Set<{channelId, connectedAt}>>
+const apkSessions = new Map();
+
+// Helper: fetch JSON desde Xtream
+const fetchXtream = (urlPath) => {
+  return new Promise((resolve, reject) => {
+    const fullUrl = `${XTREAM_BASE_URL}${urlPath}`;
+    const mod = fullUrl.startsWith('https') ? https : http;
+    mod.get(fullUrl, { rejectUnauthorized: false }, (resp) => {
+      let data = '';
+      resp.on('data', chunk => data += chunk);
+      resp.on('end', () => {
+        try { resolve(JSON.parse(data)); }
+        catch { reject(new Error('Respuesta Xtream no es JSON válido')); }
+      });
+    }).on('error', reject);
+  });
+};
+
+// Middleware: verificar token APK
+const authApk = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Token requerido' });
+  }
+  try {
+    const decoded = jwt.verify(authHeader.split(' ')[1], JWT_SECRET);
+    req.apkUser = decoded; // { id, username, xtreamUser, xtreamPass }
+    next();
+  } catch {
+    return res.status(401).json({ error: 'Token inválido o expirado' });
+  }
+};
+
+// POST /api/auth/login
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) {
+      return res.status(400).json({ error: 'username y password son requeridos' });
+    }
+
+    // Validar contra Xtream Codes
+    const xtreamData = await fetchXtream(`/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`);
+
+    if (!xtreamData || !xtreamData.user_info || xtreamData.user_info.auth === 0) {
+      return res.status(401).json({ error: 'Credenciales inválidas en Xtream' });
+    }
+
+    const userInfo = xtreamData.user_info;
+
+    // Emitir JWT propio
+    const token = jwt.sign(
+      {
+        id: userInfo.username,
+        username: userInfo.username,
+        xtreamUser: username,
+        xtreamPass: password,
+        maxConnections: parseInt(userInfo.max_connections) || 1,
+        expDate: userInfo.exp_date,
+      },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    res.json({
+      token,
+      user: {
+        id: userInfo.username,
+        username: userInfo.username,
+        status: userInfo.status,
+        maxConnections: parseInt(userInfo.max_connections) || 1,
+        expiryDate: userInfo.exp_date,
+        isTrial: userInfo.is_trial === '1',
+        activeCons: parseInt(userInfo.active_cons) || 0,
+      },
+    });
+  } catch (err) {
+    console.error('APK login error:', err.message);
+    res.status(500).json({ error: 'Error al conectar con Xtream' });
+  }
+});
+
+// GET /api/channels
+app.get('/api/channels', authApk, async (req, res) => {
+  try {
+    const { xtreamUser, xtreamPass } = req.apkUser;
+    const streams = await fetchXtream(
+      `/player_api.php?username=${encodeURIComponent(xtreamUser)}&password=${encodeURIComponent(xtreamPass)}&action=get_live_streams`
+    );
+
+    if (!Array.isArray(streams)) {
+      return res.status(502).json({ error: 'Respuesta inesperada de Xtream' });
+    }
+
+    const channels = streams.map(s => ({
+      id: String(s.stream_id),
+      name: s.name,
+      logo: s.stream_icon || null,
+      group: s.category_name || 'Sin categoría',
+      tvgId: s.epg_channel_id || null,
+      num: s.num || null,
+    }));
+
+    res.json(channels);
+  } catch (err) {
+    console.error('APK channels error:', err.message);
+    res.status(500).json({ error: 'Error al obtener canales' });
+  }
+});
+
+// GET /api/channels/:id/stream
+app.get('/api/channels/:id/stream', authApk, async (req, res) => {
+  try {
+    const { xtreamUser, xtreamPass, id: userId, maxConnections } = req.apkUser;
+    const channelId = req.params.id;
+
+    // Verificar límite de sesiones
+    const userSessions = apkSessions.get(userId) || new Set();
+    if (userSessions.size >= (maxConnections || 1)) {
+      // Permitir si ya está viendo este canal
+      const alreadyWatching = [...userSessions].some(s => s.channelId === channelId);
+      if (!alreadyWatching) {
+        return res.status(429).json({
+          error: 'Límite de pantallas alcanzado',
+          maxConnections,
+          activeSessions: userSessions.size,
+        });
+      }
+    }
+
+    // Registrar sesión
+    const sessionEntry = { channelId, connectedAt: new Date().toISOString() };
+    // Remover sesión anterior del mismo canal si existe
+    const updatedSessions = new Set([...userSessions].filter(s => s.channelId !== channelId));
+    updatedSessions.add(sessionEntry);
+    apkSessions.set(userId, updatedSessions);
+
+    const streamUrl = `${XTREAM_BASE_URL}/live/${encodeURIComponent(xtreamUser)}/${encodeURIComponent(xtreamPass)}/${channelId}.m3u8`;
+
+    // Obtener anuncio activo (si hay)
+    let ad = null;
+    try {
+      const adResult = await pool.query(
+        'SELECT title, message, image_url FROM ads WHERE is_active = true ORDER BY created_at DESC LIMIT 1'
+      );
+      if (adResult.rows.length > 0) {
+        const activeAd = adResult.rows[0];
+        ad = {
+          url: activeAd.image_url || null,
+          title: activeAd.title,
+          message: activeAd.message,
+          durationSeconds: 10,
+          type: activeAd.image_url ? 'image' : 'text',
+        };
+      }
+    } catch { /* sin anuncio */ }
+
+    res.json({ streamUrl, ad });
+  } catch (err) {
+    console.error('APK stream error:', err.message);
+    res.status(500).json({ error: 'Error al obtener stream' });
+  }
+});
+
+// POST /api/sessions/close
+app.post('/api/sessions/close', authApk, (req, res) => {
+  try {
+    const { id: userId } = req.apkUser;
+    const { channelId } = req.body || {};
+
+    const userSessions = apkSessions.get(userId);
+    if (!userSessions || userSessions.size === 0) {
+      return res.json({ message: 'Sin sesiones activas', activeSessions: 0 });
+    }
+
+    if (channelId) {
+      // Cerrar sesión específica
+      const updated = new Set([...userSessions].filter(s => s.channelId !== channelId));
+      apkSessions.set(userId, updated);
+      res.json({ message: 'Sesión cerrada', channelId, activeSessions: updated.size });
+    } else {
+      // Cerrar todas
+      apkSessions.delete(userId);
+      res.json({ message: 'Todas las sesiones cerradas', activeSessions: 0 });
+    }
+  } catch (err) {
+    console.error('APK session close error:', err.message);
+    res.status(500).json({ error: 'Error al cerrar sesión' });
+  }
+});
+
+// GET /api/sessions/active (admin/debug)
+app.get('/api/sessions/active-apk', authApk, (req, res) => {
+  const { id: userId } = req.apkUser;
+  const userSessions = apkSessions.get(userId);
+  res.json({
+    userId,
+    activeSessions: userSessions ? [...userSessions] : [],
+    count: userSessions ? userSessions.size : 0,
+  });
+});
+
+// =============================================
 // INICIAR SERVIDOR
 // =============================================
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`\n🚀 StreamBox API corriendo en http://0.0.0.0:${PORT}`);
   console.log(`📺 Panel Admin: http://TU_IP:80`);
+  console.log(`📱 APK API: http://TU_IP:${PORT}/api/auth/login`);
+  console.log(`🔗 Xtream Base: ${XTREAM_BASE_URL}`);
   console.log(`🔐 Setup inicial: POST http://localhost:${PORT}/api/admin/setup\n`);
   
   // Iniciar canales keep-alive después de 3 segundos (esperar conexión DB)
