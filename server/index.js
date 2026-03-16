@@ -1236,8 +1236,27 @@ function releaseTranscoder(channelId) {
 // KEEP ALIVE: Iniciar canal persistente
 // =============================================
 function startKeepAliveChannel(channelId, sourceUrl) {
-  const isHLS = /\.m3u8?(\?|$)/i.test(sourceUrl);
-  const isYouTube = /youtube\.com|youtu\.be/.test(sourceUrl);
+  // Validar que la URL sea válida antes de iniciar FFmpeg
+  if (!sourceUrl || typeof sourceUrl !== 'string') {
+    console.log(`⚠️ [${channelId}] Keep-alive omitido: URL vacía o inválida`);
+    return;
+  }
+  
+  // Detectar URLs que contienen contenido M3U en vez de ser una URL real
+  const trimmedUrl = sourceUrl.trim();
+  if (!trimmedUrl.startsWith('http://') && !trimmedUrl.startsWith('https://') && !trimmedUrl.startsWith('rtmp://') && !trimmedUrl.startsWith('rtsp://')) {
+    console.log(`⚠️ [${channelId}] Keep-alive omitido: URL no es válida (${trimmedUrl.substring(0, 50)}...)`);
+    return;
+  }
+  
+  // Rechazar URLs que parecen contener contenido M3U embebido
+  if (trimmedUrl.includes('#EXTM3U') || trimmedUrl.includes('#EXTINF')) {
+    console.log(`⚠️ [${channelId}] Keep-alive omitido: URL contiene contenido M3U embebido`);
+    return;
+  }
+
+  const isHLS = /\.m3u8?(\?|$)/i.test(trimmedUrl);
+  const isYouTube = /youtube\.com|youtu\.be/.test(trimmedUrl);
   
   if (isYouTube) return; // YouTube no necesita keep_alive
   
