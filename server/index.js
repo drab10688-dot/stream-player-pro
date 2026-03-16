@@ -445,12 +445,21 @@ app.post('/api/channels/upload-logo', authAdmin, uploadLogo.single('logo'), (req
 });
 
 app.post('/api/channels', authAdmin, async (req, res) => {
-  const { name, url, category, sort_order, logo_url } = req.body;
-  const { rows } = await pool.query(
-    'INSERT INTO channels (name, url, category, sort_order, logo_url) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-    [name, url, category || 'General', sort_order || 0, logo_url || null]
-  );
-  res.json(rows[0]);
+  try {
+    const { name, url, category, sort_order, logo_url } = req.body;
+    const validation = validateStreamSourceUrl(url);
+    if (!validation.valid) {
+      return res.status(400).json({ error: `URL de canal inválida: ${validation.reason}` });
+    }
+
+    const { rows } = await pool.query(
+      'INSERT INTO channels (name, url, category, sort_order, logo_url) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+      [name, validation.normalizedUrl, category || 'General', sort_order || 0, logo_url || null]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 app.put('/api/channels/:id', authAdmin, async (req, res) => {
@@ -467,14 +476,26 @@ app.put('/api/channels/:id', authAdmin, async (req, res) => {
     const keep_alive = req.body.keep_alive !== undefined ? req.body.keep_alive : c.keep_alive;
     const logo_url = req.body.logo_url !== undefined ? req.body.logo_url : c.logo_url;
 
+    const urlValidation = validateStreamSourceUrl(url);
+    if (!urlValidation.valid) {
+      return res.status(400).json({ error: `URL de canal inválida: ${urlValidation.reason}` });
+    }
+
+    if (keep_alive) {
+      const keepAliveValidation = validateStreamSourceUrl(urlValidation.normalizedUrl);
+      if (!keepAliveValidation.valid) {
+        return res.status(400).json({ error: `No se puede activar Keep Alive: ${keepAliveValidation.reason}` });
+      }
+    }
+
     const { rows } = await pool.query(
       'UPDATE channels SET name=$1, url=$2, category=$3, sort_order=$4, is_active=$5, keep_alive=$6, logo_url=$7 WHERE id=$8 RETURNING *',
-      [name, url, category, sort_order, is_active, keep_alive, logo_url, req.params.id]
+      [name, urlValidation.normalizedUrl, category, sort_order, is_active, keep_alive, logo_url, req.params.id]
     );
 
     // If keep_alive was toggled ON, start the transcoder immediately
     if (keep_alive && !c.keep_alive && is_active) {
-      startKeepAliveChannel(req.params.id, url);
+      startKeepAliveChannel(req.params.id, urlValidation.normalizedUrl);
     }
     // If keep_alive was toggled OFF, let normal grace period apply
     if (!keep_alive && c.keep_alive) {
@@ -937,17 +958,32 @@ const QUALITY_PROFILES = [
 const CACHE_NORMAL = { hls_list_size: 30, hls_time: 4 };       // 30×4s = 2 min
 const CACHE_KEEPALIVE = { hls_list_size: 450, hls_time: 4 };   // 450×4s = 30 min
 
+function validateStreamSourceUrl(sourceUrl) {
+  if (!sourceUrl || typeof sourceUrl !== 'string') {
+    return { valid: false, reason: 'URL vacía' };
+  }
+
+  const normalizedUrl = sourceUrl.trim();
+  if (!/^(https?|rtmp|rtsp):\/\//i.test(normalizedUrl)) {
+    return { valid: false, reason: 'protocolo no soportado (usa http/https/rtmp/rtsp)' };
+  }
+
+  if (/#EXTM3U|#EXTINF/i.test(normalizedUrl)) {
+    return { valid: false, reason: 'la URL contiene metadatos M3U incrustados' };
+  }
+
+  return { valid: true, normalizedUrl };
+}
+
 function startFFmpegTranscoder(channelId, sourceUrl, isKeepAlive = false) {
   // Validación de URL antes de lanzar FFmpeg
-  if (!sourceUrl || typeof sourceUrl !== 'string') {
-    console.log(`⚠️ [${channelId}] FFmpeg abortado: URL vacía`);
+  const validation = validateStreamSourceUrl(sourceUrl);
+  if (!validation.valid) {
+    console.log(`⚠️ [${channelId}] FFmpeg abortado: ${validation.reason}`);
     return null;
   }
-  const trimmedSrc = sourceUrl.trim();
-  if ((!trimmedSrc.startsWith('http://') && !trimmedSrc.startsWith('https://') && !trimmedSrc.startsWith('rtmp://') && !trimmedSrc.startsWith('rtsp://')) || trimmedSrc.includes('#EXTM3U')) {
-    console.log(`⚠️ [${channelId}] FFmpeg abortado: URL inválida (${trimmedSrc.substring(0, 60)})`);
-    return null;
-  }
+
+  const streamUrl = validation.normalizedUrl;
 
   if (activeTranscoders.has(channelId)) {
     const existing = activeTranscoders.get(channelId);
@@ -961,7 +997,7 @@ function startFFmpegTranscoder(channelId, sourceUrl, isKeepAlive = false) {
     fs.mkdirSync(channelDir, { recursive: true });
   }
 
-  return startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive);
+  return startAdaptiveTranscoder(channelId, streamUrl, channelDir, isKeepAlive);
 }
 
 // Adaptive multi-bitrate transcoder (Netflix-style)
@@ -1247,39 +1283,27 @@ function releaseTranscoder(channelId) {
 // KEEP ALIVE: Iniciar canal persistente
 // =============================================
 function startKeepAliveChannel(channelId, sourceUrl) {
-  // Validar que la URL sea válida antes de iniciar FFmpeg
-  if (!sourceUrl || typeof sourceUrl !== 'string') {
-    console.log(`⚠️ [${channelId}] Keep-alive omitido: URL vacía o inválida`);
-    return;
-  }
-  
-  // Detectar URLs que contienen contenido M3U en vez de ser una URL real
-  const trimmedUrl = sourceUrl.trim();
-  if (!trimmedUrl.startsWith('http://') && !trimmedUrl.startsWith('https://') && !trimmedUrl.startsWith('rtmp://') && !trimmedUrl.startsWith('rtsp://')) {
-    console.log(`⚠️ [${channelId}] Keep-alive omitido: URL no es válida (${trimmedUrl.substring(0, 50)}...)`);
-    return;
-  }
-  
-  // Rechazar URLs que parecen contener contenido M3U embebido
-  if (trimmedUrl.includes('#EXTM3U') || trimmedUrl.includes('#EXTINF')) {
-    console.log(`⚠️ [${channelId}] Keep-alive omitido: URL contiene contenido M3U embebido`);
+  const validation = validateStreamSourceUrl(sourceUrl);
+  if (!validation.valid) {
+    console.log(`⚠️ [${channelId}] Keep-alive omitido: ${validation.reason}`);
     return;
   }
 
-  const isHLS = /\.m3u8?(\?|$)/i.test(trimmedUrl);
-  const isYouTube = /youtube\.com|youtu\.be/.test(trimmedUrl);
-  
+  const streamUrl = validation.normalizedUrl;
+  const isHLS = /\.m3u8?(\?|$)/i.test(streamUrl);
+  const isYouTube = /youtube\.com|youtu\.be/.test(streamUrl);
+
   if (isYouTube) return; // YouTube no necesita keep_alive
-  
+
   if (isHLS) {
-    const entry = startHLSProxy(channelId, sourceUrl);
+    const entry = startHLSProxy(channelId, streamUrl);
     if (entry) {
       entry.keepAlive = true;
       entry.clients = 0;
       console.log(`💚 [${channelId}] Keep-alive HLS proxy iniciado`);
     }
   } else {
-    const entry = startFFmpegTranscoder(channelId, sourceUrl, true); // isKeepAlive = true → 30 min caché
+    const entry = startFFmpegTranscoder(channelId, streamUrl, true); // isKeepAlive = true → 30 min caché
     if (entry) {
       entry.keepAlive = true;
       entry.clients = 0;
@@ -1834,9 +1858,14 @@ app.post('/api/channels/import-m3u', authAdmin, async (req, res) => {
         currentLogo = logoMatch ? logoMatch[1] : null;
       } else if (!line.startsWith('#') && line.length > 0) {
         // Es una URL de stream
+        const validation = validateStreamSourceUrl(line);
+        if (!validation.valid) {
+          continue;
+        }
+
         channels.push({
           name: currentName || `Canal ${channels.length + 1}`,
-          url: line,
+          url: validation.normalizedUrl,
           category: currentCategory,
           logo_url: currentLogo,
           sort_order: channels.length,
