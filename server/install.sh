@@ -792,7 +792,7 @@ pm2 save > /dev/null 2>&1
 
 # Esperar a que la API esté lista
 log_info "Esperando que la API responda..."
-if wait_for_port $API_PORT "API" 15; then
+if wait_for_port $API_PORT "API" 30; then
   log_ok "API corriendo en puerto $API_PORT"
 else
   log_err "La API no respondió en 15 segundos"
