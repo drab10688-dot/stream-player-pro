@@ -1710,7 +1710,7 @@ app.post('/api/channels/diagnose', authAdmin, async (req, res) => {
 // =============================================
 app.post('/api/channels/import-m3u', authAdmin, async (req, res) => {
   try {
-    const { m3u_content, m3u_url } = req.body;
+    const { m3u_content, m3u_url, keep_alive } = req.body;
     let content = m3u_content;
 
     // Si se proporcionó una URL, descargar el contenido
