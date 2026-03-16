@@ -239,7 +239,14 @@ const ActiveViewers = () => {
                   className="border-border/20 hover:bg-muted/30"
                 >
                   <TableCell className="font-semibold text-foreground text-sm">
-                    {viewer.client_username}
+                    <div className="flex items-center gap-2">
+                      {viewer.client_username}
+                      {viewer.source === 'apk' && (
+                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-primary/40 text-primary gap-0.5">
+                          <Smartphone className="w-3 h-3" /> APK
+                        </Badge>
+                      )}
+                    </div>
                   </TableCell>
                   <TableCell>
                     {viewer.channel_name ? (
