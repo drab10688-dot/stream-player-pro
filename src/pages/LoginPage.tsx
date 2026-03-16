@@ -55,7 +55,9 @@ const LoginPage = () => {
           setLoading(true);
           login(u, p).then((result) => {
             setLoading(false);
-            if (!result.success) {
+            if (result.success) {
+              navigate('/dashboard');
+            } else {
               localStorage.removeItem(SAVED_CREDS_KEY);
             }
           });
