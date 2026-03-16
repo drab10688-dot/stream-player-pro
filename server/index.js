@@ -3351,6 +3351,8 @@ const XTREAM_BASE_URL = process.env.XTREAM_BASE_URL || 'https://tu-dominio-o-tun
 
 // Sesiones activas en memoria: Map<userId, Set<{channelId, connectedAt}>>
 const apkSessions = new Map();
+// Info de conexión APK para monitoreo: Map<`userId:device_id`, {username, device_id, ip, country, city, connectedAt, lastHeartbeat, channelId}>
+const apkConnectionInfo = new Map();
 
 // Helper: fetch JSON desde Xtream
 const fetchXtream = (urlPath) => {
@@ -3399,8 +3401,9 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     const userInfo = xtreamData.user_info;
+    const device_id = req.body.device_id || `apk-${username}-${Date.now()}`;
 
-    // Emitir JWT propio
+    // Emitir JWT propio (incluir device_id)
     const token = jwt.sign(
       {
         id: userInfo.username,
@@ -3409,10 +3412,27 @@ app.post('/api/auth/login', async (req, res) => {
         xtreamPass: password,
         maxConnections: parseInt(userInfo.max_connections) || 1,
         expDate: userInfo.exp_date,
+        device_id,
       },
       JWT_SECRET,
       { expiresIn: '24h' }
     );
+
+    // Registrar conexión APK en memoria para monitoreo del panel admin
+    const clientIP = getClientIP(req);
+    const geo = await geoLookup(clientIP);
+    const connKey = `${userInfo.username}:${device_id}`;
+    apkConnectionInfo.set(connKey, {
+      username: userInfo.username,
+      device_id,
+      ip: clientIP,
+      country: geo.country,
+      city: geo.city,
+      connectedAt: new Date().toISOString(),
+      lastHeartbeat: new Date().toISOString(),
+      channelId: null,
+      source: 'apk',
+    });
 
     // Obtener ads, VOD y series de la base de datos local
     const [adsRes, vodRes, seriesRes] = await Promise.all([
@@ -3490,12 +3510,20 @@ app.get('/api/channels/:id/stream', authApk, async (req, res) => {
       }
     }
 
-    // Registrar sesión
+    // Registrar sesión en memoria
     const sessionEntry = { channelId, connectedAt: new Date().toISOString() };
-    // Remover sesión anterior del mismo canal si existe
     const updatedSessions = new Set([...userSessions].filter(s => s.channelId !== channelId));
     updatedSessions.add(sessionEntry);
     apkSessions.set(userId, updatedSessions);
+
+    // Actualizar monitoreo APK con el canal que está viendo
+    const device_id = req.apkUser.device_id || `apk-${userId}`;
+    const connKey = `${userId}:${device_id}`;
+    const connInfo = apkConnectionInfo.get(connKey);
+    if (connInfo) {
+      connInfo.channelId = channelId;
+      connInfo.lastHeartbeat = new Date().toISOString();
+    }
 
     // Soporte quality=dataSaver → stream de menor bitrate si existe
     const quality = req.query.quality;
@@ -3687,6 +3715,57 @@ app.get('/api/sessions/active-apk', authApk, (req, res) => {
 });
 
 // =============================================
+// APK: Heartbeat (mantener sesión activa)
+// =============================================
+app.post('/api/heartbeat', authApk, (req, res) => {
+  const { id: userId, device_id } = req.apkUser;
+  const { channelId } = req.body || {};
+  const connKey = `${userId}:${device_id || `apk-${userId}`}`;
+  const connInfo = apkConnectionInfo.get(connKey);
+  if (connInfo) {
+    connInfo.lastHeartbeat = new Date().toISOString();
+    if (channelId) connInfo.channelId = channelId;
+  }
+  res.json({ ok: true });
+});
+
+// =============================================
+// ADMIN: Monitoreo de conexiones APK
+// Limpia conexiones sin heartbeat > 5 min
+// =============================================
+app.get('/api/admin/apk-connections', authAdmin, (req, res) => {
+  const fiveMinAgo = Date.now() - 5 * 60 * 1000;
+  const connections = [];
+  for (const [key, info] of apkConnectionInfo.entries()) {
+    if (new Date(info.lastHeartbeat).getTime() < fiveMinAgo) {
+      apkConnectionInfo.delete(key);
+      continue;
+    }
+    connections.push(info);
+  }
+  res.json(connections);
+});
+
+// ADMIN: Kick conexión APK
+app.post('/api/admin/apk-connections/kick', authAdmin, (req, res) => {
+  const { username, device_id } = req.body;
+  if (!username) return res.status(400).json({ error: 'username requerido' });
+  if (device_id) {
+    apkConnectionInfo.delete(`${username}:${device_id}`);
+    // También limpiar sesiones
+    const userSessions = apkSessions.get(username);
+    if (userSessions) apkSessions.delete(username);
+  } else {
+    // Kick todas las conexiones del usuario
+    for (const key of apkConnectionInfo.keys()) {
+      if (key.startsWith(`${username}:`)) apkConnectionInfo.delete(key);
+    }
+    apkSessions.delete(username);
+  }
+  res.json({ ok: true, message: `Conexión APK de ${username} cerrada` });
+});
+
+//
 // INICIAR SERVIDOR
 // =============================================
 app.listen(PORT, '0.0.0.0', () => {

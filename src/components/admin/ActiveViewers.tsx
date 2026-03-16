@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { apiGet } from '@/lib/api';
+import { apiGet, apiPost } from '@/lib/api';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
-import { Users, MapPin, Tv, RefreshCw, Activity, Globe, Monitor } from 'lucide-react';
+import { Users, MapPin, Tv, RefreshCw, Activity, Globe, Monitor, Smartphone, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { motion } from 'framer-motion';
@@ -28,6 +28,7 @@ interface Viewer {
   channel_name: string | null;
   channel_category: string | null;
   channel_logo: string | null;
+  source?: 'panel' | 'apk';
 }
 
 interface ViewersData {
@@ -65,8 +66,35 @@ const ActiveViewers = () => {
 
   const fetchViewers = useCallback(async () => {
     try {
-      const result = await apiGet('/api/viewers/active');
-      setData(result);
+      const [result, apkConns] = await Promise.all([
+        apiGet('/api/viewers/active'),
+        apiGet('/api/admin/apk-connections').catch(() => []),
+      ]);
+
+      // Merge APK connections into viewers
+      const apkViewers: Viewer[] = (apkConns || []).map((c: any, i: number) => ({
+        id: `apk-${c.username}-${i}`,
+        device_id: c.device_id || 'apk',
+        ip_address: c.ip || null,
+        country: c.country || null,
+        city: c.city || null,
+        connected_at: c.connectedAt,
+        last_heartbeat: c.lastHeartbeat,
+        client_username: c.username,
+        client_id: `apk-${c.username}`,
+        channel_name: c.channelId || null,
+        channel_category: null,
+        channel_logo: null,
+        source: 'apk' as const,
+      }));
+
+      const panelViewers = (result?.viewers || []).map((v: Viewer) => ({ ...v, source: 'panel' as const }));
+      const allViewers = [...panelViewers, ...apkViewers];
+
+      setData({
+        total_viewers: allViewers.length,
+        viewers: allViewers,
+      });
     } catch (err: any) {
       if (!autoRefresh) {
         toast({ title: 'Error', description: err.message, variant: 'destructive' });
@@ -74,6 +102,16 @@ const ActiveViewers = () => {
     }
     setLoading(false);
   }, [autoRefresh, toast]);
+
+  const kickApkUser = useCallback(async (username: string, device_id?: string) => {
+    try {
+      await apiPost('/api/admin/apk-connections/kick', { username, device_id });
+      toast({ title: 'Conexión APK cerrada', description: username });
+      fetchViewers();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+  }, [toast, fetchViewers]);
 
   useEffect(() => {
     fetchViewers();
@@ -198,8 +236,9 @@ const ActiveViewers = () => {
                 <TableHead className="text-muted-foreground">IP</TableHead>
                 <TableHead className="text-muted-foreground">Ubicación</TableHead>
                 <TableHead className="text-muted-foreground">Dispositivo</TableHead>
-                <TableHead className="text-muted-foreground">Última act.</TableHead>
-              </TableRow>
+                 <TableHead className="text-muted-foreground">Última act.</TableHead>
+                 <TableHead className="text-muted-foreground w-10"></TableHead>
+               </TableRow>
             </TableHeader>
             <TableBody>
               {data.viewers.map((viewer, i) => (
@@ -211,7 +250,14 @@ const ActiveViewers = () => {
                   className="border-border/20 hover:bg-muted/30"
                 >
                   <TableCell className="font-semibold text-foreground text-sm">
-                    {viewer.client_username}
+                    <div className="flex items-center gap-2">
+                      {viewer.client_username}
+                      {viewer.source === 'apk' && (
+                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-primary/40 text-primary gap-0.5">
+                          <Smartphone className="w-3 h-3" /> APK
+                        </Badge>
+                      )}
+                    </div>
                   </TableCell>
                   <TableCell>
                     {viewer.channel_name ? (
@@ -247,6 +293,19 @@ const ActiveViewers = () => {
                   </TableCell>
                   <TableCell>
                     <span className="text-xs text-muted-foreground">{formatTime(viewer.last_heartbeat)}</span>
+                  </TableCell>
+                  <TableCell>
+                    {viewer.source === 'apk' && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                        onClick={() => kickApkUser(viewer.client_username, viewer.device_id)}
+                        title="Desconectar"
+                      >
+                        <XCircle className="w-4 h-4" />
+                      </Button>
+                    )}
                   </TableCell>
                 </motion.tr>
               ))}
