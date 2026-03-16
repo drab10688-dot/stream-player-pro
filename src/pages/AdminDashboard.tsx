@@ -134,6 +134,9 @@ const AdminDashboard = () => {
             <TabsTrigger value="apk" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
               <Smartphone className="w-4 h-4" /> APK
             </TabsTrigger>
+            <TabsTrigger value="activity" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
+              <ScrollText className="w-4 h-4" /> Actividad
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="dashboard" forceMount className="data-[state=inactive]:hidden"><AdminStats /></TabsContent>
