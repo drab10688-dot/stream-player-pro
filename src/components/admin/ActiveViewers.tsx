@@ -238,6 +238,7 @@ const ActiveViewers = () => {
                 <TableHead className="text-muted-foreground">Dispositivo</TableHead>
                  <TableHead className="text-muted-foreground">Última act.</TableHead>
                  <TableHead className="text-muted-foreground w-10"></TableHead>
+               </TableRow>
             </TableHeader>
             <TableBody>
               {data.viewers.map((viewer, i) => (
