@@ -3418,22 +3418,21 @@ app.post('/api/auth/login', async (req, res) => {
       { expiresIn: '24h' }
     );
 
-    // Registrar conexión en active_connections para que aparezca en el panel admin
+    // Registrar conexión APK en memoria para monitoreo del panel admin
     const clientIP = getClientIP(req);
     const geo = await geoLookup(clientIP);
-    // Usar username como client_id virtual (prefijo apk-)
-    const apkClientId = `apk-${userInfo.username}`;
-    try {
-      // Insertar o actualizar en active_connections
-      await pool.query(
-        `INSERT INTO active_connections (client_id, device_id, ip_address, country, city, last_heartbeat) 
-         VALUES ($1, $2, $3, $4, $5, now()) 
-         ON CONFLICT (client_id, device_id) DO UPDATE SET last_heartbeat = now(), ip_address = $3, country = $4, city = $5`,
-        [apkClientId, device_id, clientIP, geo.country, geo.city]
-      );
-    } catch (connErr) {
-      console.error('APK register connection error:', connErr.message);
-    }
+    const connKey = `${userInfo.username}:${device_id}`;
+    apkConnectionInfo.set(connKey, {
+      username: userInfo.username,
+      device_id,
+      ip: clientIP,
+      country: geo.country,
+      city: geo.city,
+      connectedAt: new Date().toISOString(),
+      lastHeartbeat: new Date().toISOString(),
+      channelId: null,
+      source: 'apk',
+    });
 
     // Obtener ads, VOD y series de la base de datos local
     const [adsRes, vodRes, seriesRes] = await Promise.all([
