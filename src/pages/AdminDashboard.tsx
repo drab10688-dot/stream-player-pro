@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAdminAuth } from '@/contexts/AdminAuthContext';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Tv, Users, Megaphone, Store, LogOut, LayoutDashboard, Bell, Activity, Globe, Radio, Bug, Package, HardDrive, Film, Tv2, Eye, Shield, Wifi, Cpu, Smartphone } from 'lucide-react';
+import { Tv, Users, Megaphone, Store, LogOut, LayoutDashboard, Bell, Activity, Globe, Radio, Bug, Package, HardDrive, Film, Tv2, Eye, Shield, Wifi, Cpu, Smartphone, ScrollText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import AdminStats from '@/components/admin/AdminStats';
 import ChannelsManager from '@/components/admin/ChannelsManager';
@@ -23,6 +23,7 @@ import BandwidthMonitor from '@/components/admin/BandwidthMonitor';
 import SystemTuning from '@/components/admin/SystemTuning';
 import ResourceMonitor from '@/components/admin/ResourceMonitor';
 import ApkManager from '@/components/admin/ApkManager';
+import ActivityLogs from '@/components/admin/ActivityLogs';
 import omnisyncLogo from '@/assets/omnisync-logo.png';
 import ChangePasswordDialog from '@/components/admin/ChangePasswordDialog';
 
@@ -133,6 +134,9 @@ const AdminDashboard = () => {
             <TabsTrigger value="apk" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
               <Smartphone className="w-4 h-4" /> APK
             </TabsTrigger>
+            <TabsTrigger value="activity" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
+              <ScrollText className="w-4 h-4" /> Actividad
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="dashboard" forceMount className="data-[state=inactive]:hidden"><AdminStats /></TabsContent>
@@ -154,6 +158,7 @@ const AdminDashboard = () => {
           <TabsContent value="bandwidth" forceMount className="data-[state=inactive]:hidden"><BandwidthMonitor /></TabsContent>
           <TabsContent value="resources" forceMount className="data-[state=inactive]:hidden"><ResourceMonitor /></TabsContent>
           <TabsContent value="apk" forceMount className="data-[state=inactive]:hidden"><ApkManager /></TabsContent>
+          <TabsContent value="activity" forceMount className="data-[state=inactive]:hidden"><ActivityLogs /></TabsContent>
         </Tabs>
       </main>
     </div>

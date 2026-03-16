@@ -13,6 +13,8 @@ import SeriesDetailPage from "./pages/SeriesDetailPage";
 import SeriesPlayerPage from "./pages/SeriesPlayerPage";
 import AdminLogin from "./pages/AdminLogin";
 import AdminDashboard from "./pages/AdminDashboard";
+import ResellerLogin from "./pages/ResellerLogin";
+import ResellerDashboard from "./pages/ResellerDashboard";
 import NotFound from "./pages/NotFound";
 import InstallPage from "./pages/InstallPage";
 
@@ -38,6 +40,8 @@ const AppRoutes = () => {
       <Route path="/series/:seriesId/play/:episodeId" element={<ProtectedRoute><SeriesPlayerPage /></ProtectedRoute>} />
       <Route path="/admin" element={<AdminLogin />} />
       <Route path="/admin/panel" element={<AdminDashboard />} />
+      <Route path="/reseller" element={<ResellerLogin />} />
+      <Route path="/reseller/panel" element={<ResellerDashboard />} />
       <Route path="/install" element={<InstallPage />} />
       <Route path="*" element={<NotFound />} />
     </Routes>
