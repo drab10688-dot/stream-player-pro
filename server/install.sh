@@ -557,6 +557,9 @@ server {
     server_name _;
     server_tokens off;
 
+    # Sin límite de tamaño para subida de VOD
+    client_max_body_size 0;
+
     root /var/www/streambox;
     index index.html;
 
@@ -572,6 +575,8 @@ server {
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection 'upgrade';
         proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Host \$host;
+        proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_cache_bypass \$http_upgrade;
         proxy_set_header X-Real-IP \$remote_addr;
 
@@ -584,13 +589,73 @@ server {
         proxy_buffering off;
     }
 
-    # Seguridad
+    # Xtream Codes API compatibility
+    location = /player_api.php {
+        proxy_pass http://127.0.0.1:${API_PORT};
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
+
+    location = /xmltv.php {
+        proxy_pass http://127.0.0.1:${API_PORT};
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+    }
+
+    location = /get.php {
+        proxy_pass http://127.0.0.1:${API_PORT};
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+    }
+
+    location /live/ {
+        proxy_pass http://127.0.0.1:${API_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_buffering off;
+        proxy_connect_timeout 300;
+        proxy_send_timeout 300;
+        proxy_read_timeout 300;
+    }
+
+    # Seguridad: ocultar headers del origen
     proxy_hide_header X-Powered-By;
     proxy_hide_header Server;
     proxy_hide_header Via;
+    proxy_hide_header X-Real-IP;
+    proxy_hide_header X-Forwarded-For;
+    proxy_hide_header X-Forwarded-Host;
+
+    # Headers de seguridad
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options SAMEORIGIN always;
+    add_header Referrer-Policy no-referrer always;
 
     location ~ /\. {
         deny all;
+    }
+}
+
+# Puerto 25461 para tráfico APK (Xtream Codes compatible)
+server {
+    listen 25461;
+    server_name _;
+    server_tokens off;
+
+    location / {
+        proxy_pass http://127.0.0.1:${API_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_buffering off;
+        proxy_connect_timeout 300;
+        proxy_send_timeout 300;
+        proxy_read_timeout 300;
     }
 }
 NGINXEOF
@@ -826,6 +891,7 @@ fi
 # Configurar firewall
 if command -v ufw &> /dev/null; then
   ufw allow ${WEB_PORT}/tcp > /dev/null 2>&1
+  ufw allow 25461/tcp > /dev/null 2>&1
   ufw allow 22/tcp > /dev/null 2>&1
 fi
 
