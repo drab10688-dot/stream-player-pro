@@ -73,10 +73,6 @@ const AdminLogin = () => {
             </Button>
           </form>
 
-          <button onClick={() => setIsSignup(!isSignup)}
-            className="w-full text-center text-sm text-muted-foreground mt-4 hover:text-foreground transition-colors">
-            {isSignup ? 'Ya tengo cuenta' : 'Crear primera cuenta admin'}
-          </button>
         </div>
       </motion.div>
     </div>
