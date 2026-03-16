@@ -938,6 +938,17 @@ const CACHE_NORMAL = { hls_list_size: 30, hls_time: 4 };       // 30×4s = 2 min
 const CACHE_KEEPALIVE = { hls_list_size: 450, hls_time: 4 };   // 450×4s = 30 min
 
 function startFFmpegTranscoder(channelId, sourceUrl, isKeepAlive = false) {
+  // Validación de URL antes de lanzar FFmpeg
+  if (!sourceUrl || typeof sourceUrl !== 'string') {
+    console.log(`⚠️ [${channelId}] FFmpeg abortado: URL vacía`);
+    return null;
+  }
+  const trimmedSrc = sourceUrl.trim();
+  if ((!trimmedSrc.startsWith('http://') && !trimmedSrc.startsWith('https://') && !trimmedSrc.startsWith('rtmp://') && !trimmedSrc.startsWith('rtsp://')) || trimmedSrc.includes('#EXTM3U')) {
+    console.log(`⚠️ [${channelId}] FFmpeg abortado: URL inválida (${trimmedSrc.substring(0, 60)})`);
+    return null;
+  }
+
   if (activeTranscoders.has(channelId)) {
     const existing = activeTranscoders.get(channelId);
     existing.clients++;
