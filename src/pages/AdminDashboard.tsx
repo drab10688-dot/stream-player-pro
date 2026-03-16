@@ -148,6 +148,7 @@ const AdminDashboard = () => {
           <TabsContent value="viewers" forceMount className="data-[state=inactive]:hidden"><ActiveViewers /></TabsContent>
           <TabsContent value="system" forceMount className="data-[state=inactive]:hidden"><SystemTuning /></TabsContent>
           <TabsContent value="bandwidth" forceMount className="data-[state=inactive]:hidden"><BandwidthMonitor /></TabsContent>
+          <TabsContent value="resources" forceMount className="data-[state=inactive]:hidden"><ResourceMonitor /></TabsContent>
         </Tabs>
       </main>
     </div>
