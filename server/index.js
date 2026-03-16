@@ -1269,7 +1269,8 @@ function releaseTranscoder(channelId) {
     setTimeout(() => {
       const current = activeTranscoders.get(channelId);
       if (current && current.clients <= 0 && !current.keepAlive) {
-        console.log(`🔴 [${channelId}] Sin clientes, deteniendo FFmpeg`);
+        console.log(`🔴 [${channelId}] Sin clientes, deteniendo`);
+        stopHLSKeepAlivePoller(channelId); // detener poller si existe
         if ((current.type === 'ffmpeg' || current.type === 'ffmpeg-adaptive') && current.ffmpeg) {
           current.ffmpeg.kill('SIGTERM');
         }
