@@ -983,6 +983,8 @@ function startFFmpegTranscoder(channelId, sourceUrl, isKeepAlive = false) {
     return null;
   }
 
+  const streamUrl = validation.normalizedUrl;
+
   if (activeTranscoders.has(channelId)) {
     const existing = activeTranscoders.get(channelId);
     existing.clients++;
@@ -995,7 +997,7 @@ function startFFmpegTranscoder(channelId, sourceUrl, isKeepAlive = false) {
     fs.mkdirSync(channelDir, { recursive: true });
   }
 
-  return startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive);
+  return startAdaptiveTranscoder(channelId, streamUrl, channelDir, isKeepAlive);
 }
 
 // Adaptive multi-bitrate transcoder (Netflix-style)
