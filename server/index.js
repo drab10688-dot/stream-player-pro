@@ -4014,6 +4014,18 @@ app.post('/api/heartbeat', authApk, async (req, res) => {
         connInfo.channelName = req.body.channelName;
         connInfo.channelCategory = req.body.channelCategory || connInfo.channelCategory || null;
         connInfo.channelLogo = req.body.channelLogo || connInfo.channelLogo || null;
+      } else if (!connInfo.channelName || connInfo.channelId !== channelId) {
+        // Resolver nombre del canal desde la BD
+        try {
+          const { rows: chRows } = await pool.query('SELECT name, category, logo_url FROM channels WHERE id = $1', [channelId]);
+          if (chRows.length > 0) {
+            connInfo.channelName = chRows[0].name;
+            connInfo.channelCategory = chRows[0].category;
+            connInfo.channelLogo = chRows[0].logo_url;
+          } else {
+            connInfo.channelName = `Canal ${channelId}`;
+          }
+        } catch { connInfo.channelName = `Canal ${channelId}`; }
       }
     }
   }
@@ -4028,10 +4040,11 @@ app.post('/api/heartbeat', authApk, async (req, res) => {
       } catch {}
     }
     try {
+      const resolvedName = connInfo?.channelName || channelId;
       const { rows } = await pool.query(
         `INSERT INTO activity_logs (client_id, client_username, channel_name, ip_address, country, city, device_id, source)
          VALUES ((SELECT id FROM clients WHERE username = $1 LIMIT 1), $1, $2, $3, $4, $5, $6, 'apk') RETURNING id`,
-        [userId, channelId, connInfo?.ip || null, connInfo?.country || null, connInfo?.city || null, device_id || null]
+        [userId, resolvedName, connInfo?.ip || null, connInfo?.country || null, connInfo?.city || null, device_id || null]
       );
       activeActivityLogs.set(logKey, { logId: rows[0].id, channelId });
     } catch (err) {
