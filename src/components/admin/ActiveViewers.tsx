@@ -82,9 +82,9 @@ const ActiveViewers = () => {
         last_heartbeat: c.lastHeartbeat,
         client_username: c.username,
         client_id: `apk-${c.username}`,
-        channel_name: c.channelId || null,
-        channel_category: null,
-        channel_logo: null,
+        channel_name: c.channelName || (c.channelId ? `Canal ${c.channelId}` : null),
+        channel_category: c.channelCategory || null,
+        channel_logo: c.channelLogo || null,
         source: 'apk' as const,
       }));
 
