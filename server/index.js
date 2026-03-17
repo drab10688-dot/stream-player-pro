@@ -3764,6 +3764,16 @@ app.get('/api/channels/:id/stream', authApk, async (req, res) => {
     if (connInfo) {
       connInfo.channelId = channelId;
       connInfo.lastHeartbeat = new Date().toISOString();
+      // Resolver nombre del canal desde Xtream
+      try {
+        const liveStreams = await fetchXtream(`/player_api.php?username=${encodeURIComponent(xtreamUser)}&password=${encodeURIComponent(xtreamPass)}&action=get_live_streams`);
+        const ch = (liveStreams || []).find(s => String(s.stream_id) === String(channelId));
+        if (ch) {
+          connInfo.channelName = ch.name;
+          connInfo.channelCategory = ch.category_name || null;
+          connInfo.channelLogo = ch.stream_icon || null;
+        }
+      } catch {}
     }
 
     // Soporte múltiples calidades
