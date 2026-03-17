@@ -3601,13 +3601,24 @@ const fetchXtream = (urlPath) => {
 };
 
 // Middleware: verificar token APK
+// Acepta JWT en header "Authorization: Bearer <token>" o en query "?token=<token>"
+// El fallback a query permite que reproductores de video (ExoPlayer, WebView)
+// autentiquen sin necesidad de inyectar headers personalizados.
 const authApk = (req, res, next) => {
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  let tokenStr = null;
+
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    tokenStr = authHeader.split(' ')[1];
+  } else if (req.query.token) {
+    tokenStr = req.query.token;
+  }
+
+  if (!tokenStr) {
     return res.status(401).json({ error: 'Token requerido' });
   }
   try {
-    const decoded = jwt.verify(authHeader.split(' ')[1], JWT_SECRET);
+    const decoded = jwt.verify(tokenStr, JWT_SECRET);
     req.apkUser = decoded; // { id, username, xtreamUser, xtreamPass }
     next();
   } catch {
