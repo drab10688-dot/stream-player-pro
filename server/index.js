@@ -4007,7 +4007,15 @@ app.post('/api/heartbeat', authApk, async (req, res) => {
   const connInfo = apkConnectionInfo.get(connKey);
   if (connInfo) {
     connInfo.lastHeartbeat = new Date().toISOString();
-    if (channelId) connInfo.channelId = channelId;
+    if (channelId) {
+      connInfo.channelId = channelId;
+      // Si la APK envía channelName en el heartbeat, usarlo
+      if (req.body.channelName) {
+        connInfo.channelName = req.body.channelName;
+        connInfo.channelCategory = req.body.channelCategory || connInfo.channelCategory || null;
+        connInfo.channelLogo = req.body.channelLogo || connInfo.channelLogo || null;
+      }
+    }
   }
 
   // APK Activity logging
