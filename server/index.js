@@ -4014,6 +4014,18 @@ app.post('/api/heartbeat', authApk, async (req, res) => {
         connInfo.channelName = req.body.channelName;
         connInfo.channelCategory = req.body.channelCategory || connInfo.channelCategory || null;
         connInfo.channelLogo = req.body.channelLogo || connInfo.channelLogo || null;
+      } else if (!connInfo.channelName || connInfo.channelId !== channelId) {
+        // Resolver nombre del canal desde la BD
+        try {
+          const { rows: chRows } = await pool.query('SELECT name, category, logo_url FROM channels WHERE id = $1', [channelId]);
+          if (chRows.length > 0) {
+            connInfo.channelName = chRows[0].name;
+            connInfo.channelCategory = chRows[0].category;
+            connInfo.channelLogo = chRows[0].logo_url;
+          } else {
+            connInfo.channelName = `Canal ${channelId}`;
+          }
+        } catch { connInfo.channelName = `Canal ${channelId}`; }
       }
     }
   }
