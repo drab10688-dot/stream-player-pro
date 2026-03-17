@@ -4040,10 +4040,11 @@ app.post('/api/heartbeat', authApk, async (req, res) => {
       } catch {}
     }
     try {
+      const resolvedName = connInfo?.channelName || channelId;
       const { rows } = await pool.query(
         `INSERT INTO activity_logs (client_id, client_username, channel_name, ip_address, country, city, device_id, source)
          VALUES ((SELECT id FROM clients WHERE username = $1 LIMIT 1), $1, $2, $3, $4, $5, $6, 'apk') RETURNING id`,
-        [userId, channelId, connInfo?.ip || null, connInfo?.country || null, connInfo?.city || null, device_id || null]
+        [userId, resolvedName, connInfo?.ip || null, connInfo?.country || null, connInfo?.city || null, device_id || null]
       );
       activeActivityLogs.set(logKey, { logId: rows[0].id, channelId });
     } catch (err) {
