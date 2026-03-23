@@ -3769,33 +3769,7 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// GET /api/channels
-app.get('/api/channels', authApk, async (req, res) => {
-  try {
-    const { xtreamUser, xtreamPass } = req.apkUser;
-    const streams = await fetchXtream(
-      `/player_api.php?username=${encodeURIComponent(xtreamUser)}&password=${encodeURIComponent(xtreamPass)}&action=get_live_streams`
-    );
-
-    if (!Array.isArray(streams)) {
-      return res.status(502).json({ error: 'Respuesta inesperada de Xtream' });
-    }
-
-    const channels = streams.map(s => ({
-      id: String(s.stream_id),
-      name: s.name,
-      logo: s.stream_icon || null,
-      group: s.category_name || 'Sin categoría',
-      tvgId: s.epg_channel_id || null,
-      num: s.num || null,
-    }));
-
-    res.json(channels);
-  } catch (err) {
-    console.error('APK channels error:', err.message);
-    res.status(500).json({ error: 'Error al obtener canales' });
-  }
-});
+// NOTA: GET /api/channels unificado arriba (admin + APK en un solo handler)
 
 // GET /api/channels/:id/stream
 app.get('/api/channels/:id/stream', authApk, async (req, res) => {
