@@ -3054,6 +3054,21 @@ app.get('/api/vod/stream/:id', async (req, res) => {
     const fileSize = stat.size;
     const range = req.headers.range;
 
+    // Detectar Content-Type por extensión real del archivo
+    const ext = path.extname(rows[0].video_filename).toLowerCase();
+    const mimeTypes = {
+      '.mp4': 'video/mp4',
+      '.mkv': 'video/x-matroska',
+      '.ts': 'video/mp2t',
+      '.webm': 'video/webm',
+      '.avi': 'video/x-msvideo',
+      '.mov': 'video/quicktime',
+      '.flv': 'video/x-flv',
+      '.wmv': 'video/x-ms-wmv',
+      '.m4v': 'video/mp4',
+    };
+    const contentType = mimeTypes[ext] || 'video/mp4';
+
     if (range) {
       const parts = range.replace(/bytes=/, '').split('-');
       const start = parseInt(parts[0], 10);
@@ -3063,13 +3078,13 @@ app.get('/api/vod/stream/:id', async (req, res) => {
         'Content-Range': `bytes ${start}-${end}/${fileSize}`,
         'Accept-Ranges': 'bytes',
         'Content-Length': chunkSize,
-        'Content-Type': 'video/mp4',
+        'Content-Type': contentType,
       });
       fs.createReadStream(videoPath, { start, end }).pipe(res);
     } else {
       res.writeHead(200, {
         'Content-Length': fileSize,
-        'Content-Type': 'video/mp4',
+        'Content-Type': contentType,
         'Accept-Ranges': 'bytes',
       });
       fs.createReadStream(videoPath).pipe(res);
