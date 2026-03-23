@@ -245,6 +245,7 @@ const PlayerPage = () => {
           if (!showSearch) { e.preventDefault(); setShowList(!showList); }
           break;
         case 's': case 'S': case 'f': case 'F':
+        case 'ContextMenu':
           if (!showList) { e.preventDefault(); setShowSearch(!showSearch); }
           break;
         case 'm': case 'M':
