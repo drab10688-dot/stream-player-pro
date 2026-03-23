@@ -173,12 +173,46 @@ app.post('/api/admin/login', async (req, res) => {
 });
 
 // =============================================
-// RUTAS: CANALES (requiere admin)
+// RUTAS: CANALES (unificada admin + APK)
 // =============================================
-app.get('/api/channels', authAdmin, async (req, res) => {
-  // Admin SÍ ve las URLs reales para poder editarlas
-  const { rows } = await pool.query('SELECT * FROM channels ORDER BY sort_order');
-  res.json(rows);
+app.get('/api/channels', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  let tokenStr = authHeader && authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : (req.query.token || null);
+  if (!tokenStr) return res.status(401).json({ error: 'Token requerido' });
+
+  try {
+    const decoded = jwt.verify(tokenStr, JWT_SECRET);
+
+    // Si el token tiene xtreamUser → es APK, obtener canales de Xtream
+    if (decoded.xtreamUser) {
+      const streams = await fetchXtream(
+        `/player_api.php?username=${encodeURIComponent(decoded.xtreamUser)}&password=${encodeURIComponent(decoded.xtreamPass)}&action=get_live_streams`
+      );
+      if (!Array.isArray(streams)) {
+        return res.status(502).json({ error: 'Respuesta inesperada de Xtream' });
+      }
+      const channels = streams.map(s => ({
+        id: String(s.stream_id),
+        name: s.name,
+        logo: s.stream_icon || null,
+        group: s.category_name || 'Sin categoría',
+        tvgId: s.epg_channel_id || null,
+        num: s.num || null,
+      }));
+      return res.json(channels);
+    }
+
+    // Si no es Xtream → verificar si es admin
+    const { rows: adminRows } = await pool.query('SELECT id FROM admins WHERE id = $1', [decoded.id]);
+    if (adminRows.length === 0) return res.status(401).json({ error: 'No autorizado' });
+
+    // Admin: devolver todos los canales con URLs
+    const { rows } = await pool.query('SELECT * FROM channels ORDER BY sort_order');
+    res.json(rows);
+  } catch (err) {
+    console.error('GET /api/channels error:', err.message);
+    res.status(401).json({ error: 'Token inválido' });
+  }
 });
 
 // Ping de canales con auto-gestión (requiere admin)
