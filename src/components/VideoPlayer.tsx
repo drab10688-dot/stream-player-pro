@@ -394,14 +394,27 @@ const VideoPlayer = ({ src, channelId, muted = false, onError, onQualityChange }
 
     const level = levels[currentLevel] || levels[0];
     const bw = hls.bandwidthEstimate || 0;
+    const label = getQualityLabel(level?.height, level?.bitrate);
 
     setQuality({
-      label: getQualityLabel(level?.height, level?.bitrate),
+      label,
       current: currentLevel,
       levels: levels.length,
       bandwidth: Math.round(bw / 1000),
       auto: hls.autoLevelEnabled,
     });
+
+    // Build quality status string: "Adaptativa (1080p/720p/480p)" or fixed label
+    const allLabels = levels.map(l => getQualityLabel(l.height, l.bitrate));
+    const uniqueLabels = [...new Set(allLabels)];
+    const qualityStatus = hls.autoLevelEnabled && uniqueLabels.length > 1
+      ? `Adaptativa (${uniqueLabels.join('/')})`
+      : label;
+    
+    if (qualityStatus !== lastReportedQualityRef.current) {
+      lastReportedQualityRef.current = qualityStatus;
+      onQualityChange?.(qualityStatus);
+    }
   };
 
   const switchQuality = (levelIndex: number) => {
