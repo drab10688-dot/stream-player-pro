@@ -418,6 +418,7 @@ const PlayerPage = () => {
             channelId={selectedChannel.id}
             muted={muted}
             onError={(msg) => reportChannelError(selectedChannel.id, msg)}
+            onQualityChange={(q) => setQualityStatus(q)}
           />
 
           {/* Ad Banner */}
