@@ -80,6 +80,8 @@ const VideoPlayer = ({ src, channelId, muted = false, onError, onQualityChange }
   const fullReconnectCountRef = useRef(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const isPlayingRef = useRef(false); // tracks if we ever got playback
+  const qualityDegradeRef = useRef(0); // 0=auto, 1=tried lower levels
+  const lastReportedQualityRef = useRef<string>('');
   const initializerRef = useRef<(() => void) | null>(null);
 
   // Auto-hide quality badge after 5s of no interaction
