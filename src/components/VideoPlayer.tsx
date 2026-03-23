@@ -64,7 +64,7 @@ const getQualityColor = (label: string): string => {
 const MAX_RETRIES = 12;          // más reintentos antes de rendirse
 const MAX_FULL_RECONNECTS = 3;   // reconexiones completas (destruir y recrear)
 
-const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProps) => {
+const VideoPlayer = ({ src, channelId, muted = false, onError, onQualityChange }: VideoPlayerProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const mpegtsRef = useRef<mpegts.Player | null>(null);
