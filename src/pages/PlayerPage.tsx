@@ -211,7 +211,7 @@ const PlayerPage = () => {
           if (!showList && !showSearch) {
             e.preventDefault();
             resetHideTimer();
-            setMuted(true);
+            setShowSearch(true);
           }
           break;
         case 'ArrowRight':
