@@ -154,6 +154,24 @@ const VideoPlayer = ({ src, channelId, muted = false, onError, onQualityChange }
         return;
       }
       retryCountRef.current++;
+
+      // Progressive quality downgrade for HLS: try lower levels before generic retry
+      if (hlsRef.current && hlsRef.current.levels.length > 1) {
+        const hls = hlsRef.current;
+        const currentLvl = hls.currentLevel === -1 ? hls.levels.length - 1 : hls.currentLevel;
+        if (currentLvl > 0 && retryCountRef.current <= 3) {
+          const newLevel = currentLvl - 1;
+          hls.currentLevel = newLevel;
+          const lvl = hls.levels[newLevel];
+          const label = getQualityLabel(lvl?.height, lvl?.bitrate);
+          setRetryInfo(`Bajando calidad a ${label}...`);
+          retryTimerRef.current = setTimeout(() => {
+            hls.startLoad();
+          }, 1500);
+          return;
+        }
+      }
+
       const delay = Math.min(2000 * retryCountRef.current, 10000);
       setRetryInfo(`Reintentando (${retryCountRef.current}/${MAX_RETRIES})...`);
       retryTimerRef.current = setTimeout(() => {
