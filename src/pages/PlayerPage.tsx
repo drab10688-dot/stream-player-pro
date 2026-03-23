@@ -17,6 +17,7 @@ const PlayerPage = () => {
   const initialChannel = location.state?.channel || channels[0];
   const [selectedChannel, setSelectedChannel] = useState(initialChannel);
   const [muted, setMuted] = useState(false);
+  const [qualityStatus, setQualityStatus] = useState<string>('');
   const [showList, setShowList] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [search, setSearch] = useState('');
@@ -211,7 +212,7 @@ const PlayerPage = () => {
           if (!showList && !showSearch) {
             e.preventDefault();
             resetHideTimer();
-            setMuted(true);
+            setShowSearch(true);
           }
           break;
         case 'ArrowRight':
@@ -245,6 +246,7 @@ const PlayerPage = () => {
           if (!showSearch) { e.preventDefault(); setShowList(!showList); }
           break;
         case 's': case 'S': case 'f': case 'F':
+        case 'ContextMenu':
           if (!showList) { e.preventDefault(); setShowSearch(!showSearch); }
           break;
         case 'm': case 'M':
@@ -417,25 +419,40 @@ const PlayerPage = () => {
             channelId={selectedChannel.id}
             muted={muted}
             onError={(msg) => reportChannelError(selectedChannel.id, msg)}
+            onQualityChange={(q) => setQualityStatus(q)}
           />
 
-          {/* Ad Banner */}
-          {currentAd && (
-            <div
-              className={`absolute bottom-0 left-0 right-0 bg-gradient-to-r from-black/90 via-black/80 to-black/90 backdrop-blur-sm border-t border-primary/20 px-4 sm:px-6 py-2.5 sm:py-3 flex items-center gap-3 z-10 transition-all duration-500 ${
-                showControls ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-full pointer-events-none'
-              }`}
-            >
-              <Bell className="w-4 h-4 sm:w-5 sm:h-5 text-primary shrink-0 animate-pulse" />
-              <div className="flex items-center gap-2 overflow-hidden flex-1">
-                <span className="font-semibold text-primary text-sm sm:text-base shrink-0">{currentAd.title}</span>
-                <span className="text-white/70 text-sm sm:text-base truncate">{currentAd.message}</span>
-              </div>
-              {activeAds.length > 1 && (
-                <span className="text-white/30 text-xs shrink-0">{(currentAdIndex % activeAds.length) + 1}/{activeAds.length}</span>
+          {/* Bottom info bar: channel name + quality */}
+          <div
+            className={`absolute bottom-0 left-0 right-0 z-10 transition-all duration-500 ${
+              showControls ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-full pointer-events-none'
+            }`}
+          >
+            {/* Quality + Channel name bar */}
+            <div className="flex items-center justify-between px-4 sm:px-6 py-1.5 bg-gradient-to-t from-black/70 to-transparent">
+              {qualityStatus && (
+                <span className="text-white/60 text-xs sm:text-sm">
+                  Calidad: {qualityStatus}
+                </span>
               )}
+              <span className="text-white/80 text-xs sm:text-sm font-medium ml-auto truncate max-w-[200px]">
+                {selectedChannel.name}
+              </span>
             </div>
-          )}
+            {/* Ad Banner */}
+            {currentAd && (
+              <div className="bg-gradient-to-r from-black/90 via-black/80 to-black/90 backdrop-blur-sm border-t border-primary/20 px-4 sm:px-6 py-2.5 sm:py-3 flex items-center gap-3">
+                <Bell className="w-4 h-4 sm:w-5 sm:h-5 text-primary shrink-0 animate-pulse" />
+                <div className="flex items-center gap-2 overflow-hidden flex-1">
+                  <span className="font-semibold text-primary text-sm sm:text-base shrink-0">{currentAd.title}</span>
+                  <span className="text-white/70 text-sm sm:text-base truncate">{currentAd.message}</span>
+                </div>
+                {activeAds.length > 1 && (
+                  <span className="text-white/30 text-xs shrink-0">{(currentAdIndex % activeAds.length) + 1}/{activeAds.length}</span>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

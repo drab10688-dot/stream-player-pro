@@ -7,6 +7,7 @@ interface VideoPlayerProps {
   channelId?: string;
   muted?: boolean;
   onError?: (message: string) => void;
+  onQualityChange?: (qualityLabel: string) => void;
 }
 
 interface QualityInfo {
@@ -63,7 +64,7 @@ const getQualityColor = (label: string): string => {
 const MAX_RETRIES = 12;          // más reintentos antes de rendirse
 const MAX_FULL_RECONNECTS = 3;   // reconexiones completas (destruir y recrear)
 
-const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProps) => {
+const VideoPlayer = ({ src, channelId, muted = false, onError, onQualityChange }: VideoPlayerProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const mpegtsRef = useRef<mpegts.Player | null>(null);
@@ -79,6 +80,8 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
   const fullReconnectCountRef = useRef(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const isPlayingRef = useRef(false); // tracks if we ever got playback
+  const qualityDegradeRef = useRef(0); // 0=auto, 1=tried lower levels
+  const lastReportedQualityRef = useRef<string>('');
   const initializerRef = useRef<(() => void) | null>(null);
 
   // Auto-hide quality badge after 5s of no interaction
@@ -151,6 +154,24 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
         return;
       }
       retryCountRef.current++;
+
+      // Progressive quality downgrade for HLS: try lower levels before generic retry
+      if (hlsRef.current && hlsRef.current.levels.length > 1) {
+        const hls = hlsRef.current;
+        const currentLvl = hls.currentLevel === -1 ? hls.levels.length - 1 : hls.currentLevel;
+        if (currentLvl > 0 && retryCountRef.current <= 3) {
+          const newLevel = currentLvl - 1;
+          hls.currentLevel = newLevel;
+          const lvl = hls.levels[newLevel];
+          const label = getQualityLabel(lvl?.height, lvl?.bitrate);
+          setRetryInfo(`Bajando calidad a ${label}...`);
+          retryTimerRef.current = setTimeout(() => {
+            hls.startLoad();
+          }, 1500);
+          return;
+        }
+      }
+
       const delay = Math.min(2000 * retryCountRef.current, 10000);
       setRetryInfo(`Reintentando (${retryCountRef.current}/${MAX_RETRIES})...`);
       retryTimerRef.current = setTimeout(() => {
@@ -373,14 +394,27 @@ const VideoPlayer = ({ src, channelId, muted = false, onError }: VideoPlayerProp
 
     const level = levels[currentLevel] || levels[0];
     const bw = hls.bandwidthEstimate || 0;
+    const label = getQualityLabel(level?.height, level?.bitrate);
 
     setQuality({
-      label: getQualityLabel(level?.height, level?.bitrate),
+      label,
       current: currentLevel,
       levels: levels.length,
       bandwidth: Math.round(bw / 1000),
       auto: hls.autoLevelEnabled,
     });
+
+    // Build quality status string: "Adaptativa (1080p/720p/480p)" or fixed label
+    const allLabels = levels.map(l => getQualityLabel(l.height, l.bitrate));
+    const uniqueLabels = [...new Set(allLabels)];
+    const qualityStatus = hls.autoLevelEnabled && uniqueLabels.length > 1
+      ? `Adaptativa (${uniqueLabels.join('/')})`
+      : label;
+    
+    if (qualityStatus !== lastReportedQualityRef.current) {
+      lastReportedQualityRef.current = qualityStatus;
+      onQualityChange?.(qualityStatus);
+    }
   };
 
   const switchQuality = (levelIndex: number) => {
