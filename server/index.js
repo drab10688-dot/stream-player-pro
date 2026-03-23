@@ -2913,13 +2913,32 @@ const uploadVod = multer({
   limits: { fileSize: 10 * 1024 * 1024 * 1024 }, // 10GB
 });
 
-// List all VOD items (admin)
-app.get('/api/vod', authAdmin, async (req, res) => {
+// List VOD items (unificada admin + APK)
+app.get('/api/vod', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  let tokenStr = authHeader && authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : (req.query.token || null);
+  if (!tokenStr) return res.status(401).json({ error: 'Token requerido' });
+
   try {
+    const decoded = jwt.verify(tokenStr, JWT_SECRET);
+
+    // APK user → solo activos, campos limitados
+    if (decoded.xtreamUser) {
+      const { rows } = await pool.query(
+        'SELECT id, title, description, category, poster_url, duration_minutes FROM vod_items WHERE is_active = true ORDER BY sort_order, created_at DESC'
+      );
+      return res.json(rows);
+    }
+
+    // Admin → todo
+    const { rows: adminRows } = await pool.query('SELECT id FROM admins WHERE id = $1', [decoded.id]);
+    if (adminRows.length === 0) return res.status(401).json({ error: 'No autorizado' });
+
     const { rows } = await pool.query('SELECT * FROM vod_items ORDER BY sort_order, created_at DESC');
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('GET /api/vod error:', err.message);
+    res.status(401).json({ error: 'Token inválido' });
   }
 });
 
