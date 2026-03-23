@@ -173,12 +173,46 @@ app.post('/api/admin/login', async (req, res) => {
 });
 
 // =============================================
-// RUTAS: CANALES (requiere admin)
+// RUTAS: CANALES (unificada admin + APK)
 // =============================================
-app.get('/api/channels', authAdmin, async (req, res) => {
-  // Admin SÍ ve las URLs reales para poder editarlas
-  const { rows } = await pool.query('SELECT * FROM channels ORDER BY sort_order');
-  res.json(rows);
+app.get('/api/channels', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  let tokenStr = authHeader && authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : (req.query.token || null);
+  if (!tokenStr) return res.status(401).json({ error: 'Token requerido' });
+
+  try {
+    const decoded = jwt.verify(tokenStr, JWT_SECRET);
+
+    // Si el token tiene xtreamUser → es APK, obtener canales de Xtream
+    if (decoded.xtreamUser) {
+      const streams = await fetchXtream(
+        `/player_api.php?username=${encodeURIComponent(decoded.xtreamUser)}&password=${encodeURIComponent(decoded.xtreamPass)}&action=get_live_streams`
+      );
+      if (!Array.isArray(streams)) {
+        return res.status(502).json({ error: 'Respuesta inesperada de Xtream' });
+      }
+      const channels = streams.map(s => ({
+        id: String(s.stream_id),
+        name: s.name,
+        logo: s.stream_icon || null,
+        group: s.category_name || 'Sin categoría',
+        tvgId: s.epg_channel_id || null,
+        num: s.num || null,
+      }));
+      return res.json(channels);
+    }
+
+    // Si no es Xtream → verificar si es admin
+    const { rows: adminRows } = await pool.query('SELECT id FROM admins WHERE id = $1', [decoded.id]);
+    if (adminRows.length === 0) return res.status(401).json({ error: 'No autorizado' });
+
+    // Admin: devolver todos los canales con URLs
+    const { rows } = await pool.query('SELECT * FROM channels ORDER BY sort_order');
+    res.json(rows);
+  } catch (err) {
+    console.error('GET /api/channels error:', err.message);
+    res.status(401).json({ error: 'Token inválido' });
+  }
 });
 
 // Ping de canales con auto-gestión (requiere admin)
@@ -2879,13 +2913,32 @@ const uploadVod = multer({
   limits: { fileSize: 10 * 1024 * 1024 * 1024 }, // 10GB
 });
 
-// List all VOD items (admin)
-app.get('/api/vod', authAdmin, async (req, res) => {
+// List VOD items (unificada admin + APK)
+app.get('/api/vod', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  let tokenStr = authHeader && authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : (req.query.token || null);
+  if (!tokenStr) return res.status(401).json({ error: 'Token requerido' });
+
   try {
+    const decoded = jwt.verify(tokenStr, JWT_SECRET);
+
+    // APK user → solo activos, campos limitados
+    if (decoded.xtreamUser) {
+      const { rows } = await pool.query(
+        'SELECT id, title, description, category, poster_url, duration_minutes FROM vod_items WHERE is_active = true ORDER BY sort_order, created_at DESC'
+      );
+      return res.json(rows);
+    }
+
+    // Admin → todo
+    const { rows: adminRows } = await pool.query('SELECT id FROM admins WHERE id = $1', [decoded.id]);
+    if (adminRows.length === 0) return res.status(401).json({ error: 'No autorizado' });
+
     const { rows } = await pool.query('SELECT * FROM vod_items ORDER BY sort_order, created_at DESC');
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('GET /api/vod error:', err.message);
+    res.status(401).json({ error: 'Token inválido' });
   }
 });
 
@@ -2973,14 +3026,29 @@ app.get('/api/vod/public', async (req, res) => {
   }
 });
 
-// Stream VOD video file
+// Stream VOD video file (unificada admin + APK - busca en vod_items y vod_episodes)
 app.get('/api/vod/stream/:id', async (req, res) => {
+  // Aceptar token de header o query param (para LibVLC)
+  const authHeader = req.headers.authorization;
+  let tokenStr = authHeader && authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : (req.query.token || null);
+  if (!tokenStr) return res.status(401).json({ error: 'Token requerido' });
+
   try {
-    const { rows } = await pool.query('SELECT video_filename FROM vod_items WHERE id = $1 AND is_active = true', [req.params.id]);
-    if (rows.length === 0) return res.status(404).send('Video not found');
+    jwt.verify(tokenStr, JWT_SECRET);
+  } catch {
+    return res.status(401).json({ error: 'Token inválido o expirado' });
+  }
+
+  try {
+    // Buscar en películas primero, luego en episodios
+    let { rows } = await pool.query('SELECT video_filename FROM vod_items WHERE id = $1 AND is_active = true', [req.params.id]);
+    if (rows.length === 0) {
+      ({ rows } = await pool.query('SELECT video_filename FROM vod_episodes WHERE id = $1 AND is_active = true', [req.params.id]));
+    }
+    if (rows.length === 0) return res.status(404).json({ error: 'Video no encontrado' });
 
     const videoPath = path.join(VOD_DIR, rows[0].video_filename);
-    if (!fs.existsSync(videoPath)) return res.status(404).send('File not found');
+    if (!fs.existsSync(videoPath)) return res.status(404).json({ error: 'Archivo no encontrado' });
 
     const stat = fs.statSync(videoPath);
     const fileSize = stat.size;
@@ -2991,26 +3059,24 @@ app.get('/api/vod/stream/:id', async (req, res) => {
       const start = parseInt(parts[0], 10);
       const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
       const chunkSize = (end - start) + 1;
-      const file = fs.createReadStream(videoPath, { start, end });
-      const head = {
+      res.writeHead(206, {
         'Content-Range': `bytes ${start}-${end}/${fileSize}`,
         'Accept-Ranges': 'bytes',
         'Content-Length': chunkSize,
         'Content-Type': 'video/mp4',
-      };
-      res.writeHead(206, head);
-      file.pipe(res);
+      });
+      fs.createReadStream(videoPath, { start, end }).pipe(res);
     } else {
-      const head = {
+      res.writeHead(200, {
         'Content-Length': fileSize,
         'Content-Type': 'video/mp4',
         'Accept-Ranges': 'bytes',
-      };
-      res.writeHead(200, head);
+      });
       fs.createReadStream(videoPath).pipe(res);
     }
   } catch (err) {
-    res.status(500).send('Server error');
+    console.error('VOD stream error:', err.message);
+    res.status(500).json({ error: 'Error al reproducir video' });
   }
 });
 
@@ -3703,33 +3769,7 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// GET /api/channels
-app.get('/api/channels', authApk, async (req, res) => {
-  try {
-    const { xtreamUser, xtreamPass } = req.apkUser;
-    const streams = await fetchXtream(
-      `/player_api.php?username=${encodeURIComponent(xtreamUser)}&password=${encodeURIComponent(xtreamPass)}&action=get_live_streams`
-    );
-
-    if (!Array.isArray(streams)) {
-      return res.status(502).json({ error: 'Respuesta inesperada de Xtream' });
-    }
-
-    const channels = streams.map(s => ({
-      id: String(s.stream_id),
-      name: s.name,
-      logo: s.stream_icon || null,
-      group: s.category_name || 'Sin categoría',
-      tvgId: s.epg_channel_id || null,
-      num: s.num || null,
-    }));
-
-    res.json(channels);
-  } catch (err) {
-    console.error('APK channels error:', err.message);
-    res.status(500).json({ error: 'Error al obtener canales' });
-  }
-});
+// NOTA: GET /api/channels unificado arriba (admin + APK en un solo handler)
 
 // GET /api/channels/:id/stream
 app.get('/api/channels/:id/stream', authApk, async (req, res) => {
@@ -3885,20 +3925,7 @@ app.get('/api/ads', authApk, async (req, res) => {
   }
 });
 
-// =============================================
-// APK: VOD películas
-// =============================================
-app.get('/api/vod', authApk, async (req, res) => {
-  try {
-    const { rows } = await pool.query(
-      'SELECT id, title, description, category, poster_url, duration_minutes FROM vod_items WHERE is_active = true ORDER BY sort_order, created_at DESC'
-    );
-    res.json(rows);
-  } catch (err) {
-    console.error('APK vod error:', err.message);
-    res.status(500).json({ error: 'Error al obtener VOD' });
-  }
-});
+// NOTA: GET /api/vod unificado arriba (admin + APK en un solo handler)
 
 // =============================================
 // APK: Series
@@ -3943,48 +3970,7 @@ app.get('/api/seasons/:id/episodes', authApk, async (req, res) => {
   }
 });
 
-// APK: Stream VOD (película o episodio) con soporte Range
-app.get('/api/vod/stream/:id', authApk, async (req, res) => {
-  try {
-    // Buscar en películas o episodios
-    let { rows } = await pool.query('SELECT video_filename FROM vod_items WHERE id = $1 AND is_active = true', [req.params.id]);
-    if (rows.length === 0) {
-      ({ rows } = await pool.query('SELECT video_filename FROM vod_episodes WHERE id = $1 AND is_active = true', [req.params.id]));
-    }
-    if (rows.length === 0) return res.status(404).json({ error: 'Video no encontrado' });
-
-    const videoPath = path.join(VOD_DIR, rows[0].video_filename);
-    if (!fs.existsSync(videoPath)) return res.status(404).json({ error: 'Archivo no encontrado' });
-
-    const stat = fs.statSync(videoPath);
-    const fileSize = stat.size;
-    const range = req.headers.range;
-
-    if (range) {
-      const parts = range.replace(/bytes=/, '').split('-');
-      const start = parseInt(parts[0], 10);
-      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
-      const chunkSize = (end - start) + 1;
-      res.writeHead(206, {
-        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-        'Accept-Ranges': 'bytes',
-        'Content-Length': chunkSize,
-        'Content-Type': 'video/mp4',
-      });
-      fs.createReadStream(videoPath, { start, end }).pipe(res);
-    } else {
-      res.writeHead(200, {
-        'Content-Length': fileSize,
-        'Content-Type': 'video/mp4',
-        'Accept-Ranges': 'bytes',
-      });
-      fs.createReadStream(videoPath).pipe(res);
-    }
-  } catch (err) {
-    console.error('APK vod stream error:', err.message);
-    res.status(500).json({ error: 'Error al reproducir video' });
-  }
-});
+// NOTA: GET /api/vod/stream/:id unificado arriba (admin + APK en un solo handler)
 
 // GET /api/sessions/active (admin/debug)
 app.get('/api/sessions/active-apk', authApk, (req, res) => {
