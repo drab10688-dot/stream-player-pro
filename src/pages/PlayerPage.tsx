@@ -17,6 +17,7 @@ const PlayerPage = () => {
   const initialChannel = location.state?.channel || channels[0];
   const [selectedChannel, setSelectedChannel] = useState(initialChannel);
   const [muted, setMuted] = useState(false);
+  const [qualityStatus, setQualityStatus] = useState<string>('');
   const [showList, setShowList] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [search, setSearch] = useState('');
