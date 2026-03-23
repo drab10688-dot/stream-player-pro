@@ -3026,14 +3026,29 @@ app.get('/api/vod/public', async (req, res) => {
   }
 });
 
-// Stream VOD video file
+// Stream VOD video file (unificada admin + APK - busca en vod_items y vod_episodes)
 app.get('/api/vod/stream/:id', async (req, res) => {
+  // Aceptar token de header o query param (para LibVLC)
+  const authHeader = req.headers.authorization;
+  let tokenStr = authHeader && authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : (req.query.token || null);
+  if (!tokenStr) return res.status(401).json({ error: 'Token requerido' });
+
   try {
-    const { rows } = await pool.query('SELECT video_filename FROM vod_items WHERE id = $1 AND is_active = true', [req.params.id]);
-    if (rows.length === 0) return res.status(404).send('Video not found');
+    jwt.verify(tokenStr, JWT_SECRET);
+  } catch {
+    return res.status(401).json({ error: 'Token inválido o expirado' });
+  }
+
+  try {
+    // Buscar en películas primero, luego en episodios
+    let { rows } = await pool.query('SELECT video_filename FROM vod_items WHERE id = $1 AND is_active = true', [req.params.id]);
+    if (rows.length === 0) {
+      ({ rows } = await pool.query('SELECT video_filename FROM vod_episodes WHERE id = $1 AND is_active = true', [req.params.id]));
+    }
+    if (rows.length === 0) return res.status(404).json({ error: 'Video no encontrado' });
 
     const videoPath = path.join(VOD_DIR, rows[0].video_filename);
-    if (!fs.existsSync(videoPath)) return res.status(404).send('File not found');
+    if (!fs.existsSync(videoPath)) return res.status(404).json({ error: 'Archivo no encontrado' });
 
     const stat = fs.statSync(videoPath);
     const fileSize = stat.size;
@@ -3044,26 +3059,24 @@ app.get('/api/vod/stream/:id', async (req, res) => {
       const start = parseInt(parts[0], 10);
       const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
       const chunkSize = (end - start) + 1;
-      const file = fs.createReadStream(videoPath, { start, end });
-      const head = {
+      res.writeHead(206, {
         'Content-Range': `bytes ${start}-${end}/${fileSize}`,
         'Accept-Ranges': 'bytes',
         'Content-Length': chunkSize,
         'Content-Type': 'video/mp4',
-      };
-      res.writeHead(206, head);
-      file.pipe(res);
+      });
+      fs.createReadStream(videoPath, { start, end }).pipe(res);
     } else {
-      const head = {
+      res.writeHead(200, {
         'Content-Length': fileSize,
         'Content-Type': 'video/mp4',
         'Accept-Ranges': 'bytes',
-      };
-      res.writeHead(200, head);
+      });
       fs.createReadStream(videoPath).pipe(res);
     }
   } catch (err) {
-    res.status(500).send('Server error');
+    console.error('VOD stream error:', err.message);
+    res.status(500).json({ error: 'Error al reproducir video' });
   }
 });
 
