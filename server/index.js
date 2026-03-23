@@ -3925,20 +3925,7 @@ app.get('/api/ads', authApk, async (req, res) => {
   }
 });
 
-// =============================================
-// APK: VOD películas
-// =============================================
-app.get('/api/vod', authApk, async (req, res) => {
-  try {
-    const { rows } = await pool.query(
-      'SELECT id, title, description, category, poster_url, duration_minutes FROM vod_items WHERE is_active = true ORDER BY sort_order, created_at DESC'
-    );
-    res.json(rows);
-  } catch (err) {
-    console.error('APK vod error:', err.message);
-    res.status(500).json({ error: 'Error al obtener VOD' });
-  }
-});
+// NOTA: GET /api/vod unificado arriba (admin + APK en un solo handler)
 
 // =============================================
 // APK: Series
