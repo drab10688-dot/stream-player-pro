@@ -7,6 +7,7 @@ interface VideoPlayerProps {
   channelId?: string;
   muted?: boolean;
   onError?: (message: string) => void;
+  onQualityChange?: (qualityLabel: string) => void;
 }
 
 interface QualityInfo {
