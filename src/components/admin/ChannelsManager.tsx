@@ -7,10 +7,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
-import { Plus, Trash2, Edit2, Save, X, Tv, Upload, Link, FileText, Loader2, Zap, ImagePlus, Play, Square, Activity, HardDrive, CheckSquare, Square as SquareIcon } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, Tv, Upload, Link, FileText, Loader2, Zap, ImagePlus, Activity, HardDrive, CheckSquare, Square as SquareIcon } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
-import { motion, AnimatePresence } from 'framer-motion';
-import VideoPlayer from '@/components/VideoPlayer';
+import { motion } from 'framer-motion';
+
 import { Badge } from '@/components/ui/badge';
 
 interface Channel {
@@ -50,7 +50,7 @@ const ChannelsManager = () => {
   const [importing, setImporting] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
-  const [previewChannelId, setPreviewChannelId] = useState<string | null>(null);
+  
   const [cacheStatus, setCacheStatus] = useState<CacheStatus[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [filterRunning, setFilterRunning] = useState(false);
@@ -507,15 +507,6 @@ const ChannelsManager = () => {
                     </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => setPreviewChannelId(previewChannelId === ch.id ? null : ch.id)}
-                      className={`${previewChannelId === ch.id ? 'text-red-500 hover:text-red-600' : 'text-green-500 hover:text-green-600'}`}
-                      title={previewChannelId === ch.id ? 'Detener preview' : 'Reproducir canal'}
-                    >
-                      {previewChannelId === ch.id ? <Square className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                    </Button>
                     {!isLovablePreview() && (
                       <div className="flex items-center gap-1.5 mr-2" title={ch.keep_alive ? 'Pre-Caché: ON - Siempre conectado al origen' : 'Pre-Caché: OFF - Conexión bajo demanda'}>
                         <Zap className={`w-3.5 h-3.5 ${ch.keep_alive ? 'text-green-500' : 'text-muted-foreground/40'}`} />
@@ -537,19 +528,6 @@ const ChannelsManager = () => {
                     </Button>
                   </div>
                 </div>
-                <AnimatePresence>
-                  {previewChannelId === ch.id && (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: 300, opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      transition={{ duration: 0.3 }}
-                      className="border-t border-border bg-black"
-                    >
-                      <VideoPlayer src={ch.url} channelId={ch.id} />
-                    </motion.div>
-                  )}
-                </AnimatePresence>
               </motion.div>
             );
           })}

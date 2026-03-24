@@ -3715,7 +3715,8 @@ app.post('/api/apk/delete', authAdmin, (req, res) => {
 // =============================================
 const XTREAM_BASE_URL = process.env.XTREAM_BASE_URL || `http://${require('os').hostname() === 'localhost' ? '127.0.0.1' : require('child_process').execSync("hostname -I | awk '{print $1}'").toString().trim()}:25461`;
 
-// Sesiones activas en memoria: Map<userId, Set<{channelId, connectedAt}>>
+// Sesiones activas por dispositivo: Map<`userId:device_id`, {channelId, connectedAt}>
+// Un dispositivo = una sesión activa (reemplaza al cambiar canal, no acumula)
 const apkSessions = new Map();
 // Info de conexión APK para monitoreo: Map<`userId:device_id`, {username, device_id, ip, country, city, connectedAt, lastHeartbeat, channelId}>
 const apkConnectionInfo = new Map();
@@ -3847,27 +3848,31 @@ app.get('/api/channels/:id/stream', authApk, async (req, res) => {
     const { xtreamUser, xtreamPass, id: userId, maxConnections } = req.apkUser;
     const channelId = req.params.id;
 
-    // Verificar límite de sesiones
-    const userSessions = apkSessions.get(userId) || new Set();
-    if (userSessions.size >= (maxConnections || 1)) {
-      const alreadyWatching = [...userSessions].some(s => s.channelId === channelId);
-      if (!alreadyWatching) {
-        return res.status(429).json({
-          error: 'Límite de pantallas alcanzado',
-          maxConnections,
-          activeSessions: userSessions.size,
-        });
-      }
+    // Sesión por dispositivo: clave = userId:device_id
+    const device_id = req.apkUser.device_id || `apk-${userId}`;
+    const sessionKey = `${userId}:${device_id}`;
+
+    // Contar sesiones activas de este usuario (cada device_id es una sesión)
+    let userSessionCount = 0;
+    for (const [key] of apkSessions) {
+      if (key.startsWith(`${userId}:`)) userSessionCount++;
     }
 
-    // Registrar sesión en memoria
-    const sessionEntry = { channelId, connectedAt: new Date().toISOString() };
-    const updatedSessions = new Set([...userSessions].filter(s => s.channelId !== channelId));
-    updatedSessions.add(sessionEntry);
-    apkSessions.set(userId, updatedSessions);
+    // Si este dispositivo ya tiene sesión, no cuenta como nueva
+    const existingSession = apkSessions.get(sessionKey);
+    if (!existingSession && userSessionCount >= (maxConnections || 1)) {
+      return res.status(429).json({
+        error: 'Límite de pantallas alcanzado',
+        maxConnections,
+        activeSessions: userSessionCount,
+      });
+    }
+
+    // Registrar/reemplazar sesión de este dispositivo (un canal por dispositivo)
+    apkSessions.set(sessionKey, { channelId, connectedAt: new Date().toISOString() });
 
     // Actualizar monitoreo APK con el canal que está viendo
-    const device_id = req.apkUser.device_id || `apk-${userId}`;
+    const connKey = sessionKey;
     const connKey = `${userId}:${device_id}`;
     const connInfo = apkConnectionInfo.get(connKey);
 
@@ -3980,20 +3985,19 @@ app.post('/api/sessions/close', authApk, (req, res) => {
       if (connInfo) {
         connInfo.channelId = null;
       }
-      // Limpiar de apkSessions también
-      const userSessions = apkSessions.get(userId);
-      if (userSessions) {
-        const updated = new Set([...userSessions].filter(s => s.channelId !== channelId));
-        apkSessions.set(userId, updated);
-      }
+      // Limpiar sesión de este dispositivo
+      apkSessions.delete(connKey);
       res.json({ message: 'Canal cerrado', channelId, device_id });
     } else {
       // Cerrar sesión completa de este dispositivo
       apkConnectionInfo.delete(connKey);
-      // Limpiar apkSessions
-      // Limpiar todas las sesiones del usuario (session entries no tienen device_id)
-      apkSessions.delete(userId);
-      res.json({ message: 'Sesión cerrada', device_id, activeSessions: 0 });
+      apkSessions.delete(connKey);
+      // Contar sesiones restantes
+      let remaining = 0;
+      for (const [key] of apkSessions) {
+        if (key.startsWith(`${userId}:`)) remaining++;
+      }
+      res.json({ message: 'Sesión cerrada', device_id, activeSessions: remaining });
     }
   } catch (err) {
     console.error('APK session close error:', err.message);
@@ -4053,11 +4057,16 @@ app.get('/api/seasons/:id/episodes', authApk, async (req, res) => {
 // GET /api/sessions/active (admin/debug)
 app.get('/api/sessions/active-apk', authApk, (req, res) => {
   const { id: userId } = req.apkUser;
-  const userSessions = apkSessions.get(userId);
+  const sessions = [];
+  for (const [key, session] of apkSessions) {
+    if (key.startsWith(`${userId}:`)) {
+      sessions.push({ ...session, device_id: key.split(':')[1] });
+    }
+  }
   res.json({
     userId,
-    activeSessions: userSessions ? [...userSessions] : [],
-    count: userSessions ? userSessions.size : 0,
+    activeSessions: sessions,
+    count: sessions.length,
   });
 });
 
