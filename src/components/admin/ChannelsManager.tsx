@@ -528,19 +528,6 @@ const ChannelsManager = () => {
                     </Button>
                   </div>
                 </div>
-                <AnimatePresence>
-                  {previewChannelId === ch.id && (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: 300, opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      transition={{ duration: 0.3 }}
-                      className="border-t border-border bg-black"
-                    >
-                      <VideoPlayer src={ch.url} channelId={ch.id} />
-                    </motion.div>
-                  )}
-                </AnimatePresence>
               </motion.div>
             );
           })}
