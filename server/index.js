@@ -609,9 +609,31 @@ app.delete('/api/clients/:id', authAdmin, async (req, res) => {
 // =============================================
 // RUTAS: PUBLICIDAD (requiere admin)
 // =============================================
-app.get('/api/ads', authAdmin, async (req, res) => {
-  const { rows } = await pool.query('SELECT * FROM ads ORDER BY created_at DESC');
-  res.json(rows);
+app.get('/api/ads', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  let tokenStr = authHeader && authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : (req.query.token || null);
+  if (!tokenStr) return res.status(401).json({ error: 'Token requerido' });
+
+  try {
+    const decoded = jwt.verify(tokenStr, JWT_SECRET);
+
+    // APK user → solo activos
+    if (decoded.xtreamUser) {
+      const { rows } = await pool.query(
+        'SELECT id, title, message, image_url FROM ads WHERE is_active = true ORDER BY created_at DESC'
+      );
+      return res.json(rows);
+    }
+
+    // Admin → todo
+    const { rows: adminRows } = await pool.query('SELECT id FROM admins WHERE id = $1', [decoded.id]);
+    if (adminRows.length === 0) return res.status(401).json({ error: 'No autorizado' });
+
+    const { rows } = await pool.query('SELECT * FROM ads ORDER BY created_at DESC');
+    res.json(rows);
+  } catch (err) {
+    res.status(401).json({ error: 'Token inválido' });
+  }
 });
 
 app.post('/api/ads', authAdmin, async (req, res) => {
