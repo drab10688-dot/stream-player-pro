@@ -4049,11 +4049,23 @@ app.post('/api/auth/login', async (req, res) => {
     });
 
     // Obtener ads, VOD y series de la base de datos local
+    const baseUrl = getRequestBaseUrl(req);
     const [adsRes, vodRes, seriesRes] = await Promise.all([
       pool.query('SELECT id, title, message, image_url FROM ads WHERE is_active = true ORDER BY created_at DESC'),
       pool.query('SELECT id, title, description, category, poster_url, duration_minutes FROM vod_items WHERE is_active = true ORDER BY sort_order, created_at DESC'),
       pool.query('SELECT id, title, description, category, poster_url FROM vod_series WHERE is_active = true ORDER BY sort_order, title'),
     ]);
+
+    // Hacer URLs absolutas para poster/image (la APK necesita URL completa)
+    const makeAbsoluteUrl = (url) => {
+      if (!url) return null;
+      if (url.startsWith('http://') || url.startsWith('https://')) return url;
+      return `${baseUrl}${url}`;
+    };
+
+    const ads = adsRes.rows.map(a => ({ ...a, image_url: makeAbsoluteUrl(a.image_url) }));
+    const vod = vodRes.rows.map(v => ({ ...v, poster_url: makeAbsoluteUrl(v.poster_url) }));
+    const series = seriesRes.rows.map(s => ({ ...s, poster_url: makeAbsoluteUrl(s.poster_url) }));
 
     res.json({
       token,
@@ -4066,9 +4078,9 @@ app.post('/api/auth/login', async (req, res) => {
         isTrial: userInfo.is_trial === '1',
         activeCons: parseInt(userInfo.active_cons) || 0,
       },
-      ads: adsRes.rows,
-      vod: vodRes.rows,
-      series: seriesRes.rows,
+      ads,
+      vod,
+      series,
     });
   } catch (err) {
     console.error('APK login error:', err.message);
