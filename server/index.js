@@ -3509,8 +3509,19 @@ app.delete('/api/vod/episodes/:id', authAdmin, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Stream episode video
+// Stream episode video (con auth por header o ?token= para LibVLC)
 app.get('/api/vod/episodes/stream/:id', async (req, res) => {
+  // Aceptar token de header o query param (para LibVLC)
+  const authHeader = req.headers.authorization;
+  let tokenStr = authHeader && authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : (req.query.token || null);
+  if (!tokenStr) return res.status(401).json({ error: 'Token requerido' });
+
+  try {
+    jwt.verify(tokenStr, JWT_SECRET);
+  } catch {
+    return res.status(401).json({ error: 'Token inválido o expirado' });
+  }
+
   try {
     const { rows } = await pool.query('SELECT video_filename FROM vod_episodes WHERE id = $1 AND is_active = true', [req.params.id]);
     if (rows.length === 0) return res.status(404).json({ error: 'Episodio no encontrado' });
@@ -3537,7 +3548,7 @@ app.get('/api/vod/episodes/stream/:id', async (req, res) => {
       res.writeHead(206, { 'Content-Range': `bytes ${start}-${end}/${stat.size}`, 'Accept-Ranges': 'bytes', 'Content-Length': chunksize, 'Content-Type': contentType });
       file.pipe(res);
     } else {
-      res.writeHead(200, { 'Content-Length': stat.size, 'Content-Type': contentType });
+      res.writeHead(200, { 'Content-Length': stat.size, 'Content-Type': contentType, 'Accept-Ranges': 'bytes' });
       fs.createReadStream(filePath).pipe(res);
     }
   } catch (err) { res.status(500).json({ error: err.message }); }
