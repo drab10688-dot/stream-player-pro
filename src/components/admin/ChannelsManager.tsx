@@ -50,7 +50,7 @@ const ChannelsManager = () => {
   const [importing, setImporting] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
-  const [previewChannelId, setPreviewChannelId] = useState<string | null>(null);
+  
   const [cacheStatus, setCacheStatus] = useState<CacheStatus[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [filterRunning, setFilterRunning] = useState(false);
