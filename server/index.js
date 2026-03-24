@@ -1411,11 +1411,19 @@ function startKeepAliveChannel(channelId, sourceUrl) {
       console.log(`💚 [${channelId}] Keep-alive HLS proxy + poller activo`);
     }
   } else {
-    const entry = startFFmpegTranscoder(channelId, streamUrl, true); // isKeepAlive = true → 30 min caché
-    if (entry) {
-      entry.keepAlive = true;
-      entry.clients = 0;
-      console.log(`💚 [${channelId}] Keep-alive FFmpeg iniciado (caché: 30 min)`);
+    // TS streams: keep-alive con pipe (sin FFmpeg)
+    // Mantiene conexión TCP al origen, descarta datos si no hay clientes
+    const isTsStream = /\.ts(\?|$)/i.test(streamUrl) || /\/\d+\.ts(\?|$)/i.test(streamUrl);
+    if (isTsStream) {
+      startPipeKeepAlive(channelId, streamUrl);
+      console.log(`💚 [${channelId}] Keep-alive PIPE (sin FFmpeg): ${streamUrl}`);
+    } else {
+      const entry = startFFmpegTranscoder(channelId, streamUrl, true);
+      if (entry) {
+        entry.keepAlive = true;
+        entry.clients = 0;
+        console.log(`💚 [${channelId}] Keep-alive FFmpeg iniciado (caché: 30 min)`);
+      }
     }
   }
 }
