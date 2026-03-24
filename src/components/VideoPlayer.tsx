@@ -36,6 +36,15 @@ const detectStreamType = (url: string): 'hls' | 'ts' | 'youtube' | 'native' => {
   if (/\.m3u8?(\?|$)/i.test(url)) return 'hls';
   if (/\/api\/restream\//.test(url)) return 'hls';
   if (/\.ts(\?|$)/i.test(url) || /\/\d+\.ts/.test(url)) return 'ts';
+  // Check proxied URLs: video-proxy?url=...204.ts
+  try {
+    const parsed = new URL(url, window.location.origin);
+    const innerUrl = parsed.searchParams.get('url');
+    if (innerUrl) {
+      if (/\.m3u8?(\?|$)/i.test(innerUrl)) return 'hls';
+      if (/\.ts(\?|$)/i.test(innerUrl) || /\/\d+\.ts/.test(innerUrl)) return 'ts';
+    }
+  } catch { /* ignore */ }
   return 'native';
 };
 
