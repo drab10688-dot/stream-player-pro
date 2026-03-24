@@ -3509,8 +3509,19 @@ app.delete('/api/vod/episodes/:id', authAdmin, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Stream episode video
+// Stream episode video (con auth por header o ?token= para LibVLC)
 app.get('/api/vod/episodes/stream/:id', async (req, res) => {
+  // Aceptar token de header o query param (para LibVLC)
+  const authHeader = req.headers.authorization;
+  let tokenStr = authHeader && authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : (req.query.token || null);
+  if (!tokenStr) return res.status(401).json({ error: 'Token requerido' });
+
+  try {
+    jwt.verify(tokenStr, JWT_SECRET);
+  } catch {
+    return res.status(401).json({ error: 'Token inválido o expirado' });
+  }
+
   try {
     const { rows } = await pool.query('SELECT video_filename FROM vod_episodes WHERE id = $1 AND is_active = true', [req.params.id]);
     if (rows.length === 0) return res.status(404).json({ error: 'Episodio no encontrado' });
@@ -3537,7 +3548,7 @@ app.get('/api/vod/episodes/stream/:id', async (req, res) => {
       res.writeHead(206, { 'Content-Range': `bytes ${start}-${end}/${stat.size}`, 'Accept-Ranges': 'bytes', 'Content-Length': chunksize, 'Content-Type': contentType });
       file.pipe(res);
     } else {
-      res.writeHead(200, { 'Content-Length': stat.size, 'Content-Type': contentType });
+      res.writeHead(200, { 'Content-Length': stat.size, 'Content-Type': contentType, 'Accept-Ranges': 'bytes' });
       fs.createReadStream(filePath).pipe(res);
     }
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -4038,11 +4049,23 @@ app.post('/api/auth/login', async (req, res) => {
     });
 
     // Obtener ads, VOD y series de la base de datos local
+    const baseUrl = getRequestBaseUrl(req);
     const [adsRes, vodRes, seriesRes] = await Promise.all([
       pool.query('SELECT id, title, message, image_url FROM ads WHERE is_active = true ORDER BY created_at DESC'),
       pool.query('SELECT id, title, description, category, poster_url, duration_minutes FROM vod_items WHERE is_active = true ORDER BY sort_order, created_at DESC'),
       pool.query('SELECT id, title, description, category, poster_url FROM vod_series WHERE is_active = true ORDER BY sort_order, title'),
     ]);
+
+    // Hacer URLs absolutas para poster/image (la APK necesita URL completa)
+    const makeAbsoluteUrl = (url) => {
+      if (!url) return null;
+      if (url.startsWith('http://') || url.startsWith('https://')) return url;
+      return `${baseUrl}${url}`;
+    };
+
+    const ads = adsRes.rows.map(a => ({ ...a, image_url: makeAbsoluteUrl(a.image_url) }));
+    const vod = vodRes.rows.map(v => ({ ...v, poster_url: makeAbsoluteUrl(v.poster_url) }));
+    const series = seriesRes.rows.map(s => ({ ...s, poster_url: makeAbsoluteUrl(s.poster_url) }));
 
     res.json({
       token,
@@ -4055,9 +4078,9 @@ app.post('/api/auth/login', async (req, res) => {
         isTrial: userInfo.is_trial === '1',
         activeCons: parseInt(userInfo.active_cons) || 0,
       },
-      ads: adsRes.rows,
-      vod: vodRes.rows,
-      series: seriesRes.rows,
+      ads,
+      vod,
+      series,
     });
   } catch (err) {
     console.error('APK login error:', err.message);
