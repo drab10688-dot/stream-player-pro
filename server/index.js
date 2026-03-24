@@ -488,12 +488,25 @@ app.delete('/api/channel-health-logs', authAdmin, async (req, res) => {
 
 app.get('/api/channels/public', async (req, res) => {
   const { rows } = await pool.query(
-    'SELECT id, name, url, category, logo_url, sort_order FROM channels WHERE is_active = true ORDER BY sort_order'
+    'SELECT id, name, url, category, logo_url, sort_order, stream_mode FROM channels WHERE is_active = true ORDER BY sort_order'
   );
-  // YouTube mantiene URL original, el resto se oculta (acceso vía /api/restream)
+  // YouTube mantiene URL original
+  // TS streams usan pipe-proxy (sin FFmpeg, mpegts.js en el browser)
+  // HLS y otros usan restream (FFmpeg → HLS)
   const safe = rows.map(ch => {
     const isYouTube = /youtube\.com|youtu\.be/.test(ch.url);
-    return { ...ch, url: isYouTube ? ch.url : null };
+    const isTsStream = /\.ts(\?|$)/i.test(ch.url) || /\/\d+\.ts(\?|$)/i.test(ch.url);
+    const isDirectMode = ch.stream_mode === 'direct';
+    
+    if (isYouTube) {
+      return { ...ch, url: ch.url, stream_type: 'youtube' };
+    }
+    if (isTsStream || isDirectMode) {
+      // TS/direct: pipe-proxy sin FFmpeg, el browser usa mpegts.js
+      return { ...ch, url: `/api/stream-pipe/${ch.id}`, stream_type: 'ts' };
+    }
+    // HLS/otros: restream con FFmpeg
+    return { ...ch, url: null, stream_type: 'hls' };
   });
   res.json(safe);
 });
