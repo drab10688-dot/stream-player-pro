@@ -141,11 +141,11 @@ const VideoPlayer = ({ src, channelId, muted = false, onError, onQualityChange }
     }
   }, []);
 
-  const initStream = useCallback(() => {
+  const initStream = useCallback((overrideType?: 'hls' | 'ts' | 'native') => {
     const video = videoRef.current;
     if (!video || !src) return;
 
-    const streamType = detectStreamType(src);
+    const streamType = overrideType || detectStreamType(src);
     if (streamType === 'youtube') return;
 
     setError(null);
