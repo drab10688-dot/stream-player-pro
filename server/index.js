@@ -3850,7 +3850,6 @@ app.get('/api/channels/:id/stream', authApk, async (req, res) => {
     // Verificar límite de sesiones
     const userSessions = apkSessions.get(userId) || new Set();
     if (userSessions.size >= (maxConnections || 1)) {
-      // Permitir si ya está viendo este canal
       const alreadyWatching = [...userSessions].some(s => s.channelId === channelId);
       if (!alreadyWatching) {
         return res.status(429).json({
@@ -3871,35 +3870,62 @@ app.get('/api/channels/:id/stream', authApk, async (req, res) => {
     const device_id = req.apkUser.device_id || `apk-${userId}`;
     const connKey = `${userId}:${device_id}`;
     const connInfo = apkConnectionInfo.get(connKey);
-    if (connInfo) {
-      connInfo.channelId = channelId;
-      connInfo.lastHeartbeat = new Date().toISOString();
+
+    // Verificar si es un canal LOCAL (de la BD) → servir via restream
+    const { rows: localCh } = await pool.query(
+      'SELECT id, name, url, category, logo_url FROM channels WHERE id = $1 AND is_active = true', [channelId]
+    );
+
+    let streamUrl;
+    let channelName = null;
+    let channelCategory = null;
+    let channelLogo = null;
+
+    if (localCh.length > 0) {
+      // Canal local → usar restreaming (HLS transcoded)
+      const serverIP = getServerIP();
+      const baseUrl = serverIP ? `http://${serverIP}:${PORT}` : '';
+      streamUrl = `${baseUrl}/api/restream/${channelId}`;
+      channelName = localCh[0].name;
+      channelCategory = localCh[0].category;
+      channelLogo = localCh[0].logo_url;
+    } else {
+      // Canal Xtream → construir URL Xtream
+      const quality = req.query.quality || 'auto';
+      const baseStream = `${XTREAM_BASE_URL}/live/${encodeURIComponent(xtreamUser)}/${encodeURIComponent(xtreamPass)}/${channelId}`;
+      switch (quality) {
+        case 'low':       streamUrl = `${baseStream}.m3u8?output=low`; break;
+        case 'dataSaver': streamUrl = `${baseStream}.m3u8?output=low`; break;
+        case 'medium':    streamUrl = `${baseStream}.m3u8?output=medium`; break;
+        case 'high':      streamUrl = `${baseStream}.m3u8`; break;
+        case 'auto':
+        default:          streamUrl = `${baseStream}.m3u8`; break;
+      }
+
       // Resolver nombre del canal desde Xtream
       try {
         const liveStreams = await fetchXtream(`/player_api.php?username=${encodeURIComponent(xtreamUser)}&password=${encodeURIComponent(xtreamPass)}&action=get_live_streams`);
         const ch = (liveStreams || []).find(s => String(s.stream_id) === String(channelId));
         if (ch) {
-          connInfo.channelName = ch.name;
-          connInfo.channelCategory = ch.category_name || null;
-          connInfo.channelLogo = ch.stream_icon || null;
+          channelName = ch.name;
+          channelCategory = ch.category_name || null;
+          channelLogo = ch.stream_icon || null;
         }
       } catch {}
     }
 
-    // Soporte múltiples calidades
-    const quality = req.query.quality || 'auto';
-    const baseStream = `${XTREAM_BASE_URL}/live/${encodeURIComponent(xtreamUser)}/${encodeURIComponent(xtreamPass)}/${channelId}`;
-    let streamUrl;
-    switch (quality) {
-      case 'low':       streamUrl = `${baseStream}.m3u8?output=low`; break;      // SD ~480p
-      case 'dataSaver': streamUrl = `${baseStream}.m3u8?output=low`; break;      // Alias de low
-      case 'medium':    streamUrl = `${baseStream}.m3u8?output=medium`; break;   // HD 720p
-      case 'high':      streamUrl = `${baseStream}.m3u8`; break;                 // FHD 1080p (original)
-      case 'auto':
-      default:          streamUrl = `${baseStream}.m3u8`; break;                 // Auto/ABR
+    // Actualizar monitoreo
+    if (connInfo) {
+      connInfo.channelId = channelId;
+      connInfo.lastHeartbeat = new Date().toISOString();
+      if (channelName) {
+        connInfo.channelName = channelName;
+        connInfo.channelCategory = channelCategory;
+        connInfo.channelLogo = channelLogo;
+      }
     }
 
-    // Obtener TODOS los anuncios activos (no solo 1)
+    // Obtener anuncios activos
     let ads = [];
     try {
       const adResult = await pool.query(
@@ -3917,10 +3943,9 @@ app.get('/api/channels/:id/stream', authApk, async (req, res) => {
 
     res.json({
       streamUrl,
-      quality,
+      quality: req.query.quality || 'auto',
       availableQualities: ['auto', 'high', 'medium', 'low'],
       ads,
-      // Mantener compatibilidad con campo "ad" (primer anuncio)
       ad: ads.length > 0 ? ads[0] : null,
     });
   } catch (err) {
