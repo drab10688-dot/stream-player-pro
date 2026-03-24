@@ -3848,27 +3848,31 @@ app.get('/api/channels/:id/stream', authApk, async (req, res) => {
     const { xtreamUser, xtreamPass, id: userId, maxConnections } = req.apkUser;
     const channelId = req.params.id;
 
-    // Verificar límite de sesiones
-    const userSessions = apkSessions.get(userId) || new Set();
-    if (userSessions.size >= (maxConnections || 1)) {
-      const alreadyWatching = [...userSessions].some(s => s.channelId === channelId);
-      if (!alreadyWatching) {
-        return res.status(429).json({
-          error: 'Límite de pantallas alcanzado',
-          maxConnections,
-          activeSessions: userSessions.size,
-        });
-      }
+    // Sesión por dispositivo: clave = userId:device_id
+    const device_id = req.apkUser.device_id || `apk-${userId}`;
+    const sessionKey = `${userId}:${device_id}`;
+
+    // Contar sesiones activas de este usuario (cada device_id es una sesión)
+    let userSessionCount = 0;
+    for (const [key] of apkSessions) {
+      if (key.startsWith(`${userId}:`)) userSessionCount++;
     }
 
-    // Registrar sesión en memoria
-    const sessionEntry = { channelId, connectedAt: new Date().toISOString() };
-    const updatedSessions = new Set([...userSessions].filter(s => s.channelId !== channelId));
-    updatedSessions.add(sessionEntry);
-    apkSessions.set(userId, updatedSessions);
+    // Si este dispositivo ya tiene sesión, no cuenta como nueva
+    const existingSession = apkSessions.get(sessionKey);
+    if (!existingSession && userSessionCount >= (maxConnections || 1)) {
+      return res.status(429).json({
+        error: 'Límite de pantallas alcanzado',
+        maxConnections,
+        activeSessions: userSessionCount,
+      });
+    }
+
+    // Registrar/reemplazar sesión de este dispositivo (un canal por dispositivo)
+    apkSessions.set(sessionKey, { channelId, connectedAt: new Date().toISOString() });
 
     // Actualizar monitoreo APK con el canal que está viendo
-    const device_id = req.apkUser.device_id || `apk-${userId}`;
+    const connKey = sessionKey;
     const connKey = `${userId}:${device_id}`;
     const connInfo = apkConnectionInfo.get(connKey);
 
