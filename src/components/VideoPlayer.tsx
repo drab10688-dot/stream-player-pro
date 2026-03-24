@@ -360,6 +360,15 @@ const VideoPlayer = ({ src, channelId, muted = false, onError, onQualityChange }
           if (data.fatal) {
             switch (data.type) {
               case Hls.ErrorTypes.NETWORK_ERROR:
+                // If HLS fails quickly on a URL we guessed was HLS, try mpegts fallback
+                if (!isPlayingRef.current && fallbackAttemptsRef.current === 0 && !overrideType) {
+                  console.warn('HLS failed on auto-detected URL, trying mpegts fallback...');
+                  fallbackAttemptsRef.current = 1;
+                  cleanup();
+                  setRetryInfo('Probando formato alternativo (MPEG-TS)...');
+                  retryTimerRef.current = setTimeout(() => initStream('ts'), 1000);
+                  return;
+                }
                 console.warn('HLS network error, retrying...', data.details);
                 retryStream();
                 break;
@@ -368,10 +377,24 @@ const VideoPlayer = ({ src, channelId, muted = false, onError, onQualityChange }
                 hls.recoverMediaError();
                 break;
               default:
-                // Si nunca llegamos a reproducir, intentar reconexión completa
-                if (!isPlayingRef.current) {
-                  console.warn('HLS fatal error before playback, full reconnect...', data.details);
-                  fullReconnect();
+                // If never played and this was auto-detected, try mpegts
+                if (!isPlayingRef.current && fallbackAttemptsRef.current === 0 && !overrideType) {
+                  console.warn('HLS fatal error on auto-detected URL, trying mpegts...');
+                  fallbackAttemptsRef.current = 1;
+                  cleanup();
+                  setRetryInfo('Probando formato alternativo (MPEG-TS)...');
+                  retryTimerRef.current = setTimeout(() => initStream('ts'), 1000);
+                } else if (!isPlayingRef.current) {
+                  // Already tried fallback, try native as last resort
+                  if (fallbackAttemptsRef.current === 1 && !overrideType) {
+                    console.warn('mpegts also failed, trying native playback...');
+                    fallbackAttemptsRef.current = 2;
+                    cleanup();
+                    setRetryInfo('Probando reproducción directa...');
+                    retryTimerRef.current = setTimeout(() => initStream('native'), 1000);
+                  } else {
+                    fullReconnect();
+                  }
                 } else {
                   reportError(`Error HLS: ${data.details || 'Error fatal del stream'}`);
                 }
