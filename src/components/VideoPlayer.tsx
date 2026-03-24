@@ -114,6 +114,8 @@ const VideoPlayer = ({ src, channelId, muted = false, onError, onQualityChange }
   const lastReportedQualityRef = useRef<string>('');
   const initializerRef = useRef<(() => void) | null>(null);
 
+  const fallbackAttemptsRef = useRef(0); // track fallback attempts for unknown streams
+
   // Auto-hide quality badge after 5s of no interaction
   const resetHideTimer = useCallback(() => {
     setQualityVisible(true);
