@@ -3953,20 +3953,7 @@ app.post('/api/sessions/close', authApk, (req, res) => {
   }
 });
 
-// =============================================
-// APK: Anuncios activos
-// =============================================
-app.get('/api/ads', authApk, async (req, res) => {
-  try {
-    const { rows } = await pool.query(
-      'SELECT id, title, message, image_url FROM ads WHERE is_active = true ORDER BY created_at DESC'
-    );
-    res.json(rows);
-  } catch (err) {
-    console.error('APK ads error:', err.message);
-    res.status(500).json({ error: 'Error al obtener anuncios' });
-  }
-});
+// NOTA: GET /api/ads unificado arriba (admin + APK en un solo handler)
 
 // NOTA: GET /api/vod unificado arriba (admin + APK en un solo handler)
 
