@@ -1940,17 +1940,17 @@ app.get('/api/stream-pipe/:channelId', async (req, res) => {
       activePipes.delete(channelId);
     });
 
-    activePipes.set(channelId, { clients, sourceReq });
+    activePipes.set(channelId, { clients, sourceReq, keepAlive: false });
 
     req.on('close', () => {
       const pipe = activePipes.get(channelId);
       if (pipe) {
         pipe.clients.delete(res);
         console.log(`📡 [${channelId}] Pipe: -1 cliente (total: ${pipe.clients.size})`);
-        if (pipe.clients.size === 0) {
+        if (pipe.clients.size === 0 && !pipe.keepAlive) {
           setTimeout(() => {
             const current = activePipes.get(channelId);
-            if (current && current.clients.size === 0) {
+            if (current && current.clients.size === 0 && !current.keepAlive) {
               console.log(`🔴 [${channelId}] Pipe: sin clientes, cerrando`);
               if (current.sourceReq) current.sourceReq.destroy();
               activePipes.delete(channelId);
