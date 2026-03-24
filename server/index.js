@@ -3933,12 +3933,8 @@ app.post('/api/sessions/close', authApk, (req, res) => {
       // Cerrar sesión completa de este dispositivo
       apkConnectionInfo.delete(connKey);
       // Limpiar apkSessions
-      const userSessions = apkSessions.get(userId);
-      if (userSessions) {
-        const updated = new Set([...userSessions].filter(s => s.device_id !== device_id));
-        if (updated.size === 0) apkSessions.delete(userId);
-        else apkSessions.set(userId, updated);
-      }
+      // Limpiar todas las sesiones del usuario (session entries no tienen device_id)
+      apkSessions.delete(userId);
       res.json({ message: 'Sesión cerrada', device_id, activeSessions: 0 });
     }
   } catch (err) {
