@@ -1765,6 +1765,125 @@ const scheduleCacheCleanup = () => {
 scheduleCacheCleanup();
 
 // =============================================
+// PIPE PROXY: /api/stream-pipe/:channelId
+// Proxy TCP simple para streams TS (sin FFmpeg)
+// UNA conexión al origen, múltiples clientes del panel
+// El browser usa mpegts.js para decodificar
+// =============================================
+const activePipes = new Map(); // channelId -> { clients: Set<res>, sourceReq }
+
+app.get('/api/stream-pipe/:channelId', async (req, res) => {
+  try {
+    const { rows: channels } = await pool.query(
+      'SELECT url FROM channels WHERE id = $1 AND is_active = true',
+      [req.params.channelId]
+    );
+    if (channels.length === 0) return res.status(404).json({ error: 'Canal no encontrado' });
+
+    const channelId = req.params.channelId;
+    const targetUrl = channels[0].url;
+
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Content-Type', 'video/mp2t');
+    res.setHeader('Cache-Control', 'no-cache, no-store');
+    res.setHeader('Connection', 'keep-alive');
+
+    // Si ya hay un pipe activo para este canal, agregar este cliente
+    if (activePipes.has(channelId)) {
+      const pipe = activePipes.get(channelId);
+      pipe.clients.add(res);
+      console.log(`📡 [${channelId}] Pipe: +1 cliente (total: ${pipe.clients.size})`);
+      
+      req.on('close', () => {
+        pipe.clients.delete(res);
+        console.log(`📡 [${channelId}] Pipe: -1 cliente (total: ${pipe.clients.size})`);
+        if (pipe.clients.size === 0) {
+          // Esperar 15s antes de cerrar por si alguien vuelve
+          setTimeout(() => {
+            const current = activePipes.get(channelId);
+            if (current && current.clients.size === 0) {
+              console.log(`🔴 [${channelId}] Pipe: sin clientes, cerrando conexión al origen`);
+              if (current.sourceReq) current.sourceReq.destroy();
+              activePipes.delete(channelId);
+            }
+          }, 15000);
+        }
+      });
+      return; // Los datos llegarán via el broadcast del sourceReq
+    }
+
+    // Crear nueva conexión al origen
+    const clients = new Set([res]);
+    const parsed = new URL(targetUrl);
+    const httpModule = parsed.protocol === 'https:' ? https : http;
+    
+    const sourceReq = httpModule.get(targetUrl, { timeout: 15000 }, (sourceRes) => {
+      if (sourceRes.statusCode !== 200) {
+        console.error(`❌ [${channelId}] Pipe: origen respondió ${sourceRes.statusCode}`);
+        res.status(502).json({ error: `Origen respondió ${sourceRes.statusCode}` });
+        activePipes.delete(channelId);
+        return;
+      }
+
+      console.log(`✅ [${channelId}] Pipe: conectado al origen (${targetUrl})`);
+
+      sourceRes.on('data', (chunk) => {
+        const pipe = activePipes.get(channelId);
+        if (!pipe) return;
+        for (const client of pipe.clients) {
+          try { client.write(chunk); } catch { pipe.clients.delete(client); }
+        }
+      });
+
+      sourceRes.on('end', () => {
+        console.log(`⚠️ [${channelId}] Pipe: origen cerró conexión`);
+        const pipe = activePipes.get(channelId);
+        if (pipe) {
+          for (const client of pipe.clients) {
+            try { client.end(); } catch {}
+          }
+          activePipes.delete(channelId);
+        }
+      });
+
+      sourceRes.on('error', (err) => {
+        console.error(`❌ [${channelId}] Pipe: error origen:`, err.message);
+        activePipes.delete(channelId);
+      });
+    });
+
+    sourceReq.on('error', (err) => {
+      console.error(`❌ [${channelId}] Pipe: no se pudo conectar:`, err.message);
+      res.status(502).json({ error: `No se pudo conectar al origen: ${err.message}` });
+      activePipes.delete(channelId);
+    });
+
+    activePipes.set(channelId, { clients, sourceReq });
+
+    req.on('close', () => {
+      const pipe = activePipes.get(channelId);
+      if (pipe) {
+        pipe.clients.delete(res);
+        console.log(`📡 [${channelId}] Pipe: -1 cliente (total: ${pipe.clients.size})`);
+        if (pipe.clients.size === 0) {
+          setTimeout(() => {
+            const current = activePipes.get(channelId);
+            if (current && current.clients.size === 0) {
+              console.log(`🔴 [${channelId}] Pipe: sin clientes, cerrando`);
+              if (current.sourceReq) current.sourceReq.destroy();
+              activePipes.delete(channelId);
+            }
+          }, 15000);
+        }
+      }
+    });
+  } catch (err) {
+    console.error('Stream pipe error:', err);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// =============================================
 // ENDPOINT PRINCIPAL: /api/restream/:channelId
 // Sirve HLS para TODOS los tipos de canal
 // =============================================
