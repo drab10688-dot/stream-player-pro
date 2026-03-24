@@ -263,6 +263,15 @@ const VideoPlayer = ({ src, channelId, muted = false, onError, onQualityChange }
 
         player.on(mpegts.Events.ERROR, (errorType: string, errorDetail: string) => {
           console.error('mpegts error:', errorType, errorDetail);
+          // If this was a fallback attempt and we haven't played yet, try native
+          if (!isPlayingRef.current && fallbackAttemptsRef.current === 1 && overrideType === 'ts') {
+            console.warn('mpegts fallback failed, trying native playback...');
+            fallbackAttemptsRef.current = 2;
+            cleanup();
+            setRetryInfo('Probando reproducción directa...');
+            retryTimerRef.current = setTimeout(() => initStream('native'), 1000);
+            return;
+          }
           retryStream();
         });
 
