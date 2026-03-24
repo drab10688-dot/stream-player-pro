@@ -609,9 +609,31 @@ app.delete('/api/clients/:id', authAdmin, async (req, res) => {
 // =============================================
 // RUTAS: PUBLICIDAD (requiere admin)
 // =============================================
-app.get('/api/ads', authAdmin, async (req, res) => {
-  const { rows } = await pool.query('SELECT * FROM ads ORDER BY created_at DESC');
-  res.json(rows);
+app.get('/api/ads', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  let tokenStr = authHeader && authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : (req.query.token || null);
+  if (!tokenStr) return res.status(401).json({ error: 'Token requerido' });
+
+  try {
+    const decoded = jwt.verify(tokenStr, JWT_SECRET);
+
+    // APK user → solo activos
+    if (decoded.xtreamUser) {
+      const { rows } = await pool.query(
+        'SELECT id, title, message, image_url FROM ads WHERE is_active = true ORDER BY created_at DESC'
+      );
+      return res.json(rows);
+    }
+
+    // Admin → todo
+    const { rows: adminRows } = await pool.query('SELECT id FROM admins WHERE id = $1', [decoded.id]);
+    if (adminRows.length === 0) return res.status(401).json({ error: 'No autorizado' });
+
+    const { rows } = await pool.query('SELECT * FROM ads ORDER BY created_at DESC');
+    res.json(rows);
+  } catch (err) {
+    res.status(401).json({ error: 'Token inválido' });
+  }
 });
 
 app.post('/api/ads', authAdmin, async (req, res) => {
@@ -3248,16 +3270,26 @@ app.get('/api/vod/episodes/stream/:id', async (req, res) => {
     if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Archivo no encontrado' });
     const stat = fs.statSync(filePath);
     const range = req.headers.range;
+
+    // Detectar Content-Type por extensión real
+    const ext = path.extname(rows[0].video_filename).toLowerCase();
+    const mimeTypes = {
+      '.mp4': 'video/mp4', '.mkv': 'video/x-matroska', '.ts': 'video/mp2t',
+      '.webm': 'video/webm', '.avi': 'video/x-msvideo', '.mov': 'video/quicktime',
+      '.flv': 'video/x-flv', '.wmv': 'video/x-ms-wmv', '.m4v': 'video/mp4',
+    };
+    const contentType = mimeTypes[ext] || 'video/mp4';
+
     if (range) {
       const parts = range.replace(/bytes=/, '').split('-');
       const start = parseInt(parts[0], 10);
       const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
       const chunksize = end - start + 1;
       const file = fs.createReadStream(filePath, { start, end });
-      res.writeHead(206, { 'Content-Range': `bytes ${start}-${end}/${stat.size}`, 'Accept-Ranges': 'bytes', 'Content-Length': chunksize, 'Content-Type': 'video/mp4' });
+      res.writeHead(206, { 'Content-Range': `bytes ${start}-${end}/${stat.size}`, 'Accept-Ranges': 'bytes', 'Content-Length': chunksize, 'Content-Type': contentType });
       file.pipe(res);
     } else {
-      res.writeHead(200, { 'Content-Length': stat.size, 'Content-Type': 'video/mp4' });
+      res.writeHead(200, { 'Content-Length': stat.size, 'Content-Type': contentType });
       fs.createReadStream(filePath).pipe(res);
     }
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -3911,12 +3943,8 @@ app.post('/api/sessions/close', authApk, (req, res) => {
       // Cerrar sesión completa de este dispositivo
       apkConnectionInfo.delete(connKey);
       // Limpiar apkSessions
-      const userSessions = apkSessions.get(userId);
-      if (userSessions) {
-        const updated = new Set([...userSessions].filter(s => s.device_id !== device_id));
-        if (updated.size === 0) apkSessions.delete(userId);
-        else apkSessions.set(userId, updated);
-      }
+      // Limpiar todas las sesiones del usuario (session entries no tienen device_id)
+      apkSessions.delete(userId);
       res.json({ message: 'Sesión cerrada', device_id, activeSessions: 0 });
     }
   } catch (err) {
@@ -3925,20 +3953,7 @@ app.post('/api/sessions/close', authApk, (req, res) => {
   }
 });
 
-// =============================================
-// APK: Anuncios activos
-// =============================================
-app.get('/api/ads', authApk, async (req, res) => {
-  try {
-    const { rows } = await pool.query(
-      'SELECT id, title, message, image_url FROM ads WHERE is_active = true ORDER BY created_at DESC'
-    );
-    res.json(rows);
-  } catch (err) {
-    console.error('APK ads error:', err.message);
-    res.status(500).json({ error: 'Error al obtener anuncios' });
-  }
-});
+// NOTA: GET /api/ads unificado arriba (admin + APK en un solo handler)
 
 // NOTA: GET /api/vod unificado arriba (admin + APK en un solo handler)
 
