@@ -507,15 +507,6 @@ const ChannelsManager = () => {
                     </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => setPreviewChannelId(previewChannelId === ch.id ? null : ch.id)}
-                      className={`${previewChannelId === ch.id ? 'text-red-500 hover:text-red-600' : 'text-green-500 hover:text-green-600'}`}
-                      title={previewChannelId === ch.id ? 'Detener preview' : 'Reproducir canal'}
-                    >
-                      {previewChannelId === ch.id ? <Square className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                    </Button>
                     {!isLovablePreview() && (
                       <div className="flex items-center gap-1.5 mr-2" title={ch.keep_alive ? 'Pre-Caché: ON - Siempre conectado al origen' : 'Pre-Caché: OFF - Conexión bajo demanda'}>
                         <Zap className={`w-3.5 h-3.5 ${ch.keep_alive ? 'text-green-500' : 'text-muted-foreground/40'}`} />
