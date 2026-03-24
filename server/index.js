@@ -1778,7 +1778,80 @@ scheduleCacheCleanup();
 // UNA conexión al origen, múltiples clientes del panel
 // El browser usa mpegts.js para decodificar
 // =============================================
-const activePipes = new Map(); // channelId -> { clients: Set<res>, sourceReq }
+const activePipes = new Map(); // channelId -> { clients: Set<res>, sourceReq, keepAlive: bool }
+
+// Keep-alive para TS: mantener conexión al origen sin FFmpeg
+// Descarta datos cuando no hay clientes, pero la conexión permanece abierta
+function startPipeKeepAlive(channelId, sourceUrl) {
+  if (activePipes.has(channelId)) return; // ya activo
+
+  const parsed = new URL(sourceUrl);
+  const httpModule = parsed.protocol === 'https:' ? https : http;
+
+  const connect = () => {
+    const sourceReq = httpModule.get(sourceUrl, { timeout: 15000 }, (sourceRes) => {
+      if (sourceRes.statusCode !== 200) {
+        console.error(`❌ [${channelId}] Pipe keep-alive: origen respondió ${sourceRes.statusCode}`);
+        activePipes.delete(channelId);
+        // Reintentar en 10s
+        setTimeout(() => {
+          if (!activePipes.has(channelId)) connect();
+        }, 10000);
+        return;
+      }
+
+      console.log(`✅ [${channelId}] Pipe keep-alive conectado (sin FFmpeg)`);
+
+      sourceRes.on('data', (chunk) => {
+        const pipe = activePipes.get(channelId);
+        if (!pipe) return;
+        // Broadcast a clientes conectados
+        for (const client of pipe.clients) {
+          try { client.write(chunk); } catch { pipe.clients.delete(client); }
+        }
+        // Si no hay clientes, simplemente descartamos los datos (keep-alive puro)
+      });
+
+      sourceRes.on('end', () => {
+        console.log(`⚠️ [${channelId}] Pipe keep-alive: origen cerró, reconectando en 3s...`);
+        const pipe = activePipes.get(channelId);
+        if (pipe && pipe.keepAlive) {
+          // Reconectar automáticamente
+          setTimeout(() => {
+            if (activePipes.has(channelId)) {
+              activePipes.delete(channelId);
+              connect();
+            }
+          }, 3000);
+        } else {
+          activePipes.delete(channelId);
+        }
+      });
+
+      sourceRes.on('error', (err) => {
+        console.error(`❌ [${channelId}] Pipe keep-alive error:`, err.message);
+        const pipe = activePipes.get(channelId);
+        if (pipe && pipe.keepAlive) {
+          activePipes.delete(channelId);
+          setTimeout(connect, 5000);
+        } else {
+          activePipes.delete(channelId);
+        }
+      });
+    });
+
+    sourceReq.on('error', (err) => {
+      console.error(`❌ [${channelId}] Pipe keep-alive: no pudo conectar:`, err.message);
+      setTimeout(() => {
+        if (!activePipes.has(channelId)) connect();
+      }, 10000);
+    });
+
+    activePipes.set(channelId, { clients: new Set(), sourceReq, keepAlive: true });
+  };
+
+  connect();
+}
 
 app.get('/api/stream-pipe/:channelId', async (req, res) => {
   try {
