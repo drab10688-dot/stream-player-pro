@@ -9,7 +9,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Plus, Trash2, Edit2, Save, X, Tv, Upload, Link, FileText, Loader2, Zap, ImagePlus, Activity, HardDrive, CheckSquare, Square as SquareIcon } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 
 import { Badge } from '@/components/ui/badge';
 
