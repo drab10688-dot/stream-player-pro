@@ -183,23 +183,46 @@ app.get('/api/channels', async (req, res) => {
   try {
     const decoded = jwt.verify(tokenStr, JWT_SECRET);
 
-    // Si el token tiene xtreamUser → es APK, obtener canales de Xtream
+    // Si el token tiene xtreamUser → es APK, obtener canales de Xtream + locales
     if (decoded.xtreamUser) {
-      const streams = await fetchXtream(
-        `/player_api.php?username=${encodeURIComponent(decoded.xtreamUser)}&password=${encodeURIComponent(decoded.xtreamPass)}&action=get_live_streams`
-      );
-      if (!Array.isArray(streams)) {
-        return res.status(502).json({ error: 'Respuesta inesperada de Xtream' });
+      // Canales Xtream
+      let xtreamChannels = [];
+      try {
+        const streams = await fetchXtream(
+          `/player_api.php?username=${encodeURIComponent(decoded.xtreamUser)}&password=${encodeURIComponent(decoded.xtreamPass)}&action=get_live_streams`
+        );
+        if (Array.isArray(streams)) {
+          xtreamChannels = streams.map(s => ({
+            id: String(s.stream_id),
+            name: s.name,
+            logo: s.stream_icon || null,
+            group: s.category_name || 'Sin categoría',
+            tvgId: s.epg_channel_id || null,
+            num: s.num || null,
+            source: 'xtream',
+          }));
+        }
+      } catch (err) {
+        console.warn('Xtream channels fetch failed:', err.message);
       }
-      const channels = streams.map(s => ({
-        id: String(s.stream_id),
-        name: s.name,
-        logo: s.stream_icon || null,
-        group: s.category_name || 'Sin categoría',
-        tvgId: s.epg_channel_id || null,
-        num: s.num || null,
+
+      // Canales locales de la BD (incluye .ts, HLS locales, etc.)
+      const { rows: localChannels } = await pool.query(
+        'SELECT id, name, url, category, logo_url, sort_order FROM channels WHERE is_active = true ORDER BY sort_order'
+      );
+      const localMapped = localChannels.map(ch => ({
+        id: ch.id,
+        name: ch.name,
+        logo: ch.logo_url || null,
+        group: ch.category || 'Local',
+        tvgId: null,
+        num: null,
+        source: 'local',
       }));
-      return res.json(channels);
+
+      // Mezclar: primero locales, luego Xtream (o al revés según preferencia)
+      const allChannels = [...localMapped, ...xtreamChannels];
+      return res.json(allChannels);
     }
 
     // Si no es Xtream → verificar si es admin
