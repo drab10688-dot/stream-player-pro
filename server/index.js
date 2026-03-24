@@ -91,6 +91,18 @@ const pool = new Pool({
   password: 'tu_password_seguro',
 });
 
+// Helper: obtener base URL pública del request (respeta proxy/túnel)
+const getRequestBaseUrl = (req) => {
+  const protoRaw = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+  const hostRaw = req.headers['x-forwarded-host'] || req.headers.host || '';
+
+  const proto = String(protoRaw).split(',')[0].trim();
+  const host = String(hostRaw).split(',')[0].trim();
+
+  if (host) return `${proto}://${host}`;
+  return `http://127.0.0.1:${PORT}`;
+};
+
 // Verificar conexión a la base de datos al iniciar
 pool.query('SELECT 1')
   .then(() => console.log('✅ Conectado a PostgreSQL'))
@@ -2490,7 +2502,7 @@ app.get('/api/playlist/:token', async (req, res) => {
     }
     
     // Obtener canales activos
-    let channelsQuery = 'SELECT id, name, url, category, logo_url, sort_order FROM channels WHERE is_active = true ORDER BY sort_order';
+    let channelsQuery = 'SELECT id, name, url, category, logo_url, stream_mode, sort_order FROM channels WHERE is_active = true ORDER BY sort_order';
     const { rows: channels } = await pool.query(channelsQuery);
     
     // Filtrar por plan si tiene uno asignado
@@ -2500,11 +2512,7 @@ app.get('/api/playlist/:token', async (req, res) => {
     }
     
     // Determinar base URL para los streams
-    // Cloudflare tunnel pone el dominio en Host header y proto en X-Forwarded-Proto
-    // X-Forwarded-Host tiene prioridad si existe, luego Host header
-    const proto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
-    const host = req.headers['x-forwarded-host'] || req.headers.host || `localhost:${PORT}`;
-    const baseUrl = `${proto}://${host}`;
+    const baseUrl = getRequestBaseUrl(req);
     
     // Generar M3U
     let m3u = '#EXTM3U\n';
@@ -2520,8 +2528,11 @@ app.get('/api/playlist/:token', async (req, res) => {
       
       m3u += `#EXTINF:-1 group-title="${ch.category}"${logoAttr},${ch.name}\n`;
       
-      if (isYouTube) {
-        // YouTube: URL directa (no se puede restream)
+      const isTsStream = /\.ts(\?|$)/i.test(ch.url) || /\/\d+\.ts(\?|$)/i.test(ch.url);
+      const isDirectMode = ch.stream_mode === 'direct';
+
+      if (isYouTube || isTsStream || isDirectMode) {
+        // YouTube/TS/direct: URL directa (más compatible con VLC/IPTV apps)
         m3u += `${ch.url}\n`;
       } else {
         // Todo lo demás: via restream para ocultar origen
@@ -3877,7 +3888,7 @@ app.get('/api/channels/:id/stream', authApk, async (req, res) => {
 
     // Verificar si es un canal LOCAL (de la BD) → servir via restream
     const { rows: localCh } = await pool.query(
-      'SELECT id, name, url, category, logo_url FROM channels WHERE id = $1 AND is_active = true', [channelId]
+      'SELECT id, name, url, category, logo_url, stream_mode FROM channels WHERE id = $1 AND is_active = true', [channelId]
     );
 
     let streamUrl;
@@ -3886,10 +3897,19 @@ app.get('/api/channels/:id/stream', authApk, async (req, res) => {
     let channelLogo = null;
 
     if (localCh.length > 0) {
-      // Canal local → usar restreaming (HLS transcoded)
-      const serverIP = getServerIP();
-      const baseUrl = serverIP ? `http://${serverIP}:${PORT}` : '';
-      streamUrl = `${baseUrl}/api/restream/${channelId}`;
+      const sourceUrl = localCh[0].url;
+      const isTsStream = /\.ts(\?|$)/i.test(sourceUrl) || /\/\d+\.ts(\?|$)/i.test(sourceUrl);
+      const isDirectMode = localCh[0].stream_mode === 'direct';
+
+      if (isTsStream || isDirectMode) {
+        // Para APK/VLC: TS y modo direct salen directo al origen
+        streamUrl = sourceUrl;
+      } else {
+        // Resto de formatos locales: mantener restream
+        const baseUrl = getRequestBaseUrl(req);
+        streamUrl = `${baseUrl}/api/restream/${channelId}`;
+      }
+
       channelName = localCh[0].name;
       channelCategory = localCh[0].category;
       channelLogo = localCh[0].logo_url;
