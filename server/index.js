@@ -3715,7 +3715,8 @@ app.post('/api/apk/delete', authAdmin, (req, res) => {
 // =============================================
 const XTREAM_BASE_URL = process.env.XTREAM_BASE_URL || `http://${require('os').hostname() === 'localhost' ? '127.0.0.1' : require('child_process').execSync("hostname -I | awk '{print $1}'").toString().trim()}:25461`;
 
-// Sesiones activas en memoria: Map<userId, Set<{channelId, connectedAt}>>
+// Sesiones activas por dispositivo: Map<`userId:device_id`, {channelId, connectedAt}>
+// Un dispositivo = una sesión activa (reemplaza al cambiar canal, no acumula)
 const apkSessions = new Map();
 // Info de conexión APK para monitoreo: Map<`userId:device_id`, {username, device_id, ip, country, city, connectedAt, lastHeartbeat, channelId}>
 const apkConnectionInfo = new Map();
