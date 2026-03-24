@@ -1878,17 +1878,18 @@ app.get('/api/stream-pipe/:channelId', async (req, res) => {
       req.on('close', () => {
         pipe.clients.delete(res);
         console.log(`📡 [${channelId}] Pipe: -1 cliente (total: ${pipe.clients.size})`);
-        if (pipe.clients.size === 0) {
-          // Esperar 15s antes de cerrar por si alguien vuelve
+        if (pipe.clients.size === 0 && !pipe.keepAlive) {
+          // Sin keep-alive: esperar 15s antes de cerrar
           setTimeout(() => {
             const current = activePipes.get(channelId);
-            if (current && current.clients.size === 0) {
+            if (current && current.clients.size === 0 && !current.keepAlive) {
               console.log(`🔴 [${channelId}] Pipe: sin clientes, cerrando conexión al origen`);
               if (current.sourceReq) current.sourceReq.destroy();
               activePipes.delete(channelId);
             }
           }, 15000);
         }
+        // Con keep-alive: la conexión permanece abierta (descartando datos)
       });
       return; // Los datos llegarán via el broadcast del sourceReq
     }
