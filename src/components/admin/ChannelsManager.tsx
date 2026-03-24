@@ -10,7 +10,7 @@ import { Switch } from '@/components/ui/switch';
 import { Plus, Trash2, Edit2, Save, X, Tv, Upload, Link, FileText, Loader2, Zap, ImagePlus, Activity, HardDrive, CheckSquare, Square as SquareIcon } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { motion, AnimatePresence } from 'framer-motion';
-import VideoPlayer from '@/components/VideoPlayer';
+
 import { Badge } from '@/components/ui/badge';
 
 interface Channel {
