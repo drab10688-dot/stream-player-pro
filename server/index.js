@@ -3985,20 +3985,19 @@ app.post('/api/sessions/close', authApk, (req, res) => {
       if (connInfo) {
         connInfo.channelId = null;
       }
-      // Limpiar de apkSessions también
-      const userSessions = apkSessions.get(userId);
-      if (userSessions) {
-        const updated = new Set([...userSessions].filter(s => s.channelId !== channelId));
-        apkSessions.set(userId, updated);
-      }
+      // Limpiar sesión de este dispositivo
+      apkSessions.delete(connKey);
       res.json({ message: 'Canal cerrado', channelId, device_id });
     } else {
       // Cerrar sesión completa de este dispositivo
       apkConnectionInfo.delete(connKey);
-      // Limpiar apkSessions
-      // Limpiar todas las sesiones del usuario (session entries no tienen device_id)
-      apkSessions.delete(userId);
-      res.json({ message: 'Sesión cerrada', device_id, activeSessions: 0 });
+      apkSessions.delete(connKey);
+      // Contar sesiones restantes
+      let remaining = 0;
+      for (const [key] of apkSessions) {
+        if (key.startsWith(`${userId}:`)) remaining++;
+      }
+      res.json({ message: 'Sesión cerrada', device_id, activeSessions: remaining });
     }
   } catch (err) {
     console.error('APK session close error:', err.message);
