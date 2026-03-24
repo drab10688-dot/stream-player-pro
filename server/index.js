@@ -4057,11 +4057,16 @@ app.get('/api/seasons/:id/episodes', authApk, async (req, res) => {
 // GET /api/sessions/active (admin/debug)
 app.get('/api/sessions/active-apk', authApk, (req, res) => {
   const { id: userId } = req.apkUser;
-  const userSessions = apkSessions.get(userId);
+  const sessions = [];
+  for (const [key, session] of apkSessions) {
+    if (key.startsWith(`${userId}:`)) {
+      sessions.push({ ...session, device_id: key.split(':')[1] });
+    }
+  }
   res.json({
     userId,
-    activeSessions: userSessions ? [...userSessions] : [],
-    count: userSessions ? userSessions.size : 0,
+    activeSessions: sessions,
+    count: sessions.length,
   });
 });
 
