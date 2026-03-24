@@ -33,19 +33,40 @@ const getYouTubeId = (url: string): string | null => {
 
 const detectStreamType = (url: string): 'hls' | 'ts' | 'youtube' | 'native' => {
   if (getYouTubeId(url)) return 'youtube';
-  if (/\.m3u8?(\?|$)/i.test(url)) return 'hls';
-  if (/\/api\/restream\//.test(url)) return 'hls';
-  if (/\.ts(\?|$)/i.test(url) || /\/\d+\.ts/.test(url)) return 'ts';
-  // Check proxied URLs: video-proxy?url=...204.ts
+
+  // Check the URL itself or any proxied inner URL
+  const urlsToCheck = [url];
   try {
     const parsed = new URL(url, window.location.origin);
     const innerUrl = parsed.searchParams.get('url');
-    if (innerUrl) {
-      if (/\.m3u8?(\?|$)/i.test(innerUrl)) return 'hls';
-      if (/\.ts(\?|$)/i.test(innerUrl) || /\/\d+\.ts/.test(innerUrl)) return 'ts';
-    }
+    if (innerUrl) urlsToCheck.push(innerUrl);
   } catch { /* ignore */ }
-  return 'native';
+
+  for (const u of urlsToCheck) {
+    if (/\.m3u8?(\?|$)/i.test(u)) return 'hls';
+    if (/\/api\/restream\//.test(u)) return 'hls';
+    if (/\.ts(\?|$)/i.test(u) || /\/\d+\.ts/.test(u)) return 'ts';
+  }
+
+  // Common IPTV patterns that are usually TS streams (port + number path, no extension)
+  // e.g. http://1.2.3.4:8080/123 or http://server:port/live/channel
+  for (const u of urlsToCheck) {
+    try {
+      const p = new URL(u);
+      // Port-based streams with numeric or short paths are almost always TS
+      if (p.port && /^\/(live\/|[0-9]+$)/.test(p.pathname)) return 'ts';
+      // Any URL with a non-standard port and no file extension is likely TS
+      if (p.port && !p.pathname.includes('.') && p.pathname.length > 1) return 'ts';
+    } catch { /* ignore */ }
+  }
+
+  // URLs ending in common video extensions
+  for (const u of urlsToCheck) {
+    if (/\.(mp4|mkv|avi|webm|flv|mov)(\?|$)/i.test(u)) return 'native';
+  }
+
+  // For unknown URLs, return 'auto' - we'll try HLS first, then TS, then native
+  return 'hls'; // Try HLS first as most IPTV providers serve HLS
 };
 
 const getQualityLabel = (height: number | undefined, bandwidth: number | undefined): string => {
