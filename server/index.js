@@ -1411,11 +1411,19 @@ function startKeepAliveChannel(channelId, sourceUrl) {
       console.log(`💚 [${channelId}] Keep-alive HLS proxy + poller activo`);
     }
   } else {
-    const entry = startFFmpegTranscoder(channelId, streamUrl, true); // isKeepAlive = true → 30 min caché
-    if (entry) {
-      entry.keepAlive = true;
-      entry.clients = 0;
-      console.log(`💚 [${channelId}] Keep-alive FFmpeg iniciado (caché: 30 min)`);
+    // TS streams: keep-alive con pipe (sin FFmpeg)
+    // Mantiene conexión TCP al origen, descarta datos si no hay clientes
+    const isTsStream = /\.ts(\?|$)/i.test(streamUrl) || /\/\d+\.ts(\?|$)/i.test(streamUrl);
+    if (isTsStream) {
+      startPipeKeepAlive(channelId, streamUrl);
+      console.log(`💚 [${channelId}] Keep-alive PIPE (sin FFmpeg): ${streamUrl}`);
+    } else {
+      const entry = startFFmpegTranscoder(channelId, streamUrl, true);
+      if (entry) {
+        entry.keepAlive = true;
+        entry.clients = 0;
+        console.log(`💚 [${channelId}] Keep-alive FFmpeg iniciado (caché: 30 min)`);
+      }
     }
   }
 }
@@ -1770,7 +1778,80 @@ scheduleCacheCleanup();
 // UNA conexión al origen, múltiples clientes del panel
 // El browser usa mpegts.js para decodificar
 // =============================================
-const activePipes = new Map(); // channelId -> { clients: Set<res>, sourceReq }
+const activePipes = new Map(); // channelId -> { clients: Set<res>, sourceReq, keepAlive: bool }
+
+// Keep-alive para TS: mantener conexión al origen sin FFmpeg
+// Descarta datos cuando no hay clientes, pero la conexión permanece abierta
+function startPipeKeepAlive(channelId, sourceUrl) {
+  if (activePipes.has(channelId)) return; // ya activo
+
+  const parsed = new URL(sourceUrl);
+  const httpModule = parsed.protocol === 'https:' ? https : http;
+
+  const connect = () => {
+    const sourceReq = httpModule.get(sourceUrl, { timeout: 15000 }, (sourceRes) => {
+      if (sourceRes.statusCode !== 200) {
+        console.error(`❌ [${channelId}] Pipe keep-alive: origen respondió ${sourceRes.statusCode}`);
+        activePipes.delete(channelId);
+        // Reintentar en 10s
+        setTimeout(() => {
+          if (!activePipes.has(channelId)) connect();
+        }, 10000);
+        return;
+      }
+
+      console.log(`✅ [${channelId}] Pipe keep-alive conectado (sin FFmpeg)`);
+
+      sourceRes.on('data', (chunk) => {
+        const pipe = activePipes.get(channelId);
+        if (!pipe) return;
+        // Broadcast a clientes conectados
+        for (const client of pipe.clients) {
+          try { client.write(chunk); } catch { pipe.clients.delete(client); }
+        }
+        // Si no hay clientes, simplemente descartamos los datos (keep-alive puro)
+      });
+
+      sourceRes.on('end', () => {
+        console.log(`⚠️ [${channelId}] Pipe keep-alive: origen cerró, reconectando en 3s...`);
+        const pipe = activePipes.get(channelId);
+        if (pipe && pipe.keepAlive) {
+          // Reconectar automáticamente
+          setTimeout(() => {
+            if (activePipes.has(channelId)) {
+              activePipes.delete(channelId);
+              connect();
+            }
+          }, 3000);
+        } else {
+          activePipes.delete(channelId);
+        }
+      });
+
+      sourceRes.on('error', (err) => {
+        console.error(`❌ [${channelId}] Pipe keep-alive error:`, err.message);
+        const pipe = activePipes.get(channelId);
+        if (pipe && pipe.keepAlive) {
+          activePipes.delete(channelId);
+          setTimeout(connect, 5000);
+        } else {
+          activePipes.delete(channelId);
+        }
+      });
+    });
+
+    sourceReq.on('error', (err) => {
+      console.error(`❌ [${channelId}] Pipe keep-alive: no pudo conectar:`, err.message);
+      setTimeout(() => {
+        if (!activePipes.has(channelId)) connect();
+      }, 10000);
+    });
+
+    activePipes.set(channelId, { clients: new Set(), sourceReq, keepAlive: true });
+  };
+
+  connect();
+}
 
 app.get('/api/stream-pipe/:channelId', async (req, res) => {
   try {
@@ -1797,17 +1878,18 @@ app.get('/api/stream-pipe/:channelId', async (req, res) => {
       req.on('close', () => {
         pipe.clients.delete(res);
         console.log(`📡 [${channelId}] Pipe: -1 cliente (total: ${pipe.clients.size})`);
-        if (pipe.clients.size === 0) {
-          // Esperar 15s antes de cerrar por si alguien vuelve
+        if (pipe.clients.size === 0 && !pipe.keepAlive) {
+          // Sin keep-alive: esperar 15s antes de cerrar
           setTimeout(() => {
             const current = activePipes.get(channelId);
-            if (current && current.clients.size === 0) {
+            if (current && current.clients.size === 0 && !current.keepAlive) {
               console.log(`🔴 [${channelId}] Pipe: sin clientes, cerrando conexión al origen`);
               if (current.sourceReq) current.sourceReq.destroy();
               activePipes.delete(channelId);
             }
           }, 15000);
         }
+        // Con keep-alive: la conexión permanece abierta (descartando datos)
       });
       return; // Los datos llegarán via el broadcast del sourceReq
     }
@@ -1858,17 +1940,17 @@ app.get('/api/stream-pipe/:channelId', async (req, res) => {
       activePipes.delete(channelId);
     });
 
-    activePipes.set(channelId, { clients, sourceReq });
+    activePipes.set(channelId, { clients, sourceReq, keepAlive: false });
 
     req.on('close', () => {
       const pipe = activePipes.get(channelId);
       if (pipe) {
         pipe.clients.delete(res);
         console.log(`📡 [${channelId}] Pipe: -1 cliente (total: ${pipe.clients.size})`);
-        if (pipe.clients.size === 0) {
+        if (pipe.clients.size === 0 && !pipe.keepAlive) {
           setTimeout(() => {
             const current = activePipes.get(channelId);
-            if (current && current.clients.size === 0) {
+            if (current && current.clients.size === 0 && !current.keepAlive) {
               console.log(`🔴 [${channelId}] Pipe: sin clientes, cerrando`);
               if (current.sourceReq) current.sourceReq.destroy();
               activePipes.delete(channelId);
