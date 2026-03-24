@@ -178,11 +178,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         const res = await fetch('/api/channels/public');
         if (res.ok) {
           const data = await res.json();
-          // YouTube keeps original URL, everything else uses restream
-          // If stream_base_url is set (hybrid mode), use direct IP for streams
           const base = streamBaseUrl || '';
           const mapped = data.map((ch: any) => ({
             ...ch,
+            // Si ya tiene URL (YouTube, pipe-proxy para TS), usarla; si no, restream
             url: ch.url || `${base}/api/restream/${ch.id}`,
           }));
           setChannels(mapped);
