@@ -3270,16 +3270,26 @@ app.get('/api/vod/episodes/stream/:id', async (req, res) => {
     if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Archivo no encontrado' });
     const stat = fs.statSync(filePath);
     const range = req.headers.range;
+
+    // Detectar Content-Type por extensión real
+    const ext = path.extname(rows[0].video_filename).toLowerCase();
+    const mimeTypes = {
+      '.mp4': 'video/mp4', '.mkv': 'video/x-matroska', '.ts': 'video/mp2t',
+      '.webm': 'video/webm', '.avi': 'video/x-msvideo', '.mov': 'video/quicktime',
+      '.flv': 'video/x-flv', '.wmv': 'video/x-ms-wmv', '.m4v': 'video/mp4',
+    };
+    const contentType = mimeTypes[ext] || 'video/mp4';
+
     if (range) {
       const parts = range.replace(/bytes=/, '').split('-');
       const start = parseInt(parts[0], 10);
       const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
       const chunksize = end - start + 1;
       const file = fs.createReadStream(filePath, { start, end });
-      res.writeHead(206, { 'Content-Range': `bytes ${start}-${end}/${stat.size}`, 'Accept-Ranges': 'bytes', 'Content-Length': chunksize, 'Content-Type': 'video/mp4' });
+      res.writeHead(206, { 'Content-Range': `bytes ${start}-${end}/${stat.size}`, 'Accept-Ranges': 'bytes', 'Content-Length': chunksize, 'Content-Type': contentType });
       file.pipe(res);
     } else {
-      res.writeHead(200, { 'Content-Length': stat.size, 'Content-Type': 'video/mp4' });
+      res.writeHead(200, { 'Content-Length': stat.size, 'Content-Type': contentType });
       fs.createReadStream(filePath).pipe(res);
     }
   } catch (err) { res.status(500).json({ error: err.message }); }
