@@ -3873,7 +3873,6 @@ app.get('/api/channels/:id/stream', authApk, async (req, res) => {
 
     // Actualizar monitoreo APK con el canal que está viendo
     const connKey = sessionKey;
-    const connKey = `${userId}:${device_id}`;
     const connInfo = apkConnectionInfo.get(connKey);
 
     // Verificar si es un canal LOCAL (de la BD) → servir via restream
