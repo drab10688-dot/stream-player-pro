@@ -436,6 +436,7 @@ const VideoPlayer = ({ src, channelId, muted = false, onError, onQualityChange }
 
   useEffect(() => {
     fullReconnectCountRef.current = 0;
+    fallbackAttemptsRef.current = 0;
     const localCleanup = initStream();
     return () => {
       localCleanup?.();
