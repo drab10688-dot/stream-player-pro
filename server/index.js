@@ -1755,6 +1755,7 @@ const fetchSegment = (segmentUrl) => {
     const httpClient = parsedUrl.protocol === 'https:' ? https : http;
     const req = httpClient.request(segmentUrl, {
       method: 'GET',
+      agent: getAgent(segmentUrl),
       headers: { 'User-Agent': 'StreamBox/1.0' },
     }, (res) => {
       const chunks = [];
