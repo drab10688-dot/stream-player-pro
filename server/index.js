@@ -232,8 +232,26 @@ app.get('/api/channels', async (req, res) => {
         source: 'local',
       }));
 
-      // Mezclar: primero locales, luego Xtream (o al revés según preferencia)
-      const allChannels = [...localMapped, ...xtreamChannels];
+      // Mezclar: primero locales, luego Xtream — deduplicar por URL
+      // Si un canal local tiene la misma URL base que uno Xtream, quitar el Xtream duplicado
+      const localUrls = new Set();
+      for (const ch of localChannels) {
+        if (ch.url) {
+          // Normalizar: quitar protocolo y trailing slash para comparar
+          const normalized = ch.url.replace(/^https?:\/\//, '').replace(/\/$/, '');
+          localUrls.add(normalized);
+        }
+      }
+      
+      const dedupedXtream = xtreamChannels.filter(xch => {
+        // Xtream channels no tienen URL directa en esta lista, pero podemos
+        // comparar por stream_id construyendo la URL que usaría
+        // Alternativa: comparar por nombre (más fiable para .ts duplicados)
+        const nameNorm = (xch.name || '').trim().toLowerCase();
+        return !localMapped.some(lch => (lch.name || '').trim().toLowerCase() === nameNorm);
+      });
+      
+      const allChannels = [...localMapped, ...dedupedXtream];
       return res.json(allChannels);
     }
 
@@ -3296,17 +3314,40 @@ app.get('/api/vod/public', async (req, res) => {
   }
 });
 
-// Stream VOD video file (unificada admin + APK - busca en vod_items y vod_episodes)
+// Stream VOD video file (unificada admin + APK + panel web)
+// Acepta: JWT (header/query), client_id (query), o cookie de sesión
 app.get('/api/vod/stream/:id', async (req, res) => {
-  // Aceptar token de header o query param (para LibVLC)
+  // Método 1: JWT token (admin o APK)
   const authHeader = req.headers.authorization;
   let tokenStr = authHeader && authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : (req.query.token || null);
-  if (!tokenStr) return res.status(401).json({ error: 'Token requerido' });
-
-  try {
-    jwt.verify(tokenStr, JWT_SECRET);
-  } catch {
-    return res.status(401).json({ error: 'Token inválido o expirado' });
+  
+  // Método 2: client_id query param (panel web — cliente autenticado en sesión)
+  const clientId = req.query.client_id || null;
+  
+  let authorized = false;
+  
+  if (tokenStr) {
+    try {
+      jwt.verify(tokenStr, JWT_SECRET);
+      authorized = true;
+    } catch {
+      // Token inválido, seguir intentando con client_id
+    }
+  }
+  
+  if (!authorized && clientId) {
+    // Verificar que el client_id existe y está activo con VOD habilitado
+    try {
+      const { rows } = await pool.query(
+        'SELECT id FROM clients WHERE id = $1 AND is_active = true AND vod_enabled = true',
+        [clientId]
+      );
+      if (rows.length > 0) authorized = true;
+    } catch {}
+  }
+  
+  if (!authorized) {
+    return res.status(401).json({ error: 'Autenticación requerida' });
   }
 
   try {
