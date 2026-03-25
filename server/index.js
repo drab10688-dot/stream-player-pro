@@ -1609,8 +1609,11 @@ function startHLSKeepAlivePoller(channelId, sourceUrl) {
       const httpClient = parsedUrl.protocol === 'https:' ? https : http;
       
       const fetchUrl = (url) => new Promise((resolve, reject) => {
+        const parsedFetchUrl = new URL(url);
+        const httpClient = parsedFetchUrl.protocol === 'https:' ? https : http;
         const req = httpClient.request(url, {
           method: 'GET',
+          agent: getAgent(url),
           headers: { 'User-Agent': 'StreamBox/1.0' },
         }, (res) => {
           if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
