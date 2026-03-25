@@ -31,6 +31,18 @@ export const AdminAuthProvider = ({ children }: { children: ReactNode }) => {
   const [admin, setAdmin] = useState<AdminInfo | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const syncVpsAdminToken = async (email: string, password: string) => {
+    try {
+      const resp = await api('/api/admin/login', {
+        method: 'POST',
+        body: JSON.stringify({ email, password }),
+      });
+      if (resp?.token) setAdminToken(resp.token);
+    } catch {
+      // En preview puede no existir API VPS disponible; ignorar
+    }
+  };
+
   useEffect(() => {
     if (isLovablePreview()) {
       // Check Supabase session
@@ -88,6 +100,7 @@ export const AdminAuthProvider = ({ children }: { children: ReactNode }) => {
         }
         setAdmin({ id: data.user.id, email: data.user.email || '' });
         setIsAdmin(true);
+        await syncVpsAdminToken(email, password);
         return { success: true };
       } else {
         const resp = await api('/api/admin/login', {
