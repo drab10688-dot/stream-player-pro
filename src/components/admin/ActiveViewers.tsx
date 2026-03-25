@@ -37,6 +37,37 @@ interface ViewersData {
   viewers: Viewer[];
 }
 
+const mapApkConnectionsToViewers = (apkConns: any[] = []): Viewer[] =>
+  apkConns.map((c: any, i: number) => ({
+    id: `apk-${c.username}-${i}`,
+    device_id: c.device_id || 'apk',
+    ip_address: c.ip || null,
+    country: c.country || null,
+    city: c.city || null,
+    connected_at: c.connectedAt,
+    last_heartbeat: c.lastHeartbeat,
+    client_username: c.username,
+    client_id: `apk-${c.username}`,
+    channel_name: c.channelName || (c.channelId ? `Canal ${c.channelId}` : null),
+    channel_category: c.channelCategory || null,
+    channel_logo: c.channelLogo || null,
+    source: 'apk' as const,
+  }));
+
+const mapPanelViewers = (viewers: any[] = []): Viewer[] =>
+  viewers.map((v: any) => ({
+    ...v,
+    source: 'panel' as const,
+  }));
+
+const dedupeViewers = (viewers: Viewer[]) => {
+  const map = new Map<string, Viewer>();
+  viewers.forEach((viewer) => {
+    map.set(`${viewer.source}:${viewer.client_username}:${viewer.device_id}`, viewer);
+  });
+  return Array.from(map.values());
+};
+
 // Banderas emoji por país (simplificado)
 const countryFlags: Record<string, string> = {
   'Argentina': '🇦🇷', 'Bolivia': '🇧🇴', 'Brasil': '🇧🇷', 'Chile': '🇨🇱',
@@ -68,44 +99,40 @@ const ActiveViewers = () => {
   const fetchViewers = useCallback(async () => {
     try {
       if (isLovablePreview()) {
-        // Use edge function (bypasses RLS with service role)
-        const { data: result, error } = await supabase.functions.invoke('client-auth', {
-          body: { action: 'get_viewers' }
-        });
+        const [cloudRes, vpsPanelRes, vpsApkRes] = await Promise.allSettled([
+          supabase.functions.invoke('client-auth', { body: { action: 'get_viewers' } }),
+          apiGet('/api/viewers/active'),
+          apiGet('/api/admin/apk-connections'),
+        ]);
 
-        if (error) throw error;
-        if (result?.error) throw new Error(result.error);
+        const allViewers: Viewer[] = [];
 
-        const viewers: Viewer[] = (result?.viewers || []).map((v: any) => ({
-          ...v,
-          source: 'panel' as const,
-        }));
+        if (cloudRes.status === 'fulfilled') {
+          const { data: cloudData, error: cloudError } = cloudRes.value;
+          if (!cloudError && !cloudData?.error) {
+            allViewers.push(...mapPanelViewers(cloudData?.viewers || []));
+          }
+        }
 
-        setData({ total_viewers: result?.total_viewers || viewers.length, viewers });
+        if (vpsPanelRes.status === 'fulfilled') {
+          allViewers.push(...mapPanelViewers(vpsPanelRes.value?.viewers || []));
+        }
+
+        if (vpsApkRes.status === 'fulfilled') {
+          allViewers.push(...mapApkConnectionsToViewers(vpsApkRes.value || []));
+        }
+
+        const viewers = dedupeViewers(allViewers);
+        setData({ total_viewers: viewers.length, viewers });
       } else {
         const [result, apkConns] = await Promise.all([
           apiGet('/api/viewers/active'),
           apiGet('/api/admin/apk-connections').catch(() => []),
         ]);
 
-        const apkViewers: Viewer[] = (apkConns || []).map((c: any, i: number) => ({
-          id: `apk-${c.username}-${i}`,
-          device_id: c.device_id || 'apk',
-          ip_address: c.ip || null,
-          country: c.country || null,
-          city: c.city || null,
-          connected_at: c.connectedAt,
-          last_heartbeat: c.lastHeartbeat,
-          client_username: c.username,
-          client_id: `apk-${c.username}`,
-          channel_name: c.channelName || (c.channelId ? `Canal ${c.channelId}` : null),
-          channel_category: c.channelCategory || null,
-          channel_logo: c.channelLogo || null,
-          source: 'apk' as const,
-        }));
-
-        const panelViewers = (result?.viewers || []).map((v: Viewer) => ({ ...v, source: 'panel' as const }));
-        const allViewers = [...panelViewers, ...apkViewers];
+        const apkViewers = mapApkConnectionsToViewers(apkConns || []);
+        const panelViewers = mapPanelViewers(result?.viewers || []);
+        const allViewers = dedupeViewers([...panelViewers, ...apkViewers]);
 
         setData({ total_viewers: allViewers.length, viewers: allViewers });
       }
