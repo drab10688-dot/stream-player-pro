@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { apiGet, apiPost } from '@/lib/api';
+import { isLovablePreview } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { Users, MapPin, Tv, RefreshCw, Activity, Globe, Monitor, Smartphone, XCircle } from 'lucide-react';
@@ -66,35 +67,60 @@ const ActiveViewers = () => {
 
   const fetchViewers = useCallback(async () => {
     try {
-      const [result, apkConns] = await Promise.all([
-        apiGet('/api/viewers/active'),
-        apiGet('/api/admin/apk-connections').catch(() => []),
-      ]);
+      if (isLovablePreview()) {
+        // Fetch from Supabase directly
+        const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+        const { data: connections, error } = await supabase
+          .from('active_connections')
+          .select('*, clients(username), channels(name, category, logo_url)')
+          .gte('last_heartbeat', fiveMinAgo);
 
-      // Merge APK connections into viewers
-      const apkViewers: Viewer[] = (apkConns || []).map((c: any, i: number) => ({
-        id: `apk-${c.username}-${i}`,
-        device_id: c.device_id || 'apk',
-        ip_address: c.ip || null,
-        country: c.country || null,
-        city: c.city || null,
-        connected_at: c.connectedAt,
-        last_heartbeat: c.lastHeartbeat,
-        client_username: c.username,
-        client_id: `apk-${c.username}`,
-        channel_name: c.channelName || (c.channelId ? `Canal ${c.channelId}` : null),
-        channel_category: c.channelCategory || null,
-        channel_logo: c.channelLogo || null,
-        source: 'apk' as const,
-      }));
+        if (error) throw error;
 
-      const panelViewers = (result?.viewers || []).map((v: Viewer) => ({ ...v, source: 'panel' as const }));
-      const allViewers = [...panelViewers, ...apkViewers];
+        const viewers: Viewer[] = (connections || []).map((c: any) => ({
+          id: c.id,
+          device_id: c.device_id,
+          ip_address: c.ip_address,
+          country: c.country,
+          city: c.city,
+          connected_at: c.connected_at,
+          last_heartbeat: c.last_heartbeat,
+          client_username: c.clients?.username || 'Desconocido',
+          client_id: c.client_id,
+          channel_name: c.channels?.name || null,
+          channel_category: c.channels?.category || null,
+          channel_logo: c.channels?.logo_url || null,
+          source: 'panel' as const,
+        }));
 
-      setData({
-        total_viewers: allViewers.length,
-        viewers: allViewers,
-      });
+        setData({ total_viewers: viewers.length, viewers });
+      } else {
+        const [result, apkConns] = await Promise.all([
+          apiGet('/api/viewers/active'),
+          apiGet('/api/admin/apk-connections').catch(() => []),
+        ]);
+
+        const apkViewers: Viewer[] = (apkConns || []).map((c: any, i: number) => ({
+          id: `apk-${c.username}-${i}`,
+          device_id: c.device_id || 'apk',
+          ip_address: c.ip || null,
+          country: c.country || null,
+          city: c.city || null,
+          connected_at: c.connectedAt,
+          last_heartbeat: c.lastHeartbeat,
+          client_username: c.username,
+          client_id: `apk-${c.username}`,
+          channel_name: c.channelName || (c.channelId ? `Canal ${c.channelId}` : null),
+          channel_category: c.channelCategory || null,
+          channel_logo: c.channelLogo || null,
+          source: 'apk' as const,
+        }));
+
+        const panelViewers = (result?.viewers || []).map((v: Viewer) => ({ ...v, source: 'panel' as const }));
+        const allViewers = [...panelViewers, ...apkViewers];
+
+        setData({ total_viewers: allViewers.length, viewers: allViewers });
+      }
     } catch (err: any) {
       if (!autoRefresh) {
         toast({ title: 'Error', description: err.message, variant: 'destructive' });
