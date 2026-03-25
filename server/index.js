@@ -4413,7 +4413,7 @@ app.get('/api/channels/:id/stream', authApk, async (req, res) => {
         title: a.title,
         message: a.message,
         imageUrl: a.image_url || null,
-        durationSeconds: 10,
+        durationSeconds: 30,
         type: a.image_url ? 'image' : 'text',
       }));
     } catch { /* sin anuncios */ }
