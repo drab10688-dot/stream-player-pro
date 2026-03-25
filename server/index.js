@@ -1545,8 +1545,13 @@ app.get('/api/channels/cache-status', authAdmin, async (req, res) => {
 // =============================================
 const streamCache = new Map(); // cacheKey -> { data, timestamp }
 const segmentCache = new Map(); // url -> { data: Buffer, timestamp }
-const SEGMENT_CACHE_TTL = 15000;
+const SEGMENT_CACHE_TTL = 45000; // 45s - más tiempo en caché para evitar re-descargas
 const pendingSegments = new Map();
+
+// Connection pooling: reutilizar conexiones TCP al origen
+const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 30, maxFreeSockets: 10, timeout: 60000 });
+const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 30, maxFreeSockets: 10, timeout: 60000 });
+const getAgent = (url) => url.startsWith('https') ? httpsAgent : httpAgent;
 
 // Limpiar segmentos viejos cada 30s
 setInterval(() => {
@@ -1579,10 +1584,28 @@ function startHLSProxy(channelId, sourceUrl) {
     type: 'hls-proxy',
     sourceUrl,
     ready: true,
-    keepAlivePoller: null, // interval for active keep-alive polling
+    keepAlivePoller: null,
   };
   activeTranscoders.set(channelId, entry);
   console.log(`📡 [${channelId}] Proxy HLS iniciado: ${sourceUrl}`);
+
+  // Warm-start: pre-fetch manifest + primeros segmentos al primer cliente
+  (async () => {
+    try {
+      const manifest = await getCachedM3U8(channelId, sourceUrl);
+      // Extraer y pre-cachear los últimos 3 segmentos del manifiesto
+      const segmentMatches = manifest.match(/url=([^"&\s]+)/g) || [];
+      const lastSegs = segmentMatches.slice(-3);
+      await Promise.allSettled(lastSegs.map(match => {
+        const url = decodeURIComponent(match.replace('url=', ''));
+        return fetchSegment(url);
+      }));
+      console.log(`🔥 [${channelId}] Warm-start: ${lastSegs.length} segmentos pre-cacheados`);
+    } catch (e) {
+      // No es crítico si falla el warm-start
+    }
+  })();
+
   return entry;
 }
 
@@ -1604,8 +1627,11 @@ function startHLSKeepAlivePoller(channelId, sourceUrl) {
       const httpClient = parsedUrl.protocol === 'https:' ? https : http;
       
       const fetchUrl = (url) => new Promise((resolve, reject) => {
+        const parsedFetchUrl = new URL(url);
+        const httpClient = parsedFetchUrl.protocol === 'https:' ? https : http;
         const req = httpClient.request(url, {
           method: 'GET',
+          agent: getAgent(url),
           headers: { 'User-Agent': 'StreamBox/1.0' },
         }, (res) => {
           if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
@@ -1656,7 +1682,8 @@ function startHLSKeepAlivePoller(channelId, sourceUrl) {
       // 2. Pre-descargar los últimos segmentos .ts (solo los nuevos)
       const segmentLines = mediaManifest.match(/^(?!#)(.+\.ts.*)$/gm) || [];
       // Solo los últimos 3 segmentos (para no saturar)
-      const recentSegments = segmentLines.slice(-3);
+      // Pre-descargar los últimos 5 segmentos para caché más amplio
+      const recentSegments = segmentLines.slice(-5);
       const newSegments = new Set();
 
       for (const seg of recentSegments) {
@@ -1746,6 +1773,7 @@ const fetchSegment = (segmentUrl) => {
     const httpClient = parsedUrl.protocol === 'https:' ? https : http;
     const req = httpClient.request(segmentUrl, {
       method: 'GET',
+      agent: getAgent(segmentUrl),
       headers: { 'User-Agent': 'StreamBox/1.0' },
     }, (res) => {
       const chunks = [];
