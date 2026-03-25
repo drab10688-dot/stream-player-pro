@@ -1545,8 +1545,13 @@ app.get('/api/channels/cache-status', authAdmin, async (req, res) => {
 // =============================================
 const streamCache = new Map(); // cacheKey -> { data, timestamp }
 const segmentCache = new Map(); // url -> { data: Buffer, timestamp }
-const SEGMENT_CACHE_TTL = 15000;
+const SEGMENT_CACHE_TTL = 45000; // 45s - más tiempo en caché para evitar re-descargas
 const pendingSegments = new Map();
+
+// Connection pooling: reutilizar conexiones TCP al origen
+const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 30, maxFreeSockets: 10, timeout: 60000 });
+const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 30, maxFreeSockets: 10, timeout: 60000 });
+const getAgent = (url) => url.startsWith('https') ? httpsAgent : httpAgent;
 
 // Limpiar segmentos viejos cada 30s
 setInterval(() => {
