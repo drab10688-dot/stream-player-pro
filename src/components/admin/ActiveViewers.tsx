@@ -130,27 +130,13 @@ const ActiveViewers = () => {
   useEffect(() => {
     fetchViewers();
 
-    // Realtime: escuchar cambios en active_connections
-    const channel = supabase
-      .channel('active-viewers-realtime')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'active_connections' },
-        () => {
-          // Cualquier INSERT/UPDATE/DELETE → refrescar inmediatamente
-          fetchViewers();
-        }
-      )
-      .subscribe();
-
-    // Polling de respaldo cada 5s
+    // Polling cada 5s (el realtime no funciona sin sesión autenticada por RLS)
     if (autoRefresh) {
       intervalRef.current = setInterval(fetchViewers, 5000);
     }
 
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
-      supabase.removeChannel(channel);
     };
   }, [autoRefresh, fetchViewers]);
 
