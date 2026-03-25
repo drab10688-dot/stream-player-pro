@@ -2,10 +2,12 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Film } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { isLovablePreview } from '@/lib/utils';
+import { useAuth } from '@/contexts/AuthContext';
 
 const VodPlayerPage = () => {
   const location = useLocation();
   const navigate = useNavigate();
+  const { client } = useAuth();
   const vod = location.state?.vod;
 
   if (!vod) {
@@ -22,8 +24,8 @@ const VodPlayerPage = () => {
 
   // Build video URL - in preview use placeholder, in production use server
   const videoUrl = isLovablePreview()
-    ? '' // No video streaming in preview
-    : `/api/vod/stream/${vod.id}`;
+    ? ''
+    : `/api/vod/stream/${vod.id}${client?.id ? `?client_id=${client.id}` : ''}`;
 
   return (
     <div className="min-h-screen bg-black flex flex-col">

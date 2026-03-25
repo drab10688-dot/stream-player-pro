@@ -2,11 +2,13 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, SkipForward, Film } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { isLovablePreview } from '@/lib/utils';
+import { useAuth } from '@/contexts/AuthContext';
 
 const SeriesPlayerPage = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const { seriesId, episodeId } = useParams();
+  const { client } = useAuth();
   const { episode, episodes, series, currentIndex } = location.state || {};
 
   if (!episode) {
@@ -21,7 +23,7 @@ const SeriesPlayerPage = () => {
     );
   }
 
-  const videoUrl = isLovablePreview() ? '' : `/api/vod/episodes/stream/${episodeId}`;
+  const videoUrl = isLovablePreview() ? '' : `/api/vod/episodes/stream/${episodeId}${client?.id ? `?client_id=${client.id}` : ''}`;
   const hasNext = episodes && currentIndex < episodes.length - 1;
 
   const playNext = () => {
