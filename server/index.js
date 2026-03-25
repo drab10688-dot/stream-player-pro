@@ -1664,7 +1664,8 @@ function startHLSKeepAlivePoller(channelId, sourceUrl) {
       // 2. Pre-descargar los últimos segmentos .ts (solo los nuevos)
       const segmentLines = mediaManifest.match(/^(?!#)(.+\.ts.*)$/gm) || [];
       // Solo los últimos 3 segmentos (para no saturar)
-      const recentSegments = segmentLines.slice(-3);
+      // Pre-descargar los últimos 5 segmentos para caché más amplio
+      const recentSegments = segmentLines.slice(-5);
       const newSegments = new Set();
 
       for (const seg of recentSegments) {
