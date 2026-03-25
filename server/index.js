@@ -3427,7 +3427,41 @@ app.get('/api/vod/stream/:id', async (req, res) => {
   }
 });
 
-console.log('🎬 VOD system habilitado: /api/vod, /api/vod/stream/:id');
+// Diagnóstico VOD: verifica que los archivos existen en disco
+app.get('/api/vod/diagnostico', authAdmin, async (req, res) => {
+  try {
+    const { rows: items } = await pool.query('SELECT id, title, video_filename FROM vod_items WHERE is_active = true');
+    const { rows: episodes } = await pool.query('SELECT e.id, e.title, e.video_filename, s.title as series_title FROM vod_episodes e JOIN vod_seasons se ON e.season_id = se.id JOIN vod_series s ON se.series_id = s.id WHERE e.is_active = true');
+    
+    const checkFile = (filename) => {
+      const fullPath = path.join(VOD_DIR, filename);
+      const exists = fs.existsSync(fullPath);
+      let size = 0;
+      if (exists) { try { size = fs.statSync(fullPath).size; } catch {} }
+      return { exists, size, path: fullPath };
+    };
+    
+    const movieResults = items.map(i => ({ type: 'movie', id: i.id, title: i.title, filename: i.video_filename, ...checkFile(i.video_filename) }));
+    const episodeResults = episodes.map(e => ({ type: 'episode', id: e.id, title: `${e.series_title} - ${e.title}`, filename: e.video_filename, ...checkFile(e.video_filename) }));
+    
+    const all = [...movieResults, ...episodeResults];
+    const missing = all.filter(a => !a.exists);
+    const ok = all.filter(a => a.exists);
+    
+    res.json({
+      vod_dir: VOD_DIR,
+      total: all.length,
+      ok: ok.length,
+      missing: missing.length,
+      missing_files: missing,
+      files_ok: ok.map(f => ({ title: f.title, filename: f.filename, size_mb: (f.size / 1024 / 1024).toFixed(1) })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+console.log('🎬 VOD system habilitado: /api/vod, /api/vod/stream/:id, /api/vod/diagnostico');
 
 // =============================================
 // SERIES API (Temporadas y Episodios)
