@@ -3550,18 +3550,26 @@ app.delete('/api/vod/episodes/:id', authAdmin, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Stream episode video (con auth por header o ?token= para LibVLC)
+// Stream episode video (con auth por header, ?token= para LibVLC, o ?client_id= para panel web)
 app.get('/api/vod/episodes/stream/:id', async (req, res) => {
-  // Aceptar token de header o query param (para LibVLC)
   const authHeader = req.headers.authorization;
   let tokenStr = authHeader && authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : (req.query.token || null);
-  if (!tokenStr) return res.status(401).json({ error: 'Token requerido' });
-
-  try {
-    jwt.verify(tokenStr, JWT_SECRET);
-  } catch {
-    return res.status(401).json({ error: 'Token inválido o expirado' });
+  const clientId = req.query.client_id || null;
+  
+  let authorized = false;
+  
+  if (tokenStr) {
+    try { jwt.verify(tokenStr, JWT_SECRET); authorized = true; } catch {}
   }
+  
+  if (!authorized && clientId) {
+    try {
+      const { rows } = await pool.query('SELECT id FROM clients WHERE id = $1 AND is_active = true AND vod_enabled = true', [clientId]);
+      if (rows.length > 0) authorized = true;
+    } catch {}
+  }
+  
+  if (!authorized) return res.status(401).json({ error: 'Autenticación requerida' });
 
   try {
     const { rows } = await pool.query('SELECT video_filename FROM vod_episodes WHERE id = $1 AND is_active = true', [req.params.id]);
