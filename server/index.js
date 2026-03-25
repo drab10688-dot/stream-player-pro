@@ -3356,17 +3356,24 @@ app.get('/api/vod/stream/:id', async (req, res) => {
     if (rows.length === 0) {
       ({ rows } = await pool.query('SELECT video_filename FROM vod_episodes WHERE id = $1 AND is_active = true', [req.params.id]));
     }
-    if (rows.length === 0) return res.status(404).json({ error: 'Video no encontrado' });
+    if (rows.length === 0) {
+      console.warn(`[VOD] Video no encontrado en BD: ${req.params.id}`);
+      return res.status(404).json({ error: 'Video no encontrado' });
+    }
 
-    const videoPath = path.join(VOD_DIR, rows[0].video_filename);
-    if (!fs.existsSync(videoPath)) return res.status(404).json({ error: 'Archivo no encontrado' });
+    const videoFilename = rows[0].video_filename;
+    const videoPath = path.join(VOD_DIR, videoFilename);
+    if (!fs.existsSync(videoPath)) {
+      console.warn(`[VOD] Archivo no existe en disco: ${videoPath}`);
+      return res.status(404).json({ error: 'Archivo no encontrado en disco' });
+    }
 
     const stat = fs.statSync(videoPath);
     const fileSize = stat.size;
     const range = req.headers.range;
 
     // Detectar Content-Type por extensión real del archivo
-    const ext = path.extname(rows[0].video_filename).toLowerCase();
+    const ext = path.extname(videoFilename).toLowerCase();
     const mimeTypes = {
       '.mp4': 'video/mp4',
       '.mkv': 'video/x-matroska',
@@ -3380,29 +3387,43 @@ app.get('/api/vod/stream/:id', async (req, res) => {
     };
     const contentType = mimeTypes[ext] || 'video/mp4';
 
+    console.log(`[VOD] Streaming: ${videoFilename} (${(fileSize / 1024 / 1024).toFixed(1)}MB, ${contentType}) Range: ${range || 'none'}`);
+
     if (range) {
       const parts = range.replace(/bytes=/, '').split('-');
       const start = parseInt(parts[0], 10);
-      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+      const end = parts[1] ? parseInt(parts[1], 10) : Math.min(start + 10 * 1024 * 1024, fileSize - 1); // Chunks de 10MB max
       const chunkSize = (end - start) + 1;
+      const stream = fs.createReadStream(videoPath, { start, end });
       res.writeHead(206, {
         'Content-Range': `bytes ${start}-${end}/${fileSize}`,
         'Accept-Ranges': 'bytes',
         'Content-Length': chunkSize,
         'Content-Type': contentType,
+        'Cache-Control': 'no-cache',
       });
-      fs.createReadStream(videoPath, { start, end }).pipe(res);
+      stream.pipe(res);
+      stream.on('error', (err) => {
+        console.error(`[VOD] Stream read error: ${err.message}`);
+        if (!res.headersSent) res.status(500).end();
+      });
     } else {
       res.writeHead(200, {
         'Content-Length': fileSize,
         'Content-Type': contentType,
         'Accept-Ranges': 'bytes',
+        'Cache-Control': 'no-cache',
       });
-      fs.createReadStream(videoPath).pipe(res);
+      const stream = fs.createReadStream(videoPath);
+      stream.pipe(res);
+      stream.on('error', (err) => {
+        console.error(`[VOD] Stream read error: ${err.message}`);
+        if (!res.headersSent) res.status(500).end();
+      });
     }
   } catch (err) {
-    console.error('VOD stream error:', err.message);
-    res.status(500).json({ error: 'Error al reproducir video' });
+    console.error('[VOD] Stream error:', err.message);
+    if (!res.headersSent) res.status(500).json({ error: 'Error al reproducir video' });
   }
 });
 
