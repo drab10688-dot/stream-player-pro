@@ -4272,7 +4272,14 @@ app.post('/api/auth/login', async (req, res) => {
       return `${baseUrl}${url}`;
     };
 
-    const ads = adsRes.rows.map(a => ({ ...a, image_url: makeAbsoluteUrl(a.image_url) }));
+    const ads = adsRes.rows.map(a => ({
+      id: a.id,
+      title: a.title,
+      message: a.message,
+      imageUrl: makeAbsoluteUrl(a.image_url) || null,
+      durationSeconds: 30,
+      type: a.image_url ? 'image' : 'text',
+    }));
     const vod = vodRes.rows.map(v => ({ ...v, poster_url: makeAbsoluteUrl(v.poster_url) }));
     const series = seriesRes.rows.map(s => ({ ...s, poster_url: makeAbsoluteUrl(s.poster_url) }));
 
@@ -4406,7 +4413,7 @@ app.get('/api/channels/:id/stream', authApk, async (req, res) => {
         title: a.title,
         message: a.message,
         imageUrl: a.image_url || null,
-        durationSeconds: 10,
+        durationSeconds: 30,
         type: a.image_url ? 'image' : 'text',
       }));
     } catch { /* sin anuncios */ }
