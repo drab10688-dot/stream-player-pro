@@ -3314,117 +3314,120 @@ app.get('/api/vod/public', async (req, res) => {
   }
 });
 
-// Stream VOD video file (unificada admin + APK + panel web)
-// Acepta: JWT (header/query), client_id (query), o cookie de sesión
-app.get('/api/vod/stream/:id', async (req, res) => {
+// =============================================
+// Helper: autenticar VOD (JWT, client_id, o admin)
+// =============================================
+const authVod = async (req) => {
   // Método 1: JWT token (admin o APK)
   const authHeader = req.headers.authorization;
   let tokenStr = authHeader && authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : (req.query.token || null);
-  
-  // Método 2: client_id query param (panel web — cliente autenticado en sesión)
-  const clientId = req.query.client_id || null;
-  
-  let authorized = false;
-  
   if (tokenStr) {
-    try {
-      jwt.verify(tokenStr, JWT_SECRET);
-      authorized = true;
-    } catch {
-      // Token inválido, seguir intentando con client_id
-    }
+    try { jwt.verify(tokenStr, JWT_SECRET); return true; } catch {}
   }
-  
-  if (!authorized && clientId) {
-    // Verificar que el client_id existe y está activo con VOD habilitado
+  // Método 2: client_id query param (panel web)
+  const clientId = req.query.client_id || null;
+  if (clientId) {
     try {
-      const { rows } = await pool.query(
-        'SELECT id FROM clients WHERE id = $1 AND is_active = true AND vod_enabled = true',
-        [clientId]
-      );
-      if (rows.length > 0) authorized = true;
+      const { rows } = await pool.query('SELECT id FROM clients WHERE id = $1 AND is_active = true AND vod_enabled = true', [clientId]);
+      if (rows.length > 0) return true;
     } catch {}
   }
-  
-  if (!authorized) {
-    return res.status(401).json({ error: 'Autenticación requerida' });
+  return false;
+};
+
+// Helper: buscar archivo VOD y hacer streaming
+const streamVodFile = async (req, res, vodId) => {
+  // Buscar en películas primero, luego en episodios
+  let { rows } = await pool.query('SELECT video_filename FROM vod_items WHERE id = $1 AND is_active = true', [vodId]);
+  if (rows.length === 0) {
+    ({ rows } = await pool.query('SELECT video_filename FROM vod_episodes WHERE id = $1 AND is_active = true', [vodId]));
+  }
+  if (rows.length === 0) {
+    console.warn(`[VOD] Video no encontrado en BD: ${vodId}`);
+    return res.status(404).json({ error: 'Video no encontrado' });
   }
 
-  try {
-    // Buscar en películas primero, luego en episodios
-    let { rows } = await pool.query('SELECT video_filename FROM vod_items WHERE id = $1 AND is_active = true', [req.params.id]);
-    if (rows.length === 0) {
-      ({ rows } = await pool.query('SELECT video_filename FROM vod_episodes WHERE id = $1 AND is_active = true', [req.params.id]));
-    }
-    if (rows.length === 0) {
-      console.warn(`[VOD] Video no encontrado en BD: ${req.params.id}`);
-      return res.status(404).json({ error: 'Video no encontrado' });
-    }
-
-    const videoFilename = rows[0].video_filename;
-    const videoPath = path.join(VOD_DIR, videoFilename);
-    if (!fs.existsSync(videoPath)) {
-      console.warn(`[VOD] Archivo no existe en disco: ${videoPath}`);
-      return res.status(404).json({ error: 'Archivo no encontrado en disco' });
-    }
-
-    const stat = fs.statSync(videoPath);
-    const fileSize = stat.size;
-    const range = req.headers.range;
-
-    // Detectar Content-Type por extensión real del archivo
-    const ext = path.extname(videoFilename).toLowerCase();
-    const mimeTypes = {
-      '.mp4': 'video/mp4',
-      '.mkv': 'video/x-matroska',
-      '.ts': 'video/mp2t',
-      '.webm': 'video/webm',
-      '.avi': 'video/x-msvideo',
-      '.mov': 'video/quicktime',
-      '.flv': 'video/x-flv',
-      '.wmv': 'video/x-ms-wmv',
-      '.m4v': 'video/mp4',
-    };
-    const contentType = mimeTypes[ext] || 'video/mp4';
-
-    console.log(`[VOD] Streaming: ${videoFilename} (${(fileSize / 1024 / 1024).toFixed(1)}MB, ${contentType}) Range: ${range || 'none'}`);
-
-    if (range) {
-      const parts = range.replace(/bytes=/, '').split('-');
-      const start = parseInt(parts[0], 10);
-      const end = parts[1] ? parseInt(parts[1], 10) : Math.min(start + 10 * 1024 * 1024, fileSize - 1); // Chunks de 10MB max
-      const chunkSize = (end - start) + 1;
-      const stream = fs.createReadStream(videoPath, { start, end });
-      res.writeHead(206, {
-        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-        'Accept-Ranges': 'bytes',
-        'Content-Length': chunkSize,
-        'Content-Type': contentType,
-        'Cache-Control': 'no-cache',
-      });
-      stream.pipe(res);
-      stream.on('error', (err) => {
-        console.error(`[VOD] Stream read error: ${err.message}`);
-        if (!res.headersSent) res.status(500).end();
-      });
-    } else {
-      res.writeHead(200, {
-        'Content-Length': fileSize,
-        'Content-Type': contentType,
-        'Accept-Ranges': 'bytes',
-        'Cache-Control': 'no-cache',
-      });
-      const stream = fs.createReadStream(videoPath);
-      stream.pipe(res);
-      stream.on('error', (err) => {
-        console.error(`[VOD] Stream read error: ${err.message}`);
-        if (!res.headersSent) res.status(500).end();
-      });
-    }
-  } catch (err) {
-    console.error('[VOD] Stream error:', err.message);
-    if (!res.headersSent) res.status(500).json({ error: 'Error al reproducir video' });
+  const videoFilename = rows[0].video_filename;
+  const videoPath = path.join(VOD_DIR, videoFilename);
+  if (!fs.existsSync(videoPath)) {
+    console.warn(`[VOD] Archivo no existe en disco: ${videoPath}`);
+    return res.status(404).json({ error: 'Archivo no encontrado en disco' });
   }
+
+  const stat = fs.statSync(videoPath);
+  const fileSize = stat.size;
+  const range = req.headers.range;
+
+  const ext = path.extname(videoFilename).toLowerCase();
+  const mimeTypes = {
+    '.mp4': 'video/mp4', '.mkv': 'video/x-matroska', '.ts': 'video/mp2t',
+    '.webm': 'video/webm', '.avi': 'video/x-msvideo', '.mov': 'video/quicktime',
+    '.flv': 'video/x-flv', '.wmv': 'video/x-ms-wmv', '.m4v': 'video/mp4',
+  };
+  const contentType = mimeTypes[ext] || 'video/mp4';
+
+  console.log(`[VOD] ${req.method} ${videoFilename} (${(fileSize / 1024 / 1024).toFixed(1)}MB, ${contentType}) Range: ${range || 'none'} From: ${req.headers['user-agent']?.substring(0, 40) || 'unknown'}`);
+
+  // HEAD request — LibVLC/ExoPlayer envía HEAD primero para saber tamaño
+  if (req.method === 'HEAD') {
+    res.writeHead(200, {
+      'Content-Length': fileSize,
+      'Content-Type': contentType,
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    });
+    return res.end();
+  }
+
+  if (range) {
+    const parts = range.replace(/bytes=/, '').split('-');
+    const start = parseInt(parts[0], 10);
+    // Si el cliente no especifica end, enviar hasta el final del archivo (no limitar a chunks)
+    const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+    const chunkSize = (end - start) + 1;
+    const stream = fs.createReadStream(videoPath, { start, end });
+    res.writeHead(206, {
+      'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+      'Accept-Ranges': 'bytes',
+      'Content-Length': chunkSize,
+      'Content-Type': contentType,
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    });
+    stream.pipe(res);
+    stream.on('error', (err) => {
+      console.error(`[VOD] Stream read error: ${err.message}`);
+      if (!res.headersSent) res.status(500).end();
+    });
+  } else {
+    res.writeHead(200, {
+      'Content-Length': fileSize,
+      'Content-Type': contentType,
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    });
+    const stream = fs.createReadStream(videoPath);
+    stream.pipe(res);
+    stream.on('error', (err) => {
+      console.error(`[VOD] Stream read error: ${err.message}`);
+      if (!res.headersSent) res.status(500).end();
+    });
+  }
+};
+
+// Stream VOD video file (unificada admin + APK + panel web)
+// Soporta GET y HEAD (LibVLC envía HEAD primero)
+app.get('/api/vod/stream/:id', async (req, res) => {
+  if (!(await authVod(req))) return res.status(401).json({ error: 'Autenticación requerida' });
+  try { await streamVodFile(req, res, req.params.id); }
+  catch (err) { console.error('[VOD] Stream error:', err.message); if (!res.headersSent) res.status(500).json({ error: 'Error al reproducir video' }); }
+});
+app.head('/api/vod/stream/:id', async (req, res) => {
+  if (!(await authVod(req))) return res.status(401).json({ error: 'Autenticación requerida' });
+  try { await streamVodFile(req, res, req.params.id); }
+  catch (err) { console.error('[VOD] HEAD error:', err.message); if (!res.headersSent) res.status(500).end(); }
 });
 
 // Diagnóstico VOD: verifica que los archivos existen en disco
