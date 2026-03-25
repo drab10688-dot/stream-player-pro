@@ -1796,7 +1796,57 @@ scheduleCacheCleanup();
 // UNA conexión al origen, múltiples clientes del panel
 // El browser usa mpegts.js para decodificar
 // =============================================
-const activePipes = new Map(); // channelId -> { clients: Set<res>, sourceReq, keepAlive: bool }
+const activePipes = new Map(); // channelId -> { clients, sourceReq, keepAlive, bufferChunks, bufferBytes, lastDataAt }
+const PIPE_FAST_BUFFER_BYTES = 1024 * 1024; // 1MB para fast-start de clientes nuevos
+const PIPE_IDLE_CLOSE_DELAY_MS = 15000;
+
+function pushPipeChunk(pipe, chunk) {
+  if (!pipe || !chunk) return;
+  const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+  if (data.length === 0) return;
+
+  pipe.bufferChunks.push(data);
+  pipe.bufferBytes += data.length;
+
+  while (pipe.bufferBytes > PIPE_FAST_BUFFER_BYTES && pipe.bufferChunks.length > 0) {
+    const removed = pipe.bufferChunks.shift();
+    if (removed) pipe.bufferBytes -= removed.length;
+  }
+}
+
+function writeFastStartBuffer(pipe, res) {
+  if (!pipe || !pipe.bufferChunks?.length) return;
+  for (const chunk of pipe.bufferChunks) {
+    try { res.write(chunk); } catch { break; }
+  }
+}
+
+function schedulePipeClose(channelId, delayMs = PIPE_IDLE_CLOSE_DELAY_MS) {
+  setTimeout(() => {
+    const current = activePipes.get(channelId);
+    if (current && current.clients.size === 0 && !current.keepAlive) {
+      console.log(`🔴 [${channelId}] Pipe: sin clientes, cerrando conexión al origen`);
+      if (current.sourceReq) current.sourceReq.destroy();
+      activePipes.delete(channelId);
+    }
+  }, delayMs);
+}
+
+function attachPipeClient(channelId, pipe, req, res) {
+  pipe.clients.add(res);
+  writeFastStartBuffer(pipe, res);
+  console.log(`📡 [${channelId}] Pipe: +1 cliente (total: ${pipe.clients.size})`);
+
+  req.on('close', () => {
+    const current = activePipes.get(channelId);
+    if (!current) return;
+    current.clients.delete(res);
+    console.log(`📡 [${channelId}] Pipe: -1 cliente (total: ${current.clients.size})`);
+    if (current.clients.size === 0 && !current.keepAlive) {
+      schedulePipeClose(channelId);
+    }
+  });
+}
 
 // Keep-alive para TS: mantener conexión al origen sin FFmpeg
 // Descarta datos cuando no hay clientes, pero la conexión permanece abierta
@@ -1807,7 +1857,13 @@ function startPipeKeepAlive(channelId, sourceUrl) {
   const httpModule = parsed.protocol === 'https:' ? https : http;
 
   const connect = () => {
-    const sourceReq = httpModule.get(sourceUrl, { timeout: 15000 }, (sourceRes) => {
+    const sourceReq = httpModule.get(sourceUrl, {
+      timeout: 15000,
+      headers: {
+        'User-Agent': 'StreamBox-Pipe/1.0',
+        'Connection': 'keep-alive',
+      },
+    }, (sourceRes) => {
       if (sourceRes.statusCode !== 200) {
         console.error(`❌ [${channelId}] Pipe keep-alive: origen respondió ${sourceRes.statusCode}`);
         activePipes.delete(channelId);
@@ -1823,18 +1879,19 @@ function startPipeKeepAlive(channelId, sourceUrl) {
       sourceRes.on('data', (chunk) => {
         const pipe = activePipes.get(channelId);
         if (!pipe) return;
+        pipe.lastDataAt = Date.now();
+        pushPipeChunk(pipe, chunk);
         // Broadcast a clientes conectados
         for (const client of pipe.clients) {
           try { client.write(chunk); } catch { pipe.clients.delete(client); }
         }
-        // Si no hay clientes, simplemente descartamos los datos (keep-alive puro)
+        // Si no hay clientes, se mantienen bytes recientes para fast-start
       });
 
       sourceRes.on('end', () => {
         console.log(`⚠️ [${channelId}] Pipe keep-alive: origen cerró, reconectando en 3s...`);
         const pipe = activePipes.get(channelId);
         if (pipe && pipe.keepAlive) {
-          // Reconectar automáticamente
           setTimeout(() => {
             if (activePipes.has(channelId)) {
               activePipes.delete(channelId);
@@ -1865,7 +1922,14 @@ function startPipeKeepAlive(channelId, sourceUrl) {
       }, 10000);
     });
 
-    activePipes.set(channelId, { clients: new Set(), sourceReq, keepAlive: true });
+    activePipes.set(channelId, {
+      clients: new Set(),
+      sourceReq,
+      keepAlive: true,
+      bufferChunks: [],
+      bufferBytes: 0,
+      lastDataAt: Date.now(),
+    });
   };
 
   connect();
@@ -1882,45 +1946,50 @@ app.get('/api/stream-pipe/:channelId', async (req, res) => {
     const channelId = req.params.channelId;
     const targetUrl = channels[0].url;
 
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Content-Type', 'video/mp2t');
-    res.setHeader('Cache-Control', 'no-cache, no-store');
-    res.setHeader('Connection', 'keep-alive');
+    const setupClientHeaders = () => {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Content-Type', 'video/mp2t');
+      res.setHeader('Cache-Control', 'no-cache, no-store');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      req.socket?.setNoDelay?.(true);
+      res.socket?.setNoDelay?.(true);
+      if (typeof res.flushHeaders === 'function') res.flushHeaders();
+    };
 
     // Si ya hay un pipe activo para este canal, agregar este cliente
     if (activePipes.has(channelId)) {
       const pipe = activePipes.get(channelId);
-      pipe.clients.add(res);
-      console.log(`📡 [${channelId}] Pipe: +1 cliente (total: ${pipe.clients.size})`);
-      
-      req.on('close', () => {
-        pipe.clients.delete(res);
-        console.log(`📡 [${channelId}] Pipe: -1 cliente (total: ${pipe.clients.size})`);
-        if (pipe.clients.size === 0 && !pipe.keepAlive) {
-          // Sin keep-alive: esperar 15s antes de cerrar
-          setTimeout(() => {
-            const current = activePipes.get(channelId);
-            if (current && current.clients.size === 0 && !current.keepAlive) {
-              console.log(`🔴 [${channelId}] Pipe: sin clientes, cerrando conexión al origen`);
-              if (current.sourceReq) current.sourceReq.destroy();
-              activePipes.delete(channelId);
-            }
-          }, 15000);
-        }
-        // Con keep-alive: la conexión permanece abierta (descartando datos)
-      });
-      return; // Los datos llegarán via el broadcast del sourceReq
+      setupClientHeaders();
+      attachPipeClient(channelId, pipe, req, res);
+      return;
     }
 
     // Crear nueva conexión al origen
-    const clients = new Set([res]);
+    const clients = new Set();
     const parsed = new URL(targetUrl);
     const httpModule = parsed.protocol === 'https:' ? https : http;
-    
-    const sourceReq = httpModule.get(targetUrl, { timeout: 15000 }, (sourceRes) => {
+
+    const sourceReq = httpModule.get(targetUrl, {
+      timeout: 15000,
+      headers: {
+        'User-Agent': 'StreamBox-Pipe/1.0',
+        'Connection': 'keep-alive',
+      },
+    }, (sourceRes) => {
       if (sourceRes.statusCode !== 200) {
         console.error(`❌ [${channelId}] Pipe: origen respondió ${sourceRes.statusCode}`);
-        res.status(502).json({ error: `Origen respondió ${sourceRes.statusCode}` });
+        const pipe = activePipes.get(channelId);
+        const allClients = pipe ? Array.from(pipe.clients) : [res];
+        for (const client of allClients) {
+          try {
+            if (!client.headersSent) {
+              client.status(502).json({ error: `Origen respondió ${sourceRes.statusCode}` });
+            } else {
+              client.end();
+            }
+          } catch {}
+        }
         activePipes.delete(channelId);
         return;
       }
@@ -1930,6 +1999,8 @@ app.get('/api/stream-pipe/:channelId', async (req, res) => {
       sourceRes.on('data', (chunk) => {
         const pipe = activePipes.get(channelId);
         if (!pipe) return;
+        pipe.lastDataAt = Date.now();
+        pushPipeChunk(pipe, chunk);
         for (const client of pipe.clients) {
           try { client.write(chunk); } catch { pipe.clients.delete(client); }
         }
@@ -1954,29 +2025,32 @@ app.get('/api/stream-pipe/:channelId', async (req, res) => {
 
     sourceReq.on('error', (err) => {
       console.error(`❌ [${channelId}] Pipe: no se pudo conectar:`, err.message);
-      res.status(502).json({ error: `No se pudo conectar al origen: ${err.message}` });
+      const pipe = activePipes.get(channelId);
+      const allClients = pipe ? Array.from(pipe.clients) : [res];
+      for (const client of allClients) {
+        try {
+          if (!client.headersSent) {
+            client.status(502).json({ error: `No se pudo conectar al origen: ${err.message}` });
+          } else {
+            client.end();
+          }
+        } catch {}
+      }
       activePipes.delete(channelId);
     });
 
-    activePipes.set(channelId, { clients, sourceReq, keepAlive: false });
-
-    req.on('close', () => {
-      const pipe = activePipes.get(channelId);
-      if (pipe) {
-        pipe.clients.delete(res);
-        console.log(`📡 [${channelId}] Pipe: -1 cliente (total: ${pipe.clients.size})`);
-        if (pipe.clients.size === 0 && !pipe.keepAlive) {
-          setTimeout(() => {
-            const current = activePipes.get(channelId);
-            if (current && current.clients.size === 0 && !current.keepAlive) {
-              console.log(`🔴 [${channelId}] Pipe: sin clientes, cerrando`);
-              if (current.sourceReq) current.sourceReq.destroy();
-              activePipes.delete(channelId);
-            }
-          }, 15000);
-        }
-      }
+    activePipes.set(channelId, {
+      clients,
+      sourceReq,
+      keepAlive: false,
+      bufferChunks: [],
+      bufferBytes: 0,
+      lastDataAt: Date.now(),
     });
+
+    setupClientHeaders();
+    const pipe = activePipes.get(channelId);
+    attachPipeClient(channelId, pipe, req, res);
   } catch (err) {
     console.error('Stream pipe error:', err);
     res.status(500).json({ error: 'Error del servidor' });
