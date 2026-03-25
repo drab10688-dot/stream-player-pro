@@ -126,6 +126,53 @@ serve(async (req) => {
       });
     }
 
+    if (action === 'get_viewers') {
+      const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      const { data: connections, error: connError } = await supabase
+        .from('active_connections')
+        .select('id, device_id, ip_address, country, city, connected_at, last_heartbeat, client_id, watching_channel_id')
+        .gte('last_heartbeat', fiveMinAgo);
+
+      if (connError) {
+        return new Response(JSON.stringify({ error: connError.message }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Enrich with client and channel info
+      const clientIds = [...new Set((connections || []).map(c => c.client_id))];
+      const channelIds = [...new Set((connections || []).filter(c => c.watching_channel_id).map(c => c.watching_channel_id))];
+
+      const [clientsRes, channelsRes] = await Promise.all([
+        clientIds.length > 0 ? supabase.from('clients').select('id, username').in('id', clientIds) : { data: [] },
+        channelIds.length > 0 ? supabase.from('channels').select('id, name, category, logo_url').in('id', channelIds) : { data: [] },
+      ]);
+
+      const clientsMap: Record<string, string> = {};
+      (clientsRes.data || []).forEach((c: any) => { clientsMap[c.id] = c.username; });
+      const channelsMap: Record<string, any> = {};
+      (channelsRes.data || []).forEach((ch: any) => { channelsMap[ch.id] = ch; });
+
+      const viewers = (connections || []).map(c => ({
+        id: c.id,
+        device_id: c.device_id,
+        ip_address: c.ip_address,
+        country: c.country,
+        city: c.city,
+        connected_at: c.connected_at,
+        last_heartbeat: c.last_heartbeat,
+        client_username: clientsMap[c.client_id] || 'Desconocido',
+        client_id: c.client_id,
+        channel_name: c.watching_channel_id ? channelsMap[c.watching_channel_id]?.name || null : null,
+        channel_category: c.watching_channel_id ? channelsMap[c.watching_channel_id]?.category || null : null,
+        channel_logo: c.watching_channel_id ? channelsMap[c.watching_channel_id]?.logo_url || null : null,
+      }));
+
+      return new Response(JSON.stringify({ total_viewers: viewers.length, viewers }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+
     if (action === 'make_first_admin') {
       const { data: existingAdmins } = await supabase.from('user_roles').select('id').limit(1);
       if (existingAdmins && existingAdmins.length > 0) {
