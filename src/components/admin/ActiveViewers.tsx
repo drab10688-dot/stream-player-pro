@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { apiGet, apiPost } from '@/lib/api';
+import { isLovablePreview } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { Users, MapPin, Tv, RefreshCw, Activity, Globe, Monitor, Smartphone, XCircle } from 'lucide-react';
