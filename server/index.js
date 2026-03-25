@@ -1584,10 +1584,28 @@ function startHLSProxy(channelId, sourceUrl) {
     type: 'hls-proxy',
     sourceUrl,
     ready: true,
-    keepAlivePoller: null, // interval for active keep-alive polling
+    keepAlivePoller: null,
   };
   activeTranscoders.set(channelId, entry);
   console.log(`📡 [${channelId}] Proxy HLS iniciado: ${sourceUrl}`);
+
+  // Warm-start: pre-fetch manifest + primeros segmentos al primer cliente
+  (async () => {
+    try {
+      const manifest = await getCachedM3U8(channelId, sourceUrl);
+      // Extraer y pre-cachear los últimos 3 segmentos del manifiesto
+      const segmentMatches = manifest.match(/url=([^"&\s]+)/g) || [];
+      const lastSegs = segmentMatches.slice(-3);
+      await Promise.allSettled(lastSegs.map(match => {
+        const url = decodeURIComponent(match.replace('url=', ''));
+        return fetchSegment(url);
+      }));
+      console.log(`🔥 [${channelId}] Warm-start: ${lastSegs.length} segmentos pre-cacheados`);
+    } catch (e) {
+      // No es crítico si falla el warm-start
+    }
+  })();
+
   return entry;
 }
 
