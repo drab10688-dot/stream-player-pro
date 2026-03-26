@@ -87,8 +87,15 @@ const getDeviceId = () => {
 
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [client, setClient] = useState<ClientInfo | null>(null);
+  const [isLoggedIn, setIsLoggedIn] = useState(() => {
+    return !!localStorage.getItem('client_session');
+  });
+  const [client, setClient] = useState<ClientInfo | null>(() => {
+    try {
+      const saved = localStorage.getItem('client_session');
+      return saved ? JSON.parse(saved) : null;
+    } catch { return null; }
+  });
   const [channels, setChannels] = useState<ChannelInfo[]>([]);
   const [ads, setAds] = useState<AdInfo[]>([]);
   const [vodItems, setVodItems] = useState<VodItem[]>([]);
@@ -96,6 +103,22 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const heartbeatRef = useRef<ReturnType<typeof setInterval>>();
   const currentChannelIdRef = useRef<string | null>(null);
 
+  // Restore full data on mount if session exists
+  useEffect(() => {
+    if (isLoggedIn && client && channels.length === 0) {
+      refreshChannels();
+      refreshAds();
+      if (client.vod_enabled) {
+        if (isLovablePreview()) {
+          supabase.from('vod_items' as any).select('id, title, description, category, poster_url, duration_minutes').eq('is_active', true).order('sort_order', { ascending: true }).then(({ data }) => setVodItems((data as any[]) || []));
+          supabase.from('vod_series' as any).select('id, title, description, category, poster_url').eq('is_active', true).order('sort_order', { ascending: true }).then(({ data }) => setSeriesItems((data as any[]) || []));
+        } else {
+          fetch('/api/vod/public').then(r => r.ok ? r.json() : []).then(setVodItems).catch(() => {});
+          fetch('/api/vod/series/public').then(r => r.ok ? r.json() : []).then(setSeriesItems).catch(() => {});
+        }
+      }
+    }
+  }, []);
   const setCurrentChannelId = useCallback((channelId: string | null) => {
     currentChannelIdRef.current = channelId;
   }, []);
