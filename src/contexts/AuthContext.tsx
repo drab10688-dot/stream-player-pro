@@ -337,6 +337,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const logout = () => {
     if (heartbeatRef.current) clearInterval(heartbeatRef.current);
+    localStorage.removeItem('client_session');
     setIsLoggedIn(false);
     setClient(null);
     setChannels([]);
