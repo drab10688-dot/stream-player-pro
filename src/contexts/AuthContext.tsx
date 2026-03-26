@@ -304,6 +304,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       streamBaseUrl = data.stream_base_url || null;
 
       setClient(data.client);
+      localStorage.setItem('client_session', JSON.stringify(data.client));
       setChannels(processedChannels);
       setAds(data.ads || []);
       
