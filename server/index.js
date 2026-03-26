@@ -197,6 +197,8 @@ app.get('/api/channels', async (req, res) => {
 
     // Si el token tiene xtreamUser → es APK, obtener canales de Xtream + locales
     if (decoded.xtreamUser) {
+      await touchApkPresence(req, decoded);
+
       // Canales Xtream
       let xtreamChannels = [];
       try {
@@ -685,6 +687,8 @@ app.get('/api/ads', async (req, res) => {
 
     // APK user → solo activos
     if (decoded.xtreamUser) {
+      await touchApkPresence(req, decoded);
+
       const { rows } = await pool.query(
         'SELECT id, title, message, image_url FROM ads WHERE is_active = true ORDER BY created_at DESC'
       );
@@ -888,15 +892,24 @@ const activeActivityLogs = new Map();
 app.post('/api/client/heartbeat', async (req, res) => {
   const { client_id, device_id, channel_id } = req.body;
   if (client_id && device_id) {
-    const updates = ['last_heartbeat = now()'];
-    const vals = [client_id, device_id];
+    const params = [client_id, device_id];
+    let insertWatchingChannel = '';
+    let insertWatchingChannelValue = '';
+    let updateWatchingChannel = '';
+
     if (channel_id) {
-      updates.push(`watching_channel_id = $3`);
-      vals.push(channel_id);
+      params.push(channel_id);
+      insertWatchingChannel = ', watching_channel_id';
+      insertWatchingChannelValue = ', $3';
+      updateWatchingChannel = ', watching_channel_id = EXCLUDED.watching_channel_id';
     }
+
     await pool.query(
-      `UPDATE active_connections SET ${updates.join(', ')} WHERE client_id = $1 AND device_id = $2`,
-      vals
+      `INSERT INTO active_connections (client_id, device_id, last_heartbeat${insertWatchingChannel})
+       VALUES ($1, $2, now()${insertWatchingChannelValue})
+       ON CONFLICT (client_id, device_id)
+       DO UPDATE SET last_heartbeat = now()${updateWatchingChannel}`,
+      params
     );
 
     // Activity logging: track channel changes
@@ -4165,6 +4178,90 @@ const XTREAM_BASE_URL = process.env.XTREAM_BASE_URL || `http://${require('os').h
 const apkSessions = new Map();
 // Info de conexión APK para monitoreo: Map<`userId:device_id`, {username, device_id, ip, country, city, connectedAt, lastHeartbeat, channelId}>
 const apkConnectionInfo = new Map();
+const APK_CONNECTION_TTL_MS = 5 * 60 * 1000;
+
+const getApkDeviceId = (apkUser, fallbackUserId) => apkUser?.device_id || `apk-${fallbackUserId || apkUser?.id}`;
+
+const cleanupStaleApkPresence = () => {
+  const threshold = Date.now() - APK_CONNECTION_TTL_MS;
+
+  for (const [key, info] of apkConnectionInfo.entries()) {
+    const lastSeen = new Date(info.lastHeartbeat || info.connectedAt || 0).getTime();
+    if (!lastSeen || lastSeen < threshold) {
+      apkConnectionInfo.delete(key);
+      apkSessions.delete(key);
+
+      const logKey = `apk:${key}`;
+      const currentLog = activeActivityLogs.get(logKey);
+      if (currentLog?.logId) {
+        pool.query(
+          `UPDATE activity_logs SET ended_at = now(), duration_seconds = EXTRACT(EPOCH FROM (now() - started_at))::int WHERE id = $1`,
+          [currentLog.logId]
+        ).catch(() => {});
+      }
+      activeActivityLogs.delete(logKey);
+    }
+  }
+
+  for (const [key, session] of apkSessions.entries()) {
+    const lastSeen = new Date(session.lastHeartbeat || session.connectedAt || 0).getTime();
+    if (!apkConnectionInfo.has(key) || !lastSeen || lastSeen < threshold) {
+      apkSessions.delete(key);
+    }
+  }
+};
+
+const countUserActiveApkSessions = (userId) => {
+  cleanupStaleApkPresence();
+  let count = 0;
+  for (const [key] of apkSessions.entries()) {
+    if (key.startsWith(`${userId}:`)) count++;
+  }
+  return count;
+};
+
+const touchApkPresence = async (req, apkUser, { device_id, channelId } = {}) => {
+  if (!apkUser?.id) return null;
+
+  cleanupStaleApkPresence();
+
+  const userId = apkUser.id;
+  const username = apkUser.username || userId;
+  const resolvedDeviceId = device_id || getApkDeviceId(apkUser, userId);
+  const connKey = `${userId}:${resolvedDeviceId}`;
+  const nowIso = new Date().toISOString();
+
+  let connInfo = apkConnectionInfo.get(connKey);
+  if (!connInfo) {
+    const clientIP = getClientIP(req);
+    const geo = await geoLookup(clientIP);
+    connInfo = {
+      username,
+      device_id: resolvedDeviceId,
+      ip: clientIP,
+      country: geo.country,
+      city: geo.city,
+      connectedAt: nowIso,
+      lastHeartbeat: nowIso,
+      channelId: channelId || null,
+      source: 'apk',
+    };
+  } else {
+    connInfo.lastHeartbeat = nowIso;
+    if (channelId !== undefined) connInfo.channelId = channelId || null;
+  }
+
+  apkConnectionInfo.set(connKey, connInfo);
+
+  const existingSession = apkSessions.get(connKey);
+  apkSessions.set(connKey, {
+    channelId: channelId !== undefined ? (channelId || null) : (existingSession?.channelId ?? connInfo.channelId ?? null),
+    connectedAt: existingSession?.connectedAt || connInfo.connectedAt || nowIso,
+    lastHeartbeat: nowIso,
+  });
+
+  return { connKey, connInfo, device_id: resolvedDeviceId };
+};
 
 // Helper: fetch JSON desde Xtream
 const fetchXtream = (urlPath) => {
@@ -4242,19 +4339,10 @@ app.post('/api/auth/login', async (req, res) => {
     );
 
     // Registrar conexión APK en memoria para monitoreo del panel admin
-    const clientIP = getClientIP(req);
-    const geo = await geoLookup(clientIP);
-    const connKey = `${userInfo.username}:${device_id}`;
-    apkConnectionInfo.set(connKey, {
+    await touchApkPresence(req, {
+      id: userInfo.username,
       username: userInfo.username,
       device_id,
-      ip: clientIP,
-      country: geo.country,
-      city: geo.city,
-      connectedAt: new Date().toISOString(),
-      lastHeartbeat: new Date().toISOString(),
-      channelId: null,
-      source: 'apk',
     });
 
     // Obtener ads, VOD y series de la base de datos local
@@ -4313,14 +4401,12 @@ app.get('/api/channels/:id/stream', authApk, async (req, res) => {
     const channelId = req.params.id;
 
     // Sesión por dispositivo: clave = userId:device_id
-    const device_id = req.apkUser.device_id || `apk-${userId}`;
+    const device_id = getApkDeviceId(req.apkUser, userId);
     const sessionKey = `${userId}:${device_id}`;
+    cleanupStaleApkPresence();
 
     // Contar sesiones activas de este usuario (cada device_id es una sesión)
-    let userSessionCount = 0;
-    for (const [key] of apkSessions) {
-      if (key.startsWith(`${userId}:`)) userSessionCount++;
-    }
+    const userSessionCount = countUserActiveApkSessions(userId);
 
     // Si este dispositivo ya tiene sesión, no cuenta como nueva
     const existingSession = apkSessions.get(sessionKey);
@@ -4333,7 +4419,7 @@ app.get('/api/channels/:id/stream', authApk, async (req, res) => {
     }
 
     // Registrar/reemplazar sesión de este dispositivo (un canal por dispositivo)
-    apkSessions.set(sessionKey, { channelId, connectedAt: new Date().toISOString() });
+    await touchApkPresence(req, req.apkUser, { device_id, channelId });
 
     // Actualizar monitoreo APK con el canal que está viendo
     const connKey = sessionKey;
@@ -4400,6 +4486,14 @@ app.get('/api/channels/:id/stream', authApk, async (req, res) => {
         connInfo.channelCategory = channelCategory;
         connInfo.channelLogo = channelLogo;
       }
+      apkConnectionInfo.set(connKey, connInfo);
+    }
+
+    const session = apkSessions.get(sessionKey);
+    if (session) {
+      session.channelId = channelId;
+      session.lastHeartbeat = new Date().toISOString();
+      apkSessions.set(sessionKey, session);
     }
 
     // Obtener anuncios activos
@@ -4528,6 +4622,7 @@ app.get('/api/seasons/:id/episodes', authApk, async (req, res) => {
 
 // GET /api/sessions/active (admin/debug)
 app.get('/api/sessions/active-apk', authApk, (req, res) => {
+  cleanupStaleApkPresence();
   const { id: userId } = req.apkUser;
   const sessions = [];
   for (const [key, session] of apkSessions) {
@@ -4546,33 +4641,35 @@ app.get('/api/sessions/active-apk', authApk, (req, res) => {
 // APK: Heartbeat (mantener sesión activa)
 // =============================================
 app.post('/api/heartbeat', authApk, async (req, res) => {
-  const { id: userId, device_id } = req.apkUser;
+  const { id: userId } = req.apkUser;
   const { channelId } = req.body || {};
-  const connKey = `${userId}:${device_id || `apk-${userId}`}`;
-  const connInfo = apkConnectionInfo.get(connKey);
-  if (connInfo) {
-    connInfo.lastHeartbeat = new Date().toISOString();
-    if (channelId) {
-      connInfo.channelId = channelId;
-      // Si la APK envía channelName en el heartbeat, usarlo
-      if (req.body.channelName) {
-        connInfo.channelName = req.body.channelName;
-        connInfo.channelCategory = req.body.channelCategory || connInfo.channelCategory || null;
-        connInfo.channelLogo = req.body.channelLogo || connInfo.channelLogo || null;
-      } else if (!connInfo.channelName || connInfo.channelId !== channelId) {
-        // Resolver nombre del canal desde la BD
-        try {
-          const { rows: chRows } = await pool.query('SELECT name, category, logo_url FROM channels WHERE id = $1', [channelId]);
-          if (chRows.length > 0) {
-            connInfo.channelName = chRows[0].name;
-            connInfo.channelCategory = chRows[0].category;
-            connInfo.channelLogo = chRows[0].logo_url;
-          } else {
-            connInfo.channelName = `Canal ${channelId}`;
-          }
-        } catch { connInfo.channelName = `Canal ${channelId}`; }
+  const touched = await touchApkPresence(req, req.apkUser, { channelId });
+  if (!touched) return res.status(401).json({ error: 'Sesión APK inválida' });
+
+  const { connKey, connInfo, device_id } = touched;
+  if (channelId && connInfo) {
+    // Si la APK envía channelName en el heartbeat, usarlo
+    if (req.body.channelName) {
+      connInfo.channelName = req.body.channelName;
+      connInfo.channelCategory = req.body.channelCategory || connInfo.channelCategory || null;
+      connInfo.channelLogo = req.body.channelLogo || connInfo.channelLogo || null;
+    } else if (!connInfo.channelName || connInfo.channelId !== channelId) {
+      // Resolver nombre del canal desde la BD
+      try {
+        const { rows: chRows } = await pool.query('SELECT name, category, logo_url FROM channels WHERE id = $1', [channelId]);
+        if (chRows.length > 0) {
+          connInfo.channelName = chRows[0].name;
+          connInfo.channelCategory = chRows[0].category;
+          connInfo.channelLogo = chRows[0].logo_url;
+        } else {
+          connInfo.channelName = `Canal ${channelId}`;
+        }
+      } catch {
+        connInfo.channelName = `Canal ${channelId}`;
       }
     }
+
+    apkConnectionInfo.set(connKey, connInfo);
   }
 
   // APK Activity logging
@@ -4610,13 +4707,9 @@ app.post('/api/heartbeat', authApk, async (req, res) => {
 // Limpia conexiones sin heartbeat > 5 min
 // =============================================
 app.get('/api/admin/apk-connections', authAdmin, (req, res) => {
-  const fiveMinAgo = Date.now() - 5 * 60 * 1000;
+  cleanupStaleApkPresence();
   const connections = [];
-  for (const [key, info] of apkConnectionInfo.entries()) {
-    if (new Date(info.lastHeartbeat).getTime() < fiveMinAgo) {
-      apkConnectionInfo.delete(key);
-      continue;
-    }
+  for (const [, info] of apkConnectionInfo.entries()) {
     connections.push(info);
   }
   res.json(connections);
@@ -4626,17 +4719,33 @@ app.get('/api/admin/apk-connections', authAdmin, (req, res) => {
 app.post('/api/admin/apk-connections/kick', authAdmin, (req, res) => {
   const { username, device_id } = req.body;
   if (!username) return res.status(400).json({ error: 'username requerido' });
+
+  const closeActivityLog = (connKey) => {
+    const logKey = `apk:${connKey}`;
+    const currentLog = activeActivityLogs.get(logKey);
+    if (currentLog?.logId) {
+      pool.query(
+        `UPDATE activity_logs SET ended_at = now(), duration_seconds = EXTRACT(EPOCH FROM (now() - started_at))::int WHERE id = $1`,
+        [currentLog.logId]
+      ).catch(() => {});
+    }
+    activeActivityLogs.delete(logKey);
+  };
+
   if (device_id) {
-    apkConnectionInfo.delete(`${username}:${device_id}`);
-    // También limpiar sesiones
-    const userSessions = apkSessions.get(username);
-    if (userSessions) apkSessions.delete(username);
+    const connKey = `${username}:${device_id}`;
+    apkConnectionInfo.delete(connKey);
+    apkSessions.delete(connKey);
+    closeActivityLog(connKey);
   } else {
     // Kick todas las conexiones del usuario
-    for (const key of apkConnectionInfo.keys()) {
-      if (key.startsWith(`${username}:`)) apkConnectionInfo.delete(key);
+    for (const key of Array.from(apkConnectionInfo.keys())) {
+      if (key.startsWith(`${username}:`)) {
+        apkConnectionInfo.delete(key);
+        apkSessions.delete(key);
+        closeActivityLog(key);
+      }
     }
-    apkSessions.delete(username);
   }
   res.json({ ok: true, message: `Conexión APK de ${username} cerrada` });
 });
