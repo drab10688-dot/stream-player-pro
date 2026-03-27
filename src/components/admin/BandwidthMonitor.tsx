@@ -37,14 +37,22 @@ const BandwidthMonitor = () => {
 
   const fetchBandwidth = async () => {
     try {
-      const result = await apiGet('/api/admin/bandwidth');
-      setData(result);
-      setHistory(prev => {
-        const next = [...prev, { time: Date.now(), rx: result.rx_mbps, tx: result.tx_mbps }];
-        return next.slice(-MAX_HISTORY);
-      });
+      const [result, chBw] = await Promise.allSettled([
+        apiGet('/api/admin/bandwidth'),
+        apiGet('/api/admin/channel-bandwidth'),
+      ]);
+      if (result.status === 'fulfilled') {
+        setData(result.value);
+        setHistory(prev => {
+          const next = [...prev, { time: Date.now(), rx: result.value.rx_mbps, tx: result.value.tx_mbps }];
+          return next.slice(-MAX_HISTORY);
+        });
+      }
+      if (chBw.status === 'fulfilled' && Array.isArray(chBw.value)) {
+        setChannelBw(chBw.value);
+      }
     } catch {
-      // Silently fail - server might not support this yet
+      // Silently fail
     }
   };
 
