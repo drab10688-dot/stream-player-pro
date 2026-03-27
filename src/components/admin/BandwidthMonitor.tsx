@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { apiGet } from '@/lib/api';
-import { ArrowDownToLine, ArrowUpFromLine, Activity, Wifi } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpFromLine, Activity, Wifi, Radio, Server } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 interface BandwidthData {
