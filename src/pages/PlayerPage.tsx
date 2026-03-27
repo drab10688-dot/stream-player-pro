@@ -442,7 +442,11 @@ const PlayerPage = () => {
             {/* Ad Banner */}
             {currentAd && (
               <div className="bg-gradient-to-r from-black/90 via-black/80 to-black/90 backdrop-blur-sm border-t border-primary/20 px-4 sm:px-6 py-2.5 sm:py-3 flex items-center gap-3">
-                <Bell className="w-4 h-4 sm:w-5 sm:h-5 text-primary shrink-0 animate-pulse" />
+                {currentAd.image_url ? (
+                  <img src={currentAd.image_url} alt="" className="w-8 h-8 sm:w-10 sm:h-10 rounded-md object-cover shrink-0" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                ) : (
+                  <Bell className="w-4 h-4 sm:w-5 sm:h-5 text-primary shrink-0 animate-pulse" />
+                )}
                 <div className="flex items-center gap-2 overflow-hidden flex-1">
                   <span className="font-semibold text-primary text-sm sm:text-base shrink-0">{currentAd.title}</span>
                   <span className="text-white/70 text-sm sm:text-base truncate">{currentAd.message}</span>

@@ -57,7 +57,11 @@ const Dashboard = () => {
           >
             <div className="container px-4 py-2.5 flex items-center justify-between">
               <div className="flex items-center gap-2 flex-1">
-                <Bell className="w-4 h-4 text-accent-foreground shrink-0" />
+                {activeAd.image_url ? (
+                  <img src={activeAd.image_url} alt="" className="w-8 h-8 rounded-md object-cover shrink-0" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                ) : (
+                  <Bell className="w-4 h-4 text-accent-foreground shrink-0" />
+                )}
                 <span className="font-semibold text-accent-foreground text-sm">{activeAd.title}</span>
                 <span className="text-accent-foreground/80 text-sm ml-1 hidden sm:inline">{activeAd.message}</span>
               </div>
@@ -259,10 +263,19 @@ const Dashboard = () => {
                       >
                         <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 bg-gradient-to-br from-primary/5 to-transparent" />
                         <div className="relative">
-                          <div className="w-full aspect-[2/3] bg-secondary/60 flex items-center justify-center overflow-hidden">
+                          <div className="w-full aspect-[2/3] bg-secondary/60 flex items-center justify-center overflow-hidden relative">
                             {vod.poster_url ? (
-                              <img src={vod.poster_url} alt={vod.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
-                            ) : (
+                              <img
+                                src={vod.poster_url}
+                                alt={vod.title}
+                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                                onError={(e) => {
+                                  const img = e.target as HTMLImageElement;
+                                  img.style.display = 'none';
+                                }}
+                              />
+                            ) : null}
+                            {!vod.poster_url && (
                               <Film className="w-10 h-10 text-muted-foreground" />
                             )}
                           </div>
