@@ -11,6 +11,15 @@ interface BandwidthData {
   interface: string;
 }
 
+interface ChannelBandwidth {
+  channel_id: string;
+  channel_name: string;
+  keep_alive: boolean;
+  clients: number;
+  rx_mbps: number;
+  tx_mbps: number;
+}
+
 interface HistoryPoint {
   time: number;
   rx: number;
@@ -22,6 +31,7 @@ const MAX_HISTORY = 60; // 60 data points = 2 minutes at 2s interval
 const BandwidthMonitor = () => {
   const [data, setData] = useState<BandwidthData | null>(null);
   const [history, setHistory] = useState<HistoryPoint[]>([]);
+  const [channelBw, setChannelBw] = useState<ChannelBandwidth[]>([]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval>>();
 
@@ -178,6 +188,53 @@ const BandwidthMonitor = () => {
                 <Activity className="w-3 h-3 animate-pulse text-primary" /> Tiempo real (2s)
               </span>
             </div>
+          </div>
+          {/* Per-channel bandwidth */}
+          <div className="glass rounded-xl p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Radio className="w-4 h-4 text-primary" />
+              <span className="text-sm font-semibold text-foreground">Consumo por Canal</span>
+            </div>
+            {channelBw.length === 0 ? (
+              <p className="text-xs text-muted-foreground text-center py-4">
+                No hay canales activos. El endpoint <code className="bg-muted px-1.5 rounded text-primary">/api/admin/channel-bandwidth</code> mostrará el consumo por canal.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {channelBw
+                  .sort((a, b) => (b.rx_mbps + b.tx_mbps) - (a.rx_mbps + a.tx_mbps))
+                  .map((ch) => (
+                  <div key={ch.channel_id} className="flex items-center justify-between gap-2 p-2.5 rounded-lg bg-muted/30">
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${ch.keep_alive ? 'bg-emerald-400' : 'bg-yellow-400'}`} />
+                      <p className="text-sm text-foreground truncate">{ch.channel_name}</p>
+                      {ch.keep_alive && (
+                        <span className="text-[9px] bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded shrink-0">KA</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0 text-xs">
+                      <div className="flex items-center gap-1">
+                        <Server className="w-3 h-3 text-muted-foreground" />
+                        <span className="text-muted-foreground">{ch.clients}</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <ArrowDownToLine className="w-3 h-3 text-emerald-400" />
+                        <span className="text-foreground font-mono">{formatMbps(ch.rx_mbps)}</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <ArrowUpFromLine className="w-3 h-3 text-blue-400" />
+                        <span className="text-foreground font-mono">{formatMbps(ch.tx_mbps)}</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                <div className="flex items-center gap-3 mt-2 text-[10px] text-muted-foreground pt-2 border-t border-border/30">
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-400" /> Keep Alive</span>
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-400" /> Sin Keep Alive</span>
+                  <span className="ml-auto">RX = Origen → VPS | TX = VPS → Clientes</span>
+                </div>
+              </div>
+            )}
           </div>
         </>
       )}
