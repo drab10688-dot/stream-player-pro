@@ -27,6 +27,7 @@ import ActivityLogs from '@/components/admin/ActivityLogs';
 import omnisyncLogo from '@/assets/omnisync-logo.png';
 import ChangePasswordDialog from '@/components/admin/ChangePasswordDialog';
 import ConnectionsOverview from '@/components/admin/ConnectionsOverview';
+import ChannelSync from '@/components/admin/ChannelSync';
 
 const AdminDashboard = () => {
   const navigate = useNavigate();
