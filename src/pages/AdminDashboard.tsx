@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAdminAuth } from '@/contexts/AdminAuthContext';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Tv, Users, Megaphone, Store, LogOut, LayoutDashboard, Bell, Activity, Globe, Radio, Bug, Package, HardDrive, Film, Tv2, Eye, Shield, Wifi, Cpu, Smartphone, ScrollText, Server } from 'lucide-react';
+import { Tv, Users, Megaphone, Store, LogOut, LayoutDashboard, Bell, Activity, Globe, Radio, Bug, Package, HardDrive, Film, Tv2, Eye, Shield, Wifi, Cpu, Smartphone, ScrollText, Server, ArrowRightLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import AdminStats from '@/components/admin/AdminStats';
 import ChannelsManager from '@/components/admin/ChannelsManager';
@@ -27,6 +27,7 @@ import ActivityLogs from '@/components/admin/ActivityLogs';
 import omnisyncLogo from '@/assets/omnisync-logo.png';
 import ChangePasswordDialog from '@/components/admin/ChangePasswordDialog';
 import ConnectionsOverview from '@/components/admin/ConnectionsOverview';
+import ChannelSync from '@/components/admin/ChannelSync';
 
 const AdminDashboard = () => {
   const navigate = useNavigate();
@@ -141,6 +142,9 @@ const AdminDashboard = () => {
             <TabsTrigger value="connections" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
               <Server className="w-4 h-4" /> Conexiones
             </TabsTrigger>
+            <TabsTrigger value="sync" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
+              <ArrowRightLeft className="w-4 h-4" /> Sincronizar
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="dashboard" forceMount className="data-[state=inactive]:hidden"><AdminStats /></TabsContent>
@@ -164,6 +168,7 @@ const AdminDashboard = () => {
           <TabsContent value="apk" forceMount className="data-[state=inactive]:hidden"><ApkManager /></TabsContent>
           <TabsContent value="activity" forceMount className="data-[state=inactive]:hidden"><ActivityLogs /></TabsContent>
           <TabsContent value="connections" forceMount className="data-[state=inactive]:hidden"><ConnectionsOverview /></TabsContent>
+          <TabsContent value="sync" forceMount className="data-[state=inactive]:hidden"><ChannelSync /></TabsContent>
         </Tabs>
       </main>
     </div>
