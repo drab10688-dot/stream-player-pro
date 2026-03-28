@@ -142,6 +142,9 @@ const AdminDashboard = () => {
             <TabsTrigger value="connections" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
               <Server className="w-4 h-4" /> Conexiones
             </TabsTrigger>
+            <TabsTrigger value="sync" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
+              <ArrowRightLeft className="w-4 h-4" /> Sincronizar
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="dashboard" forceMount className="data-[state=inactive]:hidden"><AdminStats /></TabsContent>
