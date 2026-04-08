@@ -2861,36 +2861,28 @@ app.get('/api/playlist/:token', async (req, res) => {
     // Determinar base URL para los streams
     const baseUrl = getRequestBaseUrl(req);
     
-    // Generar M3U
+    // Generar M3U compatible con OTT Player, VLC, TiviMate, IPTV Smarters, Smart IPTV
     let m3u = '#EXTM3U\n';
-    m3u += `#PLAYLIST:${client.username}\n`;
-    m3u += `# StreamBox - Generado para ${client.username}\n`;
-    m3u += `# Canales: ${filteredChannels.length}\n\n`;
     
     for (const ch of filteredChannels) {
-      const isYouTube = /youtube\.com|youtu\.be/.test(ch.url);
+      // Logo URL completa
+      const logoUrl = ch.logo_url 
+        ? (ch.logo_url.startsWith('http') ? ch.logo_url : baseUrl + ch.logo_url) 
+        : '';
       
-      // Logo attribute
-      const logoAttr = ch.logo_url ? ` tvg-logo="${ch.logo_url.startsWith('http') ? ch.logo_url : baseUrl + ch.logo_url}"` : '';
+      // Formato estricto Xtream compatible con tvg-id, tvg-name, tvg-logo, group-title
+      m3u += `#EXTINF:-1 tvg-id="${ch.id}" tvg-name="${ch.name}" tvg-logo="${logoUrl}" group-title="${ch.category}",${ch.name}\n`;
       
-      m3u += `#EXTINF:-1 group-title="${ch.category}"${logoAttr},${ch.name}\n`;
-      
-      const isTsStream = /\.ts(\?|$)/i.test(ch.url) || /\/\d+\.ts(\?|$)/i.test(ch.url);
-      const isDirectMode = ch.stream_mode === 'direct';
-
-      if (isYouTube || isTsStream || isDirectMode) {
-        // YouTube/TS/direct: URL directa (más compatible con VLC/IPTV apps)
-        m3u += `${ch.url}\n`;
-      } else {
-        // Todo lo demás: via restream para ocultar origen
-        m3u += `${baseUrl}/api/restream/${ch.id}\n`;
-      }
+      // URL formato Xtream: /live/username/password/channelId.ts
+      // Compatible con OTT Player, VLC, TiviMate, XCIPTV, Smarters
+      m3u += `${baseUrl}/live/${encodeURIComponent(client.username)}/${encodeURIComponent(client.password)}/${ch.id}.ts\n`;
     }
     
     res.set({
-      'Content-Type': 'audio/mpegurl',
+      'Content-Type': 'application/x-mpegurl',
       'Content-Disposition': `inline; filename="${client.username}.m3u"`,
       'Cache-Control': 'no-cache',
+      'Access-Control-Allow-Origin': '*',
     });
     res.send(m3u);
     
