@@ -271,15 +271,18 @@ const Dashboard = () => {
                                 src={vod.poster_url}
                                 alt={vod.title}
                                 className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                                loading="lazy"
                                 onError={(e) => {
                                   const img = e.target as HTMLImageElement;
                                   img.style.display = 'none';
+                                  const fallback = img.parentElement?.querySelector('.poster-fallback') as HTMLElement;
+                                  if (fallback) fallback.style.display = 'flex';
                                 }}
                               />
                             ) : null}
-                            {!vod.poster_url && (
+                            <div className={`poster-fallback absolute inset-0 items-center justify-center bg-secondary/60 ${vod.poster_url ? 'hidden' : 'flex'}`} style={vod.poster_url ? { display: 'none' } : {}}>
                               <Film className="w-10 h-10 text-muted-foreground" />
-                            )}
+                            </div>
                           </div>
                           <div className="p-3">
                             <p className="font-medium text-foreground text-sm truncate">{vod.title}</p>
