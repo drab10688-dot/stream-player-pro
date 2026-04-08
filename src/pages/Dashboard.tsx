@@ -58,7 +58,9 @@ const Dashboard = () => {
             <div className="container px-4 py-2.5 flex items-center justify-between">
               <div className="flex items-center gap-2 flex-1">
                 {activeAd.image_url ? (
-                  <img src={activeAd.image_url} alt="" className="w-8 h-8 rounded-md object-cover shrink-0" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                  <div className="w-7 h-7 min-w-[1.75rem] min-h-[1.75rem] max-w-[1.75rem] max-h-[1.75rem] rounded-md overflow-hidden shrink-0">
+                    <img src={activeAd.image_url} alt="" className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).parentElement!.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-accent-foreground"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>'; }} />
+                  </div>
                 ) : (
                   <Bell className="w-4 h-4 text-accent-foreground shrink-0" />
                 )}

@@ -443,7 +443,9 @@ const PlayerPage = () => {
             {currentAd && (
               <div className="bg-gradient-to-r from-black/90 via-black/80 to-black/90 backdrop-blur-sm border-t border-primary/20 px-4 sm:px-6 py-2.5 sm:py-3 flex items-center gap-3">
                 {currentAd.image_url ? (
-                  <img src={currentAd.image_url} alt="" className="w-8 h-8 sm:w-10 sm:h-10 rounded-md object-cover shrink-0" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                  <div className="w-7 h-7 sm:w-8 sm:h-8 min-w-[1.75rem] min-h-[1.75rem] max-w-[2rem] max-h-[2rem] rounded-md overflow-hidden shrink-0">
+                    <img src={currentAd.image_url} alt="" className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                  </div>
                 ) : (
                   <Bell className="w-4 h-4 sm:w-5 sm:h-5 text-primary shrink-0 animate-pulse" />
                 )}
