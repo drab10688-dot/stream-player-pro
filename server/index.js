@@ -3340,28 +3340,98 @@ app.get('/get.php', async (req, res) => {
 });
 
 // LIVE STREAM endpoint: /live/username/password/channelId.ts (or .m3u8)
-// This is the core streaming endpoint that all Xtream-compatible apps use
+// Pipe directo del stream para compatibilidad con OTT Player, VLC, TiviMate
 app.get('/live/:username/:password/:streamId', async (req, res) => {
   try {
     const { username, password, streamId } = req.params;
     const client = await xtreamAuth(username, password);
     if (!client) return res.status(403).send('Forbidden');
 
-    // Remove extension (.ts, .m3u8, .mp4)
     const channelId = streamId.replace(/\.(ts|m3u8|mp4|mkv)$/, '');
 
-    // Verify channel exists and client has access
     const channels = await getXtreamChannels(client);
     const channel = channels.find(ch => ch.id === channelId);
     if (!channel) return res.status(404).send('Channel not found');
 
-    // Redirect to the restream endpoint (reuses existing FFmpeg infrastructure)
-    // This avoids duplicating the entire restreaming logic
-    req.url = `/api/restream/${channelId}`;
-    app.handle(req, res);
+    const targetUrl = channel.url;
+    const isHLS = /\.m3u8?(\?|$)/i.test(targetUrl);
+
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cache-Control', 'no-cache, no-store');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.setHeader('Connection', 'keep-alive');
+
+    if (isHLS) {
+      // Para HLS: servir el manifiesto con URLs absolutas de segmentos autenticados
+      const http = require(targetUrl.startsWith('https') ? 'https' : 'http');
+      const fetchManifest = (url) => new Promise((resolve, reject) => {
+        http.get(url, { timeout: 10000 }, (r) => {
+          if (r.statusCode >= 300 && r.statusCode < 400 && r.headers.location) {
+            return fetchManifest(r.headers.location).then(resolve).catch(reject);
+          }
+          let data = '';
+          r.on('data', c => data += c);
+          r.on('end', () => resolve(data));
+          r.on('error', reject);
+        }).on('error', reject);
+      });
+
+      try {
+        let manifest = await fetchManifest(targetUrl);
+        const baseUrl = targetUrl.substring(0, targetUrl.lastIndexOf('/') + 1);
+        // Rewrite relative URLs to absolute
+        manifest = manifest.replace(/^(?!#)(?!https?:\/\/)(.+\.ts.*)$/gm, (match) => {
+          return baseUrl + match;
+        });
+        manifest = manifest.replace(/^(?!#)(?!https?:\/\/)(.+\.m3u8.*)$/gm, (match) => {
+          return baseUrl + match;
+        });
+        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+        res.send(manifest);
+      } catch (err) {
+        console.error('HLS manifest fetch error:', err.message);
+        res.status(502).send('Stream unavailable');
+      }
+    } else {
+      // Para TS: pipe directo del stream de origen
+      res.setHeader('Content-Type', 'video/mp2t');
+      res.setHeader('Transfer-Encoding', 'chunked');
+
+      const http = require(targetUrl.startsWith('https') ? 'https' : 'http');
+      const streamReq = http.get(targetUrl, {
+        timeout: 15000,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) OTTPlayer/1.0',
+          'Connection': 'keep-alive',
+        },
+      }, (streamRes) => {
+        if (streamRes.statusCode >= 300 && streamRes.statusCode < 400 && streamRes.headers.location) {
+          // Follow redirect
+          const redirectReq = http.get(streamRes.headers.location, { timeout: 15000 }, (rRes) => {
+            rRes.pipe(res);
+          });
+          redirectReq.on('error', () => { if (!res.headersSent) res.status(502).end(); });
+          return;
+        }
+        if (streamRes.statusCode !== 200) {
+          return res.status(502).send('Origin error');
+        }
+        streamRes.pipe(res);
+        streamRes.on('error', () => res.end());
+      });
+
+      streamReq.on('error', (err) => {
+        console.error('Live pipe error:', err.message);
+        if (!res.headersSent) res.status(502).send('Stream error');
+      });
+
+      res.on('close', () => {
+        streamReq.destroy();
+      });
+    }
   } catch (err) {
     console.error('Xtream live error:', err);
-    res.status(500).send('Server error');
+    if (!res.headersSent) res.status(500).send('Server error');
   }
 });
 
