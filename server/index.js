@@ -2368,6 +2368,113 @@ app.post('/api/channels/diagnose', authAdmin, async (req, res) => {
   }
 });
 
+// =============================================
+// SINCRONIZACIÓN DE CANALES ENTRE PANELES OMNISYNC
+// =============================================
+
+// EXPORTAR: genera token base64 con todos los canales
+app.get('/api/channels/export', authAdmin, async (req, res) => {
+  try {
+    const { rows: channels } = await pool.query(
+      `SELECT name, url, category, logo_url, is_active, keep_alive, sort_order, stream_mode FROM channels ORDER BY sort_order`
+    );
+    const exportData = {
+      version: 1,
+      system: 'omnisync',
+      exported_at: new Date().toISOString(),
+      channels_count: channels.length,
+      channels,
+    };
+    const encoded = Buffer.from(JSON.stringify(exportData)).toString('base64');
+    res.json({ export_token: encoded, channels_count: channels.length, exported_at: exportData.exported_at });
+  } catch (err) {
+    console.error('Export error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// IMPORTAR: recibe token base64 de otro panel
+app.post('/api/channels/import-sync', authAdmin, async (req, res) => {
+  try {
+    const { export_token, mode } = req.body;
+    if (!export_token) return res.status(400).json({ error: 'Token requerido' });
+
+    let exportData;
+    try { exportData = JSON.parse(Buffer.from(export_token, 'base64').toString()); }
+    catch { return res.status(400).json({ error: 'Token inválido' }); }
+
+    if (exportData.system !== 'omnisync') return res.status(400).json({ error: 'Token no es de Omnisync' });
+    const channels = exportData.channels || [];
+    if (!channels.length) return res.status(400).json({ error: 'No hay canales en el token' });
+
+    if (mode === 'replace') {
+      await pool.query('DELETE FROM channels');
+    }
+
+    let imported = 0, skipped = 0;
+    for (const ch of channels) {
+      if (mode === 'merge') {
+        const { rows } = await pool.query('SELECT id FROM channels WHERE name=$1 AND url=$2 LIMIT 1', [ch.name, ch.url]);
+        if (rows.length) { skipped++; continue; }
+      }
+      try {
+        await pool.query(
+          `INSERT INTO channels (name, url, category, logo_url, is_active, keep_alive, sort_order, stream_mode) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [ch.name, ch.url, ch.category || 'General', ch.logo_url || null, ch.is_active !== false, ch.keep_alive || false, ch.sort_order || 0, ch.stream_mode || 'direct']
+        );
+        imported++;
+      } catch { skipped++; }
+    }
+    res.json({ imported, skipped, total: channels.length, mode });
+  } catch (err) {
+    console.error('Import-sync error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PULL: conecta a otro panel remoto y trae sus canales
+app.post('/api/channels/pull-remote', authAdmin, async (req, res) => {
+  try {
+    const { remote_url, remote_admin_token, mode } = req.body;
+    if (!remote_url) return res.status(400).json({ error: 'URL del panel remoto requerida' });
+
+    const fetch = (await import('node-fetch')).default;
+    const resp = await fetch(`${remote_url.replace(/\/$/, '')}/api/channels/export`, {
+      headers: { 'Authorization': `Bearer ${remote_admin_token}`, 'Content-Type': 'application/json' },
+    });
+    if (!resp.ok) return res.status(400).json({ error: `Error conectando: ${resp.status}` });
+
+    const remoteData = await resp.json();
+    if (!remoteData.export_token) return res.status(400).json({ error: 'El panel remoto no devolvió token' });
+
+    let exportData;
+    try { exportData = JSON.parse(Buffer.from(remoteData.export_token, 'base64').toString()); }
+    catch { return res.status(400).json({ error: 'Token remoto inválido' }); }
+
+    const channels = exportData.channels || [];
+    if (mode === 'replace') await pool.query('DELETE FROM channels');
+
+    let imported = 0, skipped = 0;
+    for (const ch of channels) {
+      if (mode === 'merge') {
+        const { rows } = await pool.query('SELECT id FROM channels WHERE name=$1 AND url=$2 LIMIT 1', [ch.name, ch.url]);
+        if (rows.length) { skipped++; continue; }
+      }
+      try {
+        await pool.query(
+          `INSERT INTO channels (name, url, category, logo_url, is_active, keep_alive, sort_order, stream_mode) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [ch.name, ch.url, ch.category || 'General', ch.logo_url || null, ch.is_active !== false, false, ch.sort_order || 0, ch.stream_mode || 'direct']
+        );
+        imported++;
+      } catch { skipped++; }
+    }
+    res.json({ imported, skipped, total: channels.length, mode, source: remote_url });
+  } catch (err) {
+    console.error('Pull-remote error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // RUTA: IMPORTAR CANALES DESDE M3U
 // Parsea listas M3U/M3U8 y las agrega como canales
 // =============================================
