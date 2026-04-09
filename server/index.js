@@ -3340,7 +3340,7 @@ app.get('/get.php', async (req, res) => {
 });
 
 // LIVE STREAM endpoint: /live/username/password/channelId.ts (or .m3u8)
-// Pipe directo del stream para compatibilidad con OTT Player, VLC, TiviMate
+// Restream 1-a-N: usa Pipe Proxy (TS) o HLS Restream con URLs absolutas para OTT Player/VLC
 app.get('/live/:username/:password/:streamId', async (req, res) => {
   try {
     const { username, password, streamId } = req.params;
@@ -3355,79 +3355,98 @@ app.get('/live/:username/:password/:streamId', async (req, res) => {
 
     const targetUrl = channel.url;
     const isHLS = /\.m3u8?(\?|$)/i.test(targetUrl);
+    const isTsStream = /\.ts(\?|$)/i.test(targetUrl) || (!isHLS && !targetUrl.match(/\.(mp4|mkv|avi|flv)/i));
 
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Cache-Control', 'no-cache, no-store');
     res.setHeader('X-Accel-Buffering', 'no');
-    res.setHeader('Connection', 'keep-alive');
 
-    if (isHLS) {
-      // Para HLS: servir el manifiesto con URLs absolutas de segmentos autenticados
-      const http = require(targetUrl.startsWith('https') ? 'https' : 'http');
-      const fetchManifest = (url) => new Promise((resolve, reject) => {
-        http.get(url, { timeout: 10000 }, (r) => {
-          if (r.statusCode >= 300 && r.statusCode < 400 && r.headers.location) {
-            return fetchManifest(r.headers.location).then(resolve).catch(reject);
-          }
-          let data = '';
-          r.on('data', c => data += c);
-          r.on('end', () => resolve(data));
-          r.on('error', reject);
-        }).on('error', reject);
-      });
-
-      try {
-        let manifest = await fetchManifest(targetUrl);
-        const baseUrl = targetUrl.substring(0, targetUrl.lastIndexOf('/') + 1);
-        // Rewrite relative URLs to absolute
-        manifest = manifest.replace(/^(?!#)(?!https?:\/\/)(.+\.ts.*)$/gm, (match) => {
-          return baseUrl + match;
-        });
-        manifest = manifest.replace(/^(?!#)(?!https?:\/\/)(.+\.m3u8.*)$/gm, (match) => {
-          return baseUrl + match;
-        });
-        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-        res.send(manifest);
-      } catch (err) {
-        console.error('HLS manifest fetch error:', err.message);
-        res.status(502).send('Stream unavailable');
-      }
-    } else {
-      // Para TS: pipe directo del stream de origen
+    if (isTsStream && !isHLS) {
+      // TS stream → usar Pipe Proxy 1-a-N existente
       res.setHeader('Content-Type', 'video/mp2t');
       res.setHeader('Transfer-Encoding', 'chunked');
+      res.setHeader('Connection', 'keep-alive');
+      if (res.socket) res.socket.setNoDelay(true);
 
-      const http = require(targetUrl.startsWith('https') ? 'https' : 'http');
-      const streamReq = http.get(targetUrl, {
-        timeout: 15000,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) OTTPlayer/1.0',
-          'Connection': 'keep-alive',
-        },
-      }, (streamRes) => {
-        if (streamRes.statusCode >= 300 && streamRes.statusCode < 400 && streamRes.headers.location) {
-          // Follow redirect
-          const redirectReq = http.get(streamRes.headers.location, { timeout: 15000 }, (rRes) => {
-            rRes.pipe(res);
+      // Reusar la lógica del pipe proxy
+      let pipe = activePipes.get(channelId);
+      if (!pipe) {
+        // Iniciar nueva conexión al origen
+        pipe = { clients: new Set(), sourceReq: null, keepAlive: false, bufferChunks: [], bufferBytes: 0, lastDataAt: Date.now() };
+        activePipes.set(channelId, pipe);
+
+        const httpModule = require(targetUrl.startsWith('https') ? 'https' : 'http');
+        const sourceReq = httpModule.get(targetUrl, {
+          timeout: 15000,
+          headers: { 'User-Agent': 'Mozilla/5.0 StreamBox/1.0', 'Connection': 'keep-alive' },
+        }, (sourceRes) => {
+          if (sourceRes.statusCode >= 300 && sourceRes.statusCode < 400 && sourceRes.headers.location) {
+            // Follow redirect
+            const rReq = httpModule.get(sourceRes.headers.location, { timeout: 15000 }, (rRes) => {
+              pipe.sourceReq = rReq;
+              rRes.on('data', (chunk) => {
+                pipe.lastDataAt = Date.now();
+                pushPipeChunk(pipe, chunk);
+                for (const c of pipe.clients) {
+                  try { c.write(chunk); } catch { pipe.clients.delete(c); }
+                }
+              });
+              rRes.on('end', () => { activePipes.delete(channelId); });
+              rRes.on('error', () => { activePipes.delete(channelId); });
+            });
+            rReq.on('error', () => { activePipes.delete(channelId); });
+            return;
+          }
+          sourceRes.on('data', (chunk) => {
+            pipe.lastDataAt = Date.now();
+            pushPipeChunk(pipe, chunk);
+            for (const c of pipe.clients) {
+              try { c.write(chunk); } catch { pipe.clients.delete(c); }
+            }
           });
-          redirectReq.on('error', () => { if (!res.headersSent) res.status(502).end(); });
-          return;
-        }
-        if (streamRes.statusCode !== 200) {
-          return res.status(502).send('Origin error');
-        }
-        streamRes.pipe(res);
-        streamRes.on('error', () => res.end());
-      });
+          sourceRes.on('end', () => { activePipes.delete(channelId); });
+          sourceRes.on('error', () => { activePipes.delete(channelId); });
+        });
+        sourceReq.on('error', () => { activePipes.delete(channelId); });
+        pipe.sourceReq = sourceReq;
+      }
 
-      streamReq.on('error', (err) => {
-        console.error('Live pipe error:', err.message);
-        if (!res.headersSent) res.status(502).send('Stream error');
-      });
+      // Fast-start buffer
+      writeFastStartBuffer(pipe, res);
+      pipe.clients.add(res);
 
       res.on('close', () => {
-        streamReq.destroy();
+        pipe.clients.delete(res);
+        if (pipe.clients.size === 0 && !pipe.keepAlive) {
+          schedulePipeClose(channelId);
+        }
       });
+    } else if (isHLS) {
+      // HLS → usar restream existente con URLs reescritas a /live/ path
+      startHLSProxy(channelId, targetUrl);
+      try {
+        const manifest = await getCachedM3U8(channelId, targetUrl);
+        const serverUrl = `${req.protocol}://${req.get('host')}`;
+        // Rewrite segment URLs to go through /live/ authenticated path
+        let rewritten = manifest.replace(/\/api\/hls-segment\/[^?]*\?url=([^\s]+)/g, (match, encodedUrl) => {
+          return decodeURIComponent(encodedUrl);
+        });
+        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+        res.send(rewritten);
+      } catch (err) {
+        console.error('HLS restream error for OTT:', err.message);
+        res.status(502).send('Stream unavailable');
+      }
+      res.on('finish', () => releaseTranscoder(channelId));
+    } else {
+      // Fallback: pipe directo
+      res.setHeader('Content-Type', 'video/mp2t');
+      const httpModule = require(targetUrl.startsWith('https') ? 'https' : 'http');
+      const streamReq = httpModule.get(targetUrl, { timeout: 15000 }, (streamRes) => {
+        streamRes.pipe(res);
+      });
+      streamReq.on('error', () => { if (!res.headersSent) res.status(502).end(); });
+      res.on('close', () => streamReq.destroy());
     }
   } catch (err) {
     console.error('Xtream live error:', err);
@@ -3435,21 +3454,48 @@ app.get('/live/:username/:password/:streamId', async (req, res) => {
   }
 });
 
-// Also support /live/username/password/channelId/segment.ts for HLS segments
-app.get('/live/:username/:password/:streamId/:segment', async (req, res) => {
+// Segmentos HLS para /live/ (OTT Player necesita resolver sub-playlists y segmentos)
+app.get('/live/:username/:password/:streamId/:qualityOrSegment', async (req, res) => {
   try {
-    const { username, password, streamId, segment } = req.params;
+    const { username, password, streamId, qualityOrSegment } = req.params;
     const client = await xtreamAuth(username, password);
     if (!client) return res.status(403).send('Forbidden');
 
     const channelId = streamId.replace(/\.(ts|m3u8|mp4|mkv)$/, '');
-    const channels = await getXtreamChannels(client);
-    const channel = channels.find(ch => ch.id === channelId);
-    if (!channel) return res.status(404).send('Channel not found');
 
-    // Forward to restream segment handler
-    req.url = `/api/restream/${channelId}/${segment}`;
-    app.handle(req, res);
+    // Check if it's a quality sub-playlist request (e.g., low.m3u8, med.m3u8, high.m3u8)
+    const qualityMatch = qualityOrSegment.match(/^(low|med|high)\.m3u8$/);
+    if (qualityMatch) {
+      const quality = qualityMatch[1];
+      const filePath = path.join(HLS_DIR, channelId, quality, 'stream.m3u8');
+      if (!fs.existsSync(filePath)) return res.status(404).send('Not found');
+      let manifest = fs.readFileSync(filePath, 'utf8');
+      manifest = manifest.replace(/seg_\d+\.ts/g, (match) => {
+        return `/live/${username}/${password}/${streamId}/${quality}_${match}`;
+      });
+      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.send(manifest);
+      return;
+    }
+
+    // Check if it's a quality segment (e.g., low_seg_001.ts)
+    const qualSegMatch = qualityOrSegment.match(/^(low|med|high)_(seg_\d+\.ts)$/);
+    if (qualSegMatch) {
+      const filePath = path.join(HLS_DIR, channelId, qualSegMatch[1], qualSegMatch[2]);
+      if (!fs.existsSync(filePath)) return res.status(404).send('Segment not found');
+      res.setHeader('Content-Type', 'video/mp2t');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      fs.createReadStream(filePath).pipe(res);
+      return;
+    }
+
+    // Regular segment (seg_001.ts)
+    const filePath = path.join(HLS_DIR, channelId, qualityOrSegment);
+    if (!fs.existsSync(filePath)) return res.status(404).send('Segment not found');
+    res.setHeader('Content-Type', 'video/mp2t');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    fs.createReadStream(filePath).pipe(res);
   } catch (err) {
     res.status(500).send('Server error');
   }
