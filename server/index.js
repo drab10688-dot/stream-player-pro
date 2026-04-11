@@ -3422,16 +3422,25 @@ app.get('/live/:username/:password/:streamId', async (req, res) => {
         }
       });
     } else if (isHLS) {
-      // HLS → usar restream existente con URLs reescritas a /live/ path
+      // HLS → usar restream existente con URLs absolutas autenticadas
       startHLSProxy(channelId, targetUrl);
       try {
         const manifest = await getCachedM3U8(channelId, targetUrl);
-        const serverUrl = `${req.protocol}://${req.get('host')}`;
-        // Rewrite segment URLs to go through /live/ authenticated path
+        const baseUrl = `${req.protocol}://${req.get('host')}`;
+        const livePath = `/live/${username}/${password}/${streamId}`;
+        
+        // Rewrite /api/hls-segment/ID?url=ENCODED → absolute /live/user/pass/streamId/seg_N.ts
         let rewritten = manifest.replace(/\/api\/hls-segment\/[^?]*\?url=([^\s]+)/g, (match, encodedUrl) => {
-          return decodeURIComponent(encodedUrl);
+          const segUrl = decodeURIComponent(encodedUrl);
+          return `${baseUrl}${livePath}/seg.ts?url=${encodeURIComponent(segUrl)}`;
         });
+        // Rewrite /api/hls-manifest/ID?url=ENCODED → absolute /live/user/pass/streamId/sub.m3u8?url=...
+        rewritten = rewritten.replace(/\/api\/hls-manifest\/[^?]*\?url=([^\s]+)/g, (match, encodedUrl) => {
+          return `${baseUrl}${livePath}/sub.m3u8?url=${encodeURIComponent(decodeURIComponent(encodedUrl))}`;
+        });
+        
         res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+        res.setHeader('Access-Control-Allow-Origin', '*');
         res.send(rewritten);
       } catch (err) {
         console.error('HLS restream error for OTT:', err.message);
