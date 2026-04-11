@@ -202,6 +202,7 @@ export type Database = {
           category: string
           consecutive_failures: number
           created_at: string
+          dvr_enabled: boolean
           id: string
           is_active: boolean
           keep_alive: boolean
@@ -217,6 +218,7 @@ export type Database = {
           category?: string
           consecutive_failures?: number
           created_at?: string
+          dvr_enabled?: boolean
           id?: string
           is_active?: boolean
           keep_alive?: boolean
@@ -232,6 +234,7 @@ export type Database = {
           category?: string
           consecutive_failures?: number
           created_at?: string
+          dvr_enabled?: boolean
           id?: string
           is_active?: boolean
           keep_alive?: boolean

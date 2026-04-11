@@ -1,0 +1,1 @@
+ALTER TABLE public.channels ADD COLUMN IF NOT EXISTS dvr_enabled boolean NOT NULL DEFAULT false;
