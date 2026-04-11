@@ -248,6 +248,7 @@ const ChannelsManager = () => {
     } catch (err: any) {
       toast({ title: 'Error', description: err.message, variant: 'destructive' });
     }
+  };
 
   const handleM3UImport = async () => {
     if (!m3uContent.trim() && !m3uUrl.trim()) {
