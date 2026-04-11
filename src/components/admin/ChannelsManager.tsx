@@ -231,6 +231,24 @@ const ChannelsManager = () => {
     }
   };
 
+  const toggleDVR = async (ch: Channel) => {
+    try {
+      if (isLovablePreview()) {
+        toast({ title: 'DVR solo disponible en VPS', variant: 'destructive' });
+        return;
+      }
+      await apiPut(`/api/admin/channels/${ch.id}/dvr`, { dvr_enabled: !ch.dvr_enabled });
+      toast({ 
+        title: !ch.dvr_enabled ? '📹 DVR activado' : 'DVR desactivado',
+        description: !ch.dvr_enabled 
+          ? `${ch.name} se grabará en MP4 cuando alguien lo vea` 
+          : `${ch.name} ya no se grabará`
+      });
+      fetchChannels();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+
   const handleM3UImport = async () => {
     if (!m3uContent.trim() && !m3uUrl.trim()) {
       toast({ title: 'Error', description: 'Pega el contenido M3U o ingresa una URL', variant: 'destructive' });
