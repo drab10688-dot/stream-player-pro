@@ -3471,8 +3471,44 @@ app.get('/live/:username/:password/:streamId/:qualityOrSegment', async (req, res
     if (!client) return res.status(403).send('Forbidden');
 
     const channelId = streamId.replace(/\.(ts|m3u8|mp4|mkv)$/, '');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cache-Control', 'no-cache, no-store');
 
-    // Check if it's a quality sub-playlist request (e.g., low.m3u8, med.m3u8, high.m3u8)
+    // Sub-manifest request: sub.m3u8?url=ENCODED
+    if (qualityOrSegment === 'sub.m3u8' && req.query.url) {
+      const subUrl = req.query.url;
+      const baseUrl = `${req.protocol}://${req.get('host')}`;
+      const livePath = `/live/${username}/${password}/${streamId}`;
+      try {
+        const subManifest = await getCachedM3U8(channelId + '_sub', subUrl);
+        // Rewrite segment URLs in sub-manifest
+        let rewritten = subManifest.replace(/\/api\/hls-segment\/[^?]*\?url=([^\s]+)/g, (match, encodedUrl) => {
+          const segUrl = decodeURIComponent(encodedUrl);
+          return `${baseUrl}${livePath}/seg.ts?url=${encodeURIComponent(segUrl)}`;
+        });
+        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+        res.send(rewritten);
+      } catch (err) {
+        res.status(502).send('Sub-manifest unavailable');
+      }
+      return;
+    }
+
+    // Segment request: seg.ts?url=ENCODED
+    if (qualityOrSegment === 'seg.ts' && req.query.url) {
+      const segUrl = req.query.url;
+      try {
+        const segData = await fetchSegment(segUrl);
+        res.setHeader('Content-Type', 'video/mp2t');
+        res.setHeader('X-Accel-Buffering', 'no');
+        res.send(segData);
+      } catch (err) {
+        res.status(502).send('Segment unavailable');
+      }
+      return;
+    }
+
+    // Legacy: quality sub-playlist (low.m3u8, med.m3u8, high.m3u8)
     const qualityMatch = qualityOrSegment.match(/^(low|med|high)\.m3u8$/);
     if (qualityMatch) {
       const quality = qualityMatch[1];
@@ -3483,27 +3519,24 @@ app.get('/live/:username/:password/:streamId/:qualityOrSegment', async (req, res
         return `/live/${username}/${password}/${streamId}/${quality}_${match}`;
       });
       res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-      res.setHeader('Access-Control-Allow-Origin', '*');
       res.send(manifest);
       return;
     }
 
-    // Check if it's a quality segment (e.g., low_seg_001.ts)
+    // Legacy: quality segment (low_seg_001.ts)
     const qualSegMatch = qualityOrSegment.match(/^(low|med|high)_(seg_\d+\.ts)$/);
     if (qualSegMatch) {
       const filePath = path.join(HLS_DIR, channelId, qualSegMatch[1], qualSegMatch[2]);
       if (!fs.existsSync(filePath)) return res.status(404).send('Segment not found');
       res.setHeader('Content-Type', 'video/mp2t');
-      res.setHeader('Access-Control-Allow-Origin', '*');
       fs.createReadStream(filePath).pipe(res);
       return;
     }
 
-    // Regular segment (seg_001.ts)
+    // Regular segment from HLS_DIR
     const filePath = path.join(HLS_DIR, channelId, qualityOrSegment);
     if (!fs.existsSync(filePath)) return res.status(404).send('Segment not found');
     res.setHeader('Content-Type', 'video/mp2t');
-    res.setHeader('Access-Control-Allow-Origin', '*');
     fs.createReadStream(filePath).pipe(res);
   } catch (err) {
     res.status(500).send('Server error');
