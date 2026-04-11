@@ -528,14 +528,24 @@ const ChannelsManager = () => {
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
                     {!isLovablePreview() && (
-                      <div className="flex items-center gap-1.5 mr-2" title={ch.keep_alive ? 'Pre-Caché: ON - Siempre conectado al origen' : 'Pre-Caché: OFF - Conexión bajo demanda'}>
-                        <Zap className={`w-3.5 h-3.5 ${ch.keep_alive ? 'text-green-500' : 'text-muted-foreground/40'}`} />
-                        <Switch 
-                          checked={ch.keep_alive} 
-                          onCheckedChange={() => toggleKeepAlive(ch)} 
-                          className="scale-75"
-                        />
-                      </div>
+                      <>
+                        <div className="flex items-center gap-1.5 mr-1" title={ch.dvr_enabled ? 'DVR: ON - Graba MP4 bajo demanda' : 'DVR: OFF'}>
+                          <Video className={`w-3.5 h-3.5 ${ch.dvr_enabled ? 'text-red-500' : 'text-muted-foreground/40'}`} />
+                          <Switch 
+                            checked={ch.dvr_enabled} 
+                            onCheckedChange={() => toggleDVR(ch)} 
+                            className="scale-75"
+                          />
+                        </div>
+                        <div className="flex items-center gap-1.5 mr-2" title={ch.keep_alive ? 'Pre-Caché: ON - Siempre conectado al origen' : 'Pre-Caché: OFF - Conexión bajo demanda'}>
+                          <Zap className={`w-3.5 h-3.5 ${ch.keep_alive ? 'text-green-500' : 'text-muted-foreground/40'}`} />
+                          <Switch 
+                            checked={ch.keep_alive} 
+                            onCheckedChange={() => toggleKeepAlive(ch)} 
+                            className="scale-75"
+                          />
+                        </div>
+                      </>
                     )}
                     <Button variant="ghost" size="sm" onClick={() => toggleActive(ch)} className="text-xs text-muted-foreground">
                       {ch.is_active ? 'Desactivar' : 'Activar'}
