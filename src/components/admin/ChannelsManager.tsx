@@ -20,6 +20,7 @@ interface Channel {
   category: string;
   is_active: boolean;
   keep_alive: boolean;
+  dvr_enabled: boolean;
   sort_order: number;
   logo_url: string | null;
 }
