@@ -5716,7 +5716,7 @@ function startTSDVR(channelId, sourceUrl, dvr, channelDir) {
   }
 
   function connect() {
-    dvrFetchUrl(sourceUrl).then((sourceRes) => {
+    dvrFetchUrl(sourceUrl, 15000, true).then((sourceRes) => {
       if (sourceRes.statusCode !== 200) {
         logDvrError(channelId, `Origen respondió ${sourceRes.statusCode}`, 'http');
         handleDisconnect();
@@ -6145,7 +6145,7 @@ async function autoStartDVR() {
       console.log('📹 [DVR PRE] No hay canales con DVR habilitado');
       return;
     }
-    console.log(`📹 [DVR PRE] Pre-calentando ${rows.length} canales (Node.js puro)...`);
+    console.log(`📹 [DVR PRE] Pre-calentando ${rows.length} canales (Node.js puro, escalonado)...`);
     let started = 0;
     for (const ch of rows) {
       if (!activeDVR.has(ch.id)) {
@@ -6156,7 +6156,8 @@ async function autoStartDVR() {
             dvr.preWarmed = true;
             started++;
           }
-          await new Promise(r => setTimeout(r, 1000));
+          // Escalonar: 2 segundos entre cada canal para no saturar sockets
+          await new Promise(r => setTimeout(r, 2000));
         } catch (err) {
           console.error(`📹 [DVR PRE] Error iniciando ${ch.name}:`, err.message);
         }
