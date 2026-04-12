@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
-import { Plus, Trash2, Edit2, Save, X, Tv, Upload, Link, FileText, Loader2, ImagePlus, Activity, HardDrive, Video } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, Tv, Upload, Link, FileText, Loader2, ImagePlus, Activity, HardDrive, Video, Power, PowerOff } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { motion } from 'framer-motion';
 
@@ -54,6 +54,7 @@ const ChannelsManager = () => {
   const [cacheStatus, setCacheStatus] = useState<CacheStatus[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [filterRunning, setFilterRunning] = useState(false);
+  const [dvrAllLoading, setDvrAllLoading] = useState(false);
   const logoInputRef = useRef<HTMLInputElement>(null);
   const cacheIntervalRef = useRef<ReturnType<typeof setInterval>>();
 
@@ -210,6 +211,31 @@ const ChannelsManager = () => {
     }
   };
 
+  const enableAllDVR = async () => {
+    if (!confirm(`¿Activar DVR en TODOS los canales activos? FFmpeg se iniciará secuencialmente.`)) return;
+    setDvrAllLoading(true);
+    try {
+      const data = await apiPost('/api/admin/dvr/enable-all', {});
+      toast({ title: '📹 DVR Global Activado', description: data.message });
+      fetchChannels();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+    setDvrAllLoading(false);
+  };
+
+  const disableAllDVR = async () => {
+    if (!confirm(`¿Detener TODOS los DVR y liberar recursos? Esto desactivará el DVR en todos los canales.`)) return;
+    setDvrAllLoading(true);
+    try {
+      const data = await apiPost('/api/admin/dvr/disable-all', {});
+      toast({ title: '⏹ DVR Global Detenido', description: data.message });
+      fetchChannels();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+    setDvrAllLoading(false);
+  };
 
 
 
@@ -277,6 +303,31 @@ const ChannelsManager = () => {
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h2 className="font-display font-semibold text-xl text-foreground">Canales ({channels.length})</h2>
         <div className="flex gap-2 flex-wrap">
+          {/* DVR Master Switch */}
+          {!isLovablePreview() && (
+            <>
+              <Button
+                onClick={enableAllDVR}
+                disabled={dvrAllLoading}
+                variant="outline"
+                size="sm"
+                className="gap-2 border-primary/30 text-primary hover:bg-primary/10"
+              >
+                {dvrAllLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Power className="w-4 h-4" />}
+                Activar DVR en todos
+              </Button>
+              <Button
+                onClick={disableAllDVR}
+                disabled={dvrAllLoading}
+                variant="outline"
+                size="sm"
+                className="gap-2 border-destructive/30 text-destructive hover:bg-destructive/10"
+              >
+                {dvrAllLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <PowerOff className="w-4 h-4" />}
+                Detener todos los DVR
+              </Button>
+            </>
+          )}
           {/* Filter: show only running */}
           {cacheStatus.some(c => c.transcoder_active) && (
             <Button
