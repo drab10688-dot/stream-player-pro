@@ -287,13 +287,12 @@ function invalidatePlanCache() {
   planCache.clear();
 }
 
-// Helper: verificar si un canal DVR está "listo" (init.mp4 + al menos 3 segmentos .m4s)
+// Helper: verificar si un canal DVR está "listo" (al menos 3 segmentos .ts)
 function isDvrReady(channelId) {
-  const channelDir = path.join(DVR_DIR || path.join(__dirname, 'dvr-cache'), channelId);
+  const channelDir = path.join(DVR_DIR || '/data/dvr', channelId);
   try {
-    if (!fs.existsSync(path.join(channelDir, 'init.mp4'))) return false;
     const files = fs.readdirSync(channelDir);
-    const segments = files.filter(f => f.endsWith('.m4s'));
+    const segments = files.filter(f => f.endsWith('.ts') && f.startsWith('segment'));
     return segments.length >= 3;
   } catch {
     return false;
