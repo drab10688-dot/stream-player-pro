@@ -3158,7 +3158,7 @@ app.get('/api/playlist/:token', async (req, res) => {
       m3u += `#EXTINF:-1 tvg-id="${ch.id}" tvg-name="${ch.name}" tvg-logo="${logoUrl}" group-title="${ch.category}",${ch.name}\n`;
 
       if (ch.dvr_enabled && isDvrReady(ch.id)) {
-        // DVR activo Y listo: usar playlist DVR local (fMP4/HLS)
+        // DVR activo Y listo: usar playlist DVR local (HLS .ts)
         m3u += `${baseUrl}/live/${encodeURIComponent(client.username)}/${encodeURIComponent(client.password)}/${ch.id}.m3u8\n`;
       } else {
         // Sin DVR o DVR no listo: usar stream directo
