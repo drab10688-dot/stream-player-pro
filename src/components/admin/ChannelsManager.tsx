@@ -210,25 +210,8 @@ const ChannelsManager = () => {
     }
   };
 
-  const toggleKeepAlive = async (ch: Channel) => {
-    try {
-      if (isLovablePreview()) {
-        // keep_alive not in supabase schema, skip
-        toast({ title: 'Keep Alive solo disponible en VPS', variant: 'destructive' });
-        return;
-      }
-      await apiPut(`/api/channels/${ch.id}`, { keep_alive: !ch.keep_alive });
-      toast({ 
-        title: !ch.keep_alive ? '💚 Keep Alive activado' : 'Keep Alive desactivado',
-        description: !ch.keep_alive 
-          ? `${ch.name} se mantendrá conectado permanentemente al origen` 
-          : `${ch.name} se conectará solo cuando haya clientes`
-      });
-      fetchChannels();
-    } catch (err: any) {
-      toast({ title: 'Error', description: err.message, variant: 'destructive' });
-    }
-  };
+
+
 
   const toggleDVR = async (ch: Channel) => {
     try {
