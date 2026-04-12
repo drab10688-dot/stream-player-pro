@@ -5457,17 +5457,19 @@ app.get('/api/dvr/file/:channelId/:filename', authApk, (req, res) => {
   }
 });
 
-// LEGACY: Mantener endpoint antiguo para compatibilidad
+// LEGACY: Mantener endpoint antiguo para compatibilidad (con MIME types correctos)
 app.get('/api/dvr/segment/:channelId/:filename', authApk, (req, res) => {
   const { channelId, filename } = req.params;
   if (!/^(init\.mp4|seg_\d{3}\.(mp4|m4s))$/.test(filename)) return res.status(400).send('Invalid filename');
   const filePath = path.join(DVR_DIR, channelId, filename);
   if (!fs.existsSync(filePath)) return res.status(404).send('Segment not found');
   const stat = fs.statSync(filePath);
-  res.setHeader('Content-Type', 'video/mp4');
+  const contentType = filename.endsWith('.mp4') ? 'video/mp4' : 'video/iso.segment';
+  res.setHeader('Content-Type', contentType);
   res.setHeader('Content-Length', stat.size);
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Accept-Ranges', 'bytes');
   fs.createReadStream(filePath).pipe(res);
 });
 
