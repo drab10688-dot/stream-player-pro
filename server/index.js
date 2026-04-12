@@ -10,7 +10,7 @@ const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 const crypto = require('crypto');
-const { spawn, execSync } = require('child_process');
+// Node.js puro - sin dependencias de binarios externos (FFmpeg eliminado)
 
 const app = express();
 app.use(cors());
@@ -829,7 +829,10 @@ app.delete('/api/channels/:id', authAdmin, async (req, res) => {
   // Kill DVR process if active
   if (activeDVR && activeDVR.has(channelId)) {
     const dvr = activeDVR.get(channelId);
-    if (dvr.ffmpeg) try { dvr.ffmpeg.kill('SIGTERM'); } catch {}
+    dvr.recording = false;
+    if (dvr.sourceReq) try { dvr.sourceReq.destroy(); } catch {}
+    if (dvr.segmentTimer) clearInterval(dvr.segmentTimer);
+    if (dvr.pollTimer) clearInterval(dvr.pollTimer);
     activeDVR.delete(channelId);
     // Clean DVR files
     const channelDir = path.join(DVR_DIR || '/data/dvr', channelId);
@@ -838,7 +841,7 @@ app.delete('/api/channels/:id', authAdmin, async (req, res) => {
       files.forEach(f => { try { fs.unlinkSync(path.join(channelDir, f)); } catch {} });
       fs.rmdirSync(channelDir);
     } catch {}
-    console.log(`📹 [DVR ${channelId}] Proceso FFmpeg terminado por eliminación de canal`);
+    console.log(`📹 [DVR ${channelId}] Proceso Node.js detenido por eliminación de canal`);
   }
   // Stop any active transcoder
   stopHLSKeepAlivePoller(channelId);
@@ -1670,38 +1673,35 @@ function startKeepAliveChannel(channelId, sourceUrl) {
   const isHLS = /\.m3u8?(\?|$)/i.test(streamUrl);
   const isYouTube = /youtube\.com|youtu\.be/.test(streamUrl);
 
-  if (isYouTube) return; // YouTube no necesita keep_alive
+  if (isYouTube) return;
 
   if (isHLS) {
     const entry = startHLSProxy(channelId, streamUrl);
     if (entry) {
       entry.keepAlive = true;
       entry.clients = 0;
-      // Iniciar poller activo que pre-descarga manifiestos y segmentos
       startHLSKeepAlivePoller(channelId, streamUrl);
       console.log(`💚 [${channelId}] Keep-alive HLS proxy + poller activo`);
     }
   } else {
-    // TS streams: keep-alive con pipe (sin FFmpeg)
-    // Mantiene conexión TCP al origen, descarta datos si no hay clientes
+    // TS streams: keep-alive con pipe o segmenter (sin FFmpeg)
     const isTsStream = /\.ts(\?|$)/i.test(streamUrl) || /\/\d+\.ts(\?|$)/i.test(streamUrl);
     if (isTsStream) {
       startPipeKeepAlive(channelId, streamUrl);
-      console.log(`💚 [${channelId}] Keep-alive PIPE (sin FFmpeg): ${streamUrl}`);
+      console.log(`💚 [${channelId}] Keep-alive PIPE (Node.js puro): ${streamUrl}`);
     } else {
-      const entry = startFFmpegTranscoder(channelId, streamUrl, true);
+      // Otros formatos: usar segmenter TS Node.js
+      const entry = startTSSegmenter(channelId, streamUrl, true);
       if (entry) {
         entry.keepAlive = true;
         entry.clients = 0;
-        console.log(`💚 [${channelId}] Keep-alive FFmpeg iniciado (caché: 30 min)`);
+        console.log(`💚 [${channelId}] Keep-alive TS Segmenter iniciado (Node.js puro, caché: 30 min)`);
       }
     }
   }
 }
 
 // KEEP ALIVE DESHABILITADO: Todo el tráfico pasa por DVR
-// Las funciones startKeepAliveChannel, initKeepAliveChannels y el health monitor
-// ya no se usan. El DVR reemplaza la funcionalidad de keep-alive.
 async function initKeepAliveChannels() {
   console.log('📡 Keep-alive deshabilitado. Usa DVR para estabilidad de canales.');
 }
@@ -2024,10 +2024,14 @@ const scheduleCacheCleanup = () => {
   midnight.setHours(0, 0, 0, 0);
   setTimeout(() => {
     console.log('🧹 Limpieza de caché a medianoche...');
-    // Matar todos los FFmpeg sin clientes (excepto keep-alive)
+    // Detener todos los segmenters sin clientes (excepto keep-alive)
     activeTranscoders.forEach((entry, key) => {
       if (entry.clients <= 0 && !entry.keepAlive) {
-        if ((entry.type === 'ffmpeg' || entry.type === 'ffmpeg-adaptive') && entry.ffmpeg) entry.ffmpeg.kill('SIGTERM');
+        if (entry.type === 'ts-segmenter') {
+          if (entry.segmentTimer) clearInterval(entry.segmentTimer);
+          if (entry.sourceReq) try { entry.sourceReq.destroy(); } catch {}
+        }
+        stopHLSKeepAlivePoller(key);
         activeTranscoders.delete(key);
         cleanChannelDir(key);
       }
@@ -2340,40 +2344,25 @@ app.get('/api/restream/:channelId', async (req, res) => {
       // Liberar al terminar respuesta
       res.on('finish', () => releaseTranscoder(channelId));
     } else {
-      // Canal TS → FFmpeg → HLS (adaptive o single)
-      const entry = startFFmpegTranscoder(channelId, targetUrl);
+      // Canal TS → Segmenter Node.js → HLS
+      const entry = startTSSegmenter(channelId, targetUrl);
 
-      // Esperar a que FFmpeg genere el manifiesto (máximo 20s para adaptive)
+      if (!entry) {
+        return res.status(500).json({ error: 'No se pudo iniciar el segmenter' });
+      }
+
+      // Esperar a que el segmenter genere el manifiesto (máximo 20s)
       let waited = 0;
       const waitForManifest = () => {
-        // Check for master playlist first (adaptive), then fallback manifest
-        const masterPath = path.join(HLS_DIR, channelId, 'master.m3u8');
-        const singlePath = entry.manifestPath || path.join(HLS_DIR, channelId, 'stream.m3u8');
-        const fallbackPath = entry.fallbackManifest || singlePath;
+        const manifestPath = entry.manifestPath || path.join(HLS_DIR, channelId, 'stream.m3u8');
 
-        let manifestFile = null;
-        if (fs.existsSync(masterPath)) {
-          manifestFile = masterPath;
-        } else if (fs.existsSync(singlePath)) {
-          manifestFile = singlePath;
-        } else if (fs.existsSync(fallbackPath)) {
-          manifestFile = fallbackPath;
-        }
+        if (fs.existsSync(manifestPath)) {
+          let manifest = fs.readFileSync(manifestPath, 'utf8');
 
-        if (manifestFile) {
-          let manifest = fs.readFileSync(manifestFile, 'utf8');
-
-          if (manifestFile.includes('master.m3u8')) {
-            // Rewrite sub-playlist paths in master playlist
-            manifest = manifest.replace(/(low|med|high)\/stream\.m3u8/g, (match, quality) => {
-              return `/api/hls-adaptive/${channelId}/${quality}/stream.m3u8`;
-            });
-          } else {
-            // Single quality: rewrite segment paths
-            manifest = manifest.replace(/seg_\d+\.ts/g, (match) => {
-              return `/api/hls-local/${channelId}/${match}`;
-            });
-          }
+          // Rewrite segment paths for serving
+          manifest = manifest.replace(/seg_\d+\.ts/g, (match) => {
+            return `/api/hls-local/${channelId}/${match}`;
+          });
 
           res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
           res.send(manifest);
@@ -2383,7 +2372,7 @@ app.get('/api/restream/:channelId', async (req, res) => {
           setTimeout(waitForManifest, 500);
         } else {
           releaseTranscoder(channelId);
-          res.status(504).json({ error: 'FFmpeg no generó el manifiesto a tiempo' });
+          res.status(504).json({ error: 'El segmenter no generó el manifiesto a tiempo' });
         }
       };
       waitForManifest();
