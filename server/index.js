@@ -5552,10 +5552,6 @@ function releaseDVR(channelId) {
   console.log(`📹 [DVR ${channelId}] Viewer liberado (${dvr.viewers} restantes)`);
   // DVR siempre activo: NO detener FFmpeg cuando viewers llega a 0
   // Solo se detiene manualmente via admin o al desactivar dvr_enabled
-        } catch {}
-      }
-    }, DVR_IDLE_TIMEOUT_MS);
-  }
 }
 
 // API: Iniciar DVR para un canal
