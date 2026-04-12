@@ -474,38 +474,55 @@ log_ok "Almacenamiento HLS en disco SSD: $HLS_DIR"
 log_info "Capacidad estimada: ~$((DISK_AVAIL_GB / 500 * 1000)) canales keep-alive (30min caché)"
 
 # Instalar FFmpeg si no está y verificar ruta real
-FFMPEG_BIN=""
-for candidate in /usr/bin/ffmpeg /usr/local/bin/ffmpeg /bin/ffmpeg /snap/bin/ffmpeg; do
-  if [ -x "$candidate" ]; then
-    FFMPEG_BIN="$candidate"
-    break
-  fi
-done
+resolve_ffmpeg_bin() {
+  for candidate in "${FFMPEG_PATH:-}" "$(command -v ffmpeg 2>/dev/null)" /usr/bin/ffmpeg /usr/local/bin/ffmpeg /bin/ffmpeg /snap/bin/ffmpeg; do
+    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+FFMPEG_BIN="$(resolve_ffmpeg_bin || true)"
+FFMPEG_INSTALL_LOG="/tmp/omnisync-ffmpeg-install.log"
 
 if [ -z "$FFMPEG_BIN" ]; then
   log_info "Instalando FFmpeg..."
-  apt-get update -qq > /dev/null 2>&1 || true
-  DEBIAN_FRONTEND=noninteractive apt-get install -y ffmpeg > /dev/null 2>&1
+  : > "$FFMPEG_INSTALL_LOG"
+
+  apt-get update -qq >> "$FFMPEG_INSTALL_LOG" 2>&1 || true
+
+  if [ "${ID:-}" = "ubuntu" ]; then
+    log_info "Verificando repositorio universe para FFmpeg..."
+    DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common >> "$FFMPEG_INSTALL_LOG" 2>&1 || true
+    add-apt-repository -y universe >> "$FFMPEG_INSTALL_LOG" 2>&1 || true
+    apt-get update -qq >> "$FFMPEG_INSTALL_LOG" 2>&1 || true
+  fi
+
+  if ! DEBIAN_FRONTEND=noninteractive apt-get install -y ffmpeg >> "$FFMPEG_INSTALL_LOG" 2>&1; then
+    log_warn "Instalación APT de FFmpeg falló; probando fallback..."
+  fi
+
   hash -r 2>/dev/null || true
-
-  # Re-check after install
-  for candidate in /usr/bin/ffmpeg /usr/local/bin/ffmpeg /bin/ffmpeg /snap/bin/ffmpeg; do
-    if [ -x "$candidate" ]; then
-      FFMPEG_BIN="$candidate"
-      break
-    fi
-  done
+  FFMPEG_BIN="$(resolve_ffmpeg_bin || true)"
 fi
 
 if [ -z "$FFMPEG_BIN" ]; then
-  # Last resort: try snap
-  log_info "Intentando instalar FFmpeg via snap..."
-  snap install ffmpeg 2>/dev/null || true
-  [ -x /snap/bin/ffmpeg ] && FFMPEG_BIN="/snap/bin/ffmpeg"
+  log_info "Intentando instalar FFmpeg vía snap..."
+  DEBIAN_FRONTEND=noninteractive apt-get install -y snapd >> "$FFMPEG_INSTALL_LOG" 2>&1 || true
+  systemctl enable --now snapd.socket >> "$FFMPEG_INSTALL_LOG" 2>&1 || true
+  snap install ffmpeg >> "$FFMPEG_INSTALL_LOG" 2>&1 || true
+  hash -r 2>/dev/null || true
+  FFMPEG_BIN="$(resolve_ffmpeg_bin || true)"
 fi
 
 if [ -z "$FFMPEG_BIN" ]; then
-  log_err "FFmpeg no se pudo instalar. Instálalo manualmente: apt install ffmpeg"
+  log_err "FFmpeg no se pudo instalar. Revisa $FFMPEG_INSTALL_LOG"
+  if command -v apt-cache >/dev/null 2>&1; then
+    log_info "Diagnóstico rápido: apt-cache policy ffmpeg"
+    apt-cache policy ffmpeg 2>/dev/null | sed 's/^/      /'
+  fi
   exit 1
 fi
 
