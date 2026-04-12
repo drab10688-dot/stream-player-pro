@@ -73,7 +73,22 @@ const ClientsManager = () => {
     }
   };
 
-  useEffect(() => { fetchClients(); fetchPlans(); }, []);
+  const fetchTunnelStatus = async () => {
+    try {
+      const data = await apiGet('/api/tunnel/status');
+      if (data?.status === 'running' && data?.url) {
+        setTunnelUrl(data.url.replace(/\/$/, ''));
+        setUseTunnel(true);
+      } else {
+        setTunnelUrl(null);
+        setUseTunnel(false);
+      }
+    } catch {
+      // Tunnel not available
+    }
+  };
+
+  useEffect(() => { fetchClients(); fetchPlans(); fetchTunnelStatus(); }, []);
 
   const handleSave = async () => {
     if (!form.username.trim() || !form.password.trim() || !form.expiry_date) {
