@@ -474,14 +474,21 @@ log_ok "Almacenamiento HLS en disco SSD: $HLS_DIR"
 log_info "Capacidad estimada: ~$((DISK_AVAIL_GB / 500 * 1000)) canales keep-alive (30min caché)"
 
 # Instalar FFmpeg si no está y verificar ruta real
-FFMPEG_BIN="$(command -v ffmpeg 2>/dev/null || true)"
-if [ -z "$FFMPEG_BIN" ]; then
-  log_info "Instalando FFmpeg..."
-  apt install -y -qq ffmpeg > /dev/null 2>&1 || true
-  FFMPEG_BIN="$(command -v ffmpeg 2>/dev/null || true)"
-fi
+FFMPEG_BIN=""
+for candidate in /usr/bin/ffmpeg /usr/local/bin/ffmpeg /bin/ffmpeg /snap/bin/ffmpeg; do
+  if [ -x "$candidate" ]; then
+    FFMPEG_BIN="$candidate"
+    break
+  fi
+done
 
 if [ -z "$FFMPEG_BIN" ]; then
+  log_info "Instalando FFmpeg..."
+  apt-get update -qq > /dev/null 2>&1 || true
+  DEBIAN_FRONTEND=noninteractive apt-get install -y ffmpeg > /dev/null 2>&1
+  hash -r 2>/dev/null || true
+
+  # Re-check after install
   for candidate in /usr/bin/ffmpeg /usr/local/bin/ffmpeg /bin/ffmpeg /snap/bin/ffmpeg; do
     if [ -x "$candidate" ]; then
       FFMPEG_BIN="$candidate"
@@ -491,7 +498,14 @@ if [ -z "$FFMPEG_BIN" ]; then
 fi
 
 if [ -z "$FFMPEG_BIN" ]; then
-  log_err "FFmpeg no se pudo instalar o no quedó disponible para la API"
+  # Last resort: try snap
+  log_info "Intentando instalar FFmpeg via snap..."
+  snap install ffmpeg 2>/dev/null || true
+  [ -x /snap/bin/ffmpeg ] && FFMPEG_BIN="/snap/bin/ffmpeg"
+fi
+
+if [ -z "$FFMPEG_BIN" ]; then
+  log_err "FFmpeg no se pudo instalar. Instálalo manualmente: apt install ffmpeg"
   exit 1
 fi
 
