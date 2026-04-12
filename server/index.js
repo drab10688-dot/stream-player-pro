@@ -3555,7 +3555,8 @@ const vodStorage = multer.diskStorage({
     else cb(null, VOD_DIR);
   },
   filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname) || (file.fieldname === 'poster' ? '.jpg' : '.mp4');
+    // Preserve original extension for all image/video types
+    const ext = path.extname(file.originalname).toLowerCase() || (file.fieldname === 'poster' ? '.jpg' : '.mp4');
     cb(null, `${Date.now()}-${Math.random().toString(36).substring(2, 8)}${ext}`);
   }
 });
