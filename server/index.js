@@ -774,6 +774,7 @@ app.put('/api/clients/:id', authAdmin, async (req, res) => {
       'UPDATE clients SET username=$1, password=$2, max_screens=$3, expiry_date=$4, is_active=$5, notes=$6, plan_id=$7, vod_enabled=$8 WHERE id=$9 RETURNING *',
       [username, password, max_screens, expiry_date, is_active, notes, plan_id, vod_enabled, req.params.id]
     );
+    invalidateAuthCache(username);
     res.json(rows[0]);
   } catch (err) {
     res.status(400).json({ error: err.message });
