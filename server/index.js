@@ -142,6 +142,62 @@ const channelListCache = {
   }
 };
 
+// =============================================
+// CACHÉ DE AUTENTICACIÓN XTREAM (evita consultar BD en cada segmento/petición)
+// =============================================
+const authCache = new Map(); // key: "user:pass" → { client, expiresAt }
+const AUTH_CACHE_TTL = 30000; // 30 segundos
+
+function getCachedAuth(username, password) {
+  const key = `${username}:${password}`;
+  const entry = authCache.get(key);
+  if (entry && Date.now() < entry.expiresAt) return entry.client;
+  return null;
+}
+
+function setCachedAuth(username, password, client) {
+  const key = `${username}:${password}`;
+  authCache.set(key, { client, expiresAt: Date.now() + AUTH_CACHE_TTL });
+  // Limpieza periódica
+  if (authCache.size > 500) {
+    const now = Date.now();
+    for (const [k, v] of authCache) {
+      if (now >= v.expiresAt) authCache.delete(k);
+    }
+  }
+}
+
+function invalidateAuthCache(username) {
+  for (const [k] of authCache) {
+    if (k.startsWith(`${username}:`)) authCache.delete(k);
+  }
+}
+
+// =============================================
+// CACHÉ DE PLANES (evita consultar BD por categorías en cada petición)
+// =============================================
+const planCache = new Map(); // key: plan_id → { categories, expiresAt }
+const PLAN_CACHE_TTL = 120000; // 2 minutos
+
+async function getCachedPlanCategories(planId) {
+  if (!planId) return null;
+  const entry = planCache.get(planId);
+  if (entry && Date.now() < entry.expiresAt) return entry.categories;
+  try {
+    const { rows } = await pool.query('SELECT categories FROM plans WHERE id = $1', [planId]);
+    const categories = (rows.length > 0 && rows[0].categories && rows[0].categories.length > 0)
+      ? rows[0].categories : null;
+    planCache.set(planId, { categories, expiresAt: Date.now() + PLAN_CACHE_TTL });
+    return categories;
+  } catch {
+    return null;
+  }
+}
+
+function invalidatePlanCache() {
+  planCache.clear();
+}
+
 // Helper: verificar si un canal DVR está "listo" (init.mp4 + al menos 3 segmentos .m4s)
 function isDvrReady(channelId) {
   const channelDir = path.join(DVR_DIR || path.join(__dirname, 'dvr-cache'), channelId);
