@@ -303,6 +303,31 @@ const ChannelsManager = () => {
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h2 className="font-display font-semibold text-xl text-foreground">Canales ({channels.length})</h2>
         <div className="flex gap-2 flex-wrap">
+          {/* DVR Master Switch */}
+          {!isLovablePreview() && (
+            <>
+              <Button
+                onClick={enableAllDVR}
+                disabled={dvrAllLoading}
+                variant="outline"
+                size="sm"
+                className="gap-2 border-primary/30 text-primary hover:bg-primary/10"
+              >
+                {dvrAllLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Power className="w-4 h-4" />}
+                Activar DVR en todos
+              </Button>
+              <Button
+                onClick={disableAllDVR}
+                disabled={dvrAllLoading}
+                variant="outline"
+                size="sm"
+                className="gap-2 border-destructive/30 text-destructive hover:bg-destructive/10"
+              >
+                {dvrAllLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <PowerOff className="w-4 h-4" />}
+                Detener todos los DVR
+              </Button>
+            </>
+          )}
           {/* Filter: show only running */}
           {cacheStatus.some(c => c.transcoder_active) && (
             <Button
