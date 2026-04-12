@@ -3333,58 +3333,45 @@ app.get('/live/:username/:password/:streamId', async (req, res) => {
 
     // *** DVR PRIORITY: si el canal tiene dvr_enabled, servir playlist DVR ***
     if (channel.dvr_enabled) {
-      // Iniciar DVR si no está activo
+      // Iniciar DVR si no está activo (non-blocking)
       if (typeof activeDVR !== 'undefined' && !activeDVR.has(channelId)) {
         try {
           const { rows: chRows } = await pool.query('SELECT * FROM channels WHERE id = $1 AND dvr_enabled = true', [channelId]);
-          if (chRows.length > 0) {
-            startDVR(channelId, chRows[0].url);
-          }
+          if (chRows.length > 0) startDVR(channelId, chRows[0].url);
         } catch (e) {
           console.error(`DVR auto-start error for ${channelId}:`, e.message);
         }
       }
 
+      // Generar JWT temporal para autenticar los segmentos DVR
+      const dvrToken = jwt.sign(
+        { id: client.id, username: client.username, xtreamUser: username, xtreamPass: password },
+        JWT_SECRET,
+        { expiresIn: '4h' }
+      );
+
+      // Responder con la playlist DVR directamente (el endpoint playlist maneja el "warming")
+      const baseUrl = getRequestBaseUrl(req);
       const channelDir = path.join(DVR_DIR || path.join(__dirname, 'dvr-cache'), channelId);
       const playlistPath = path.join(channelDir, 'live.m3u8');
+      const encodedToken = encodeURIComponent(dvrToken);
+      const fileBaseUrl = `${baseUrl}/api/dvr/file/${channelId}`;
 
-      // Esperar a que la playlist esté lista (máximo 6 segundos)
-      let ready = fs.existsSync(playlistPath);
-      if (!ready) {
-        for (let i = 0; i < 12; i++) {
-          await new Promise(r => setTimeout(r, 500));
-          if (fs.existsSync(playlistPath)) { ready = true; break; }
-        }
-      }
+      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Cache-Control', 'no-cache, no-store');
 
-      if (ready) {
-        const baseUrl = getRequestBaseUrl(req);
+      if (fs.existsSync(playlistPath)) {
         let m3u8 = fs.readFileSync(playlistPath, 'utf8');
-
-        // Generar JWT temporal para autenticar los segmentos DVR
-        const dvrToken = jwt.sign(
-          { id: client.id, username: client.username, xtreamUser: username, xtreamPass: password },
-          JWT_SECRET,
-          { expiresIn: '4h' }
-        );
-        const encodedToken = encodeURIComponent(dvrToken);
-
-        // Rewrite relative paths to absolute authenticated URLs with JWT
-        m3u8 = m3u8.replace(/(init\.mp4)/g, `${baseUrl}/api/dvr/file/${channelId}/$1?token=${encodedToken}`);
-        m3u8 = m3u8.replace(/(seg_\d+\.m4s)/g, `${baseUrl}/api/dvr/file/${channelId}/$1?token=${encodedToken}`);
-
-        // Asegurar EXT-X-VERSION:7 para fMP4
+        m3u8 = m3u8.replace(/(init\.mp4)/g, `${fileBaseUrl}/$1?token=${encodedToken}`);
+        m3u8 = m3u8.replace(/(seg_\d+\.m4s)/g, `${fileBaseUrl}/$1?token=${encodedToken}`);
         if (!m3u8.includes('EXT-X-VERSION')) {
           m3u8 = m3u8.replace('#EXTM3U', '#EXTM3U\n#EXT-X-VERSION:7');
         }
-
-        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Cache-Control', 'no-cache, no-store');
         return res.send(m3u8);
       } else {
-        // DVR no listo, fallback al stream directo
-        console.warn(`DVR playlist not ready for ${channelId}, falling back to direct`);
+        // Playlist no lista — enviar m3u8 mínimo, el reproductor reintenta solo
+        return res.send('#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n');
       }
     }
 
