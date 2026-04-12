@@ -3331,6 +3331,55 @@ app.get('/live/:username/:password/:streamId', async (req, res) => {
     const channel = channels.find(ch => ch.id === channelId);
     if (!channel) return res.status(404).send('Channel not found');
 
+    // *** DVR PRIORITY: si el canal tiene dvr_enabled, servir playlist DVR ***
+    if (channel.dvr_enabled) {
+      // Iniciar DVR si no está activo
+      if (!activeDVR.has(channelId)) {
+        try {
+          const { rows: chRows } = await pool.query('SELECT * FROM channels WHERE id = $1 AND dvr_enabled = true', [channelId]);
+          if (chRows.length > 0) {
+            startDVR(channelId, chRows[0].url);
+          }
+        } catch (e) {
+          console.error(`DVR auto-start error for ${channelId}:`, e.message);
+        }
+      }
+
+      const channelDir = path.join(__dirname, 'dvr', channelId);
+      const playlistPath = path.join(channelDir, 'live.m3u8');
+
+      // Esperar a que la playlist esté lista (máximo 6 segundos)
+      let ready = fs.existsSync(playlistPath);
+      if (!ready) {
+        for (let i = 0; i < 12; i++) {
+          await new Promise(r => setTimeout(r, 500));
+          if (fs.existsSync(playlistPath)) { ready = true; break; }
+        }
+      }
+
+      if (ready) {
+        const baseUrl = getRequestBaseUrl(req);
+        let m3u8 = fs.readFileSync(playlistPath, 'utf8');
+
+        // Rewrite relative paths to absolute authenticated URLs
+        m3u8 = m3u8.replace(/(init\.mp4)/g, `${baseUrl}/api/dvr/file/${channelId}/$1?token=${encodeURIComponent(client.password)}`);
+        m3u8 = m3u8.replace(/(seg_\d+\.m4s)/g, `${baseUrl}/api/dvr/file/${channelId}/$1?token=${encodeURIComponent(client.password)}`);
+
+        // Asegurar EXT-X-VERSION:7 para fMP4
+        if (!m3u8.includes('EXT-X-VERSION')) {
+          m3u8 = m3u8.replace('#EXTM3U', '#EXTM3U\n#EXT-X-VERSION:7');
+        }
+
+        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Cache-Control', 'no-cache, no-store');
+        return res.send(m3u8);
+      } else {
+        // DVR no listo, fallback al stream directo
+        console.warn(`DVR playlist not ready for ${channelId}, falling back to direct`);
+      }
+    }
+
     const targetUrl = channel.url;
     const isHLS = /\.m3u8?(\?|$)/i.test(targetUrl);
     const isTsStream = /\.ts(\?|$)/i.test(targetUrl) || (!isHLS && !targetUrl.match(/\.(mp4|mkv|avi|flv)/i));
