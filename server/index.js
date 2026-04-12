@@ -5850,7 +5850,38 @@ app.post('/api/admin/dvr/disable-all', authAdmin, async (req, res) => {
   }
 });
 
-console.log('📹 DVR fMP4 bajo demanda habilitado');
+console.log('📹 DVR siempre activo habilitado (no bajo demanda)');
+
+// =============================================
+// AUTO-INICIO DVR: Iniciar FFmpeg para todos los canales con dvr_enabled al arrancar
+// =============================================
+async function autoStartDVR() {
+  try {
+    const { rows } = await pool.query('SELECT id, name, url FROM channels WHERE dvr_enabled = true AND is_active = true ORDER BY name');
+    if (rows.length === 0) {
+      console.log('📹 [DVR AUTO] No hay canales con DVR habilitado');
+      return;
+    }
+    console.log(`📹 [DVR AUTO] Iniciando DVR para ${rows.length} canales...`);
+    let started = 0;
+    for (const ch of rows) {
+      if (!activeDVR.has(ch.id)) {
+        try {
+          const dvr = startDVR(ch.id, ch.url);
+          dvr.viewers = 0; // No hay viewers reales aún, pero FFmpeg corre
+          started++;
+          // Delay de 2s entre cada inicio para no saturar CPU
+          await new Promise(r => setTimeout(r, 2000));
+        } catch (err) {
+          console.error(`📹 [DVR AUTO] Error iniciando ${ch.name}:`, err.message);
+        }
+      }
+    }
+    console.log(`📹 [DVR AUTO] ${started}/${rows.length} canales DVR iniciados correctamente`);
+  } catch (err) {
+    console.error('📹 [DVR AUTO] Error general:', err.message);
+  }
+}
 
 //
 // INICIAR SERVIDOR
@@ -5862,6 +5893,8 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`🔗 Xtream Base: ${XTREAM_BASE_URL}`);
   console.log(`🔐 Setup inicial: POST http://localhost:${PORT}/api/admin/setup\n`);
   
-  // Keep-alive deshabilitado - DVR es el único sistema de estabilidad
-  console.log('📡 Keep-alive deshabilitado. DVR es el sistema principal de estabilidad.');
+  console.log('📡 DVR siempre activo. FFmpeg se inicia automáticamente para canales con DVR.');
+  
+  // Esperar 3 segundos para que el servidor esté listo, luego iniciar DVR
+  setTimeout(() => autoStartDVR(), 3000);
 });
