@@ -5337,9 +5337,11 @@ app.get('/api/reseller/plans', authReseller, async (req, res) => {
 const DVR_DIR = process.env.DVR_DIR || '/data/dvr';
 if (!fs.existsSync(DVR_DIR)) fs.mkdirSync(DVR_DIR, { recursive: true });
 
-const DVR_SEGMENT_SECONDS = 6;   // duración de cada segmento
+const DVR_SEGMENT_SECONDS = 6;   // duración de cada segmento TS
 const DVR_BUFFER_SECONDS = 300;  // 5 minutos de buffer
 const DVR_HLS_LIST_SIZE = 50;    // ~5 min de segmentos
+const TS_PACKET_SIZE = 188;      // tamaño estándar paquete MPEG-TS
+const TS_SYNC_BYTE = 0x47;       // byte de sincronización TS
 const activeDVR = new Map(); // channelId -> { sourceReq, viewers, lastAccess, recording, ... }
 
 // DVR Error Log
