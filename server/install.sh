@@ -389,13 +389,13 @@ else
 fi
 
 # =============================================
-# PASO 4.5: Configurar almacenamiento HLS
-# SSD por defecto (soporta muchos más canales)
+# PASO 4.5: Configurar almacenamiento DVR
+# Buffer de 5 minutos gestionado por Node.js nativo
 # =============================================
-log_step "💾 [3.5/8] Configurando almacenamiento HLS..."
+log_step "💾 [3.5/8] Configurando almacenamiento DVR..."
 
-HLS_DIR="/opt/streambox/hls-cache"
-HLS_CACHE_DIR="/opt/streambox/hls-proxy-cache"
+DVR_DIR="/data/dvr"
+
 
 # Detectar tipo de disco
 DISK_TYPE="desconocido"
