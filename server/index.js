@@ -5880,7 +5880,7 @@ function startTSDVR(channelId, sourceUrl, dvr, channelDir) {
 
   function handleDisconnect() {
     if (dvr.segmentTimer) { clearInterval(dvr.segmentTimer); dvr.segmentTimer = null; }
-    writeSegment(); // flush
+    processData(); // flush remaining data
 
     const shouldRestart = dvr.viewers > 0 || dvr.preWarmed;
     if (shouldRestart) {
