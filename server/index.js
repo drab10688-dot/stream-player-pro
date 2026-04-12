@@ -2449,6 +2449,7 @@ app.post('/api/channels/import-sync', authAdmin, async (req, res) => {
         imported++;
       } catch { skipped++; }
     }
+    channelListCache.invalidate();
     res.json({ imported, skipped, total: channels.length, mode });
   } catch (err) {
     console.error('Import-sync error:', err);
@@ -2492,6 +2493,7 @@ app.post('/api/channels/pull-remote', authAdmin, async (req, res) => {
         imported++;
       } catch { skipped++; }
     }
+    channelListCache.invalidate();
     res.json({ imported, skipped, total: channels.length, mode, source: remote_url });
   } catch (err) {
     console.error('Pull-remote error:', err);
@@ -2586,6 +2588,7 @@ app.post('/api/channels/import-m3u', authAdmin, async (req, res) => {
       }
     }
 
+    channelListCache.invalidate();
     res.json({ imported: inserted, total: channels.length });
   } catch (err) {
     res.status(500).json({ error: 'Error al importar M3U: ' + err.message });
