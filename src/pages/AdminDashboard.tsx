@@ -173,6 +173,7 @@ const AdminDashboard = () => {
           <TabsContent value="activity" forceMount className="data-[state=inactive]:hidden"><ActivityLogs /></TabsContent>
           <TabsContent value="connections" forceMount className="data-[state=inactive]:hidden"><ConnectionsOverview /></TabsContent>
           <TabsContent value="sync" forceMount className="data-[state=inactive]:hidden"><ChannelSync /></TabsContent>
+          <TabsContent value="dvr" forceMount className="data-[state=inactive]:hidden"><DvrMonitor /></TabsContent>
         </Tabs>
       </main>
     </div>
