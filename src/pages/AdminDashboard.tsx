@@ -28,6 +28,7 @@ import omnisyncLogo from '@/assets/omnisync-logo.png';
 import ChangePasswordDialog from '@/components/admin/ChangePasswordDialog';
 import ConnectionsOverview from '@/components/admin/ConnectionsOverview';
 import ChannelSync from '@/components/admin/ChannelSync';
+import DvrMonitor from '@/components/admin/DvrMonitor';
 
 const AdminDashboard = () => {
   const navigate = useNavigate();
