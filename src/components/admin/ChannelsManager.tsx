@@ -54,6 +54,7 @@ const ChannelsManager = () => {
   const [cacheStatus, setCacheStatus] = useState<CacheStatus[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [filterRunning, setFilterRunning] = useState(false);
+  const [dvrAllLoading, setDvrAllLoading] = useState(false);
   const logoInputRef = useRef<HTMLInputElement>(null);
   const cacheIntervalRef = useRef<ReturnType<typeof setInterval>>();
 
