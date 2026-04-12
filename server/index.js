@@ -2930,8 +2930,8 @@ app.get('/api/playlist/:token', async (req, res) => {
       return res.status(403).send('#EXTM3U\n#EXTINF:-1,Suscripción expirada\nhttp://expired');
     }
     
-    // Obtener canales activos
-    let channelsQuery = 'SELECT id, name, url, category, logo_url, stream_mode, sort_order FROM channels WHERE is_active = true ORDER BY sort_order';
+    // Obtener canales activos (incluir dvr_enabled para ruteo)
+    let channelsQuery = 'SELECT id, name, url, category, logo_url, stream_mode, sort_order, dvr_enabled FROM channels WHERE is_active = true ORDER BY sort_order';
     const { rows: channels } = await pool.query(channelsQuery);
     
     // Filtrar por plan si tiene uno asignado
@@ -2944,7 +2944,6 @@ app.get('/api/playlist/:token', async (req, res) => {
     const baseUrl = getRequestBaseUrl(req);
     
     // Generar M3U compatible con OTT Player, VLC, TiviMate, IPTV Smarters, Smart IPTV
-    // IMPORTANTE: si el origen es HLS, publicar .m3u8; si no, publicar .ts
     let m3u = '#EXTM3U\n';
     
     for (const ch of filteredChannels) {
@@ -2952,11 +2951,16 @@ app.get('/api/playlist/:token', async (req, res) => {
         ? (ch.logo_url.startsWith('http') ? ch.logo_url : baseUrl + ch.logo_url)
         : '';
 
-      const isHlsSource = /\.m3u8?(\?|$)/i.test(ch.url);
-      const outputExt = isHlsSource ? 'm3u8' : 'ts';
-      
       m3u += `#EXTINF:-1 tvg-id="${ch.id}" tvg-name="${ch.name}" tvg-logo="${logoUrl}" group-title="${ch.category}",${ch.name}\n`;
-      m3u += `${baseUrl}/live/${encodeURIComponent(client.username)}/${encodeURIComponent(client.password)}/${ch.id}.${outputExt}\n`;
+
+      if (ch.dvr_enabled) {
+        // DVR activo: apuntar a la playlist DVR local (fMP4/HLS) con autenticación por credenciales
+        m3u += `${baseUrl}/live/${encodeURIComponent(client.username)}/${encodeURIComponent(client.password)}/${ch.id}.m3u8\n`;
+      } else {
+        const isHlsSource = /\.m3u8?(\?|$)/i.test(ch.url);
+        const outputExt = isHlsSource ? 'm3u8' : 'ts';
+        m3u += `${baseUrl}/live/${encodeURIComponent(client.username)}/${encodeURIComponent(client.password)}/${ch.id}.${outputExt}\n`;
+      }
     }
     
     res.set({
