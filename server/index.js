@@ -107,7 +107,6 @@ const FFMPEG_ENV = {
     '/usr/bin',
     '/sbin',
     '/bin',
-    '/snap/bin',
   ].join(':').split(':').filter(Boolean))).join(':'),
 };
 
@@ -117,7 +116,6 @@ const FFMPEG_BIN = (() => {
     '/usr/bin/ffmpeg',
     '/usr/local/bin/ffmpeg',
     '/bin/ffmpeg',
-    '/snap/bin/ffmpeg',
   ].filter(Boolean);
 
   for (const candidate of candidates) {
@@ -5548,15 +5546,7 @@ function startDVR(channelId, sourceUrl) {
 
   const playlistPath = path.join(channelDir, 'live.m3u8');
   const segPattern = path.join(channelDir, 'seg_%03d.m4s');
-  const ffmpegBinCandidates = [
-    process.env.FFMPEG_PATH,
-    FFMPEG_BIN,
-    '/usr/bin/ffmpeg',
-    '/usr/local/bin/ffmpeg',
-    '/bin/ffmpeg',
-    'ffmpeg',
-  ].filter(Boolean);
-  const ffmpegBin = ffmpegBinCandidates.find(candidate => candidate === 'ffmpeg' || fs.existsSync(candidate)) || 'ffmpeg';
+  const ffmpegBin = FFMPEG_BIN;
 
   const ffmpegArgs = [
     '-hide_banner', '-loglevel', 'warning',
@@ -5571,8 +5561,11 @@ function startDVR(channelId, sourceUrl) {
     '-map', '0:a:0?',
     '-dn',
     '-sn',
-    '-c:v', 'copy',
-    '-c:a', 'aac', '-b:a', '128k', '-ac', '2',
+    ...(dvr._transcode
+      ? ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-b:v', '2500k',
+         '-c:a', 'aac', '-b:a', '128k', '-ac', '2']
+      : ['-c:v', 'copy',
+         '-c:a', 'aac', '-b:a', '128k', '-ac', '2']),
     '-f', 'hls',
     '-hls_time', String(DVR_SEGMENT_SECONDS),
     '-hls_list_size', String(DVR_HLS_LIST_SIZE),
@@ -5606,9 +5599,26 @@ function startDVR(channelId, sourceUrl) {
 
     const fatalInitError = !isDvrReady(channelId) && dvr.restartCount >= 2;
     if (fatalInitError) {
+      // Si falló con copy, reintentar con transcodificación completa
+      if (!dvr._transcode) {
+        console.log(`📹 [DVR ${channelId}] init.mp4 falló con -c:v copy, reintentando con transcodificación libx264...`);
+        logDvrError(channelId, 'Switching to transcode fallback (libx264) after copy failed', 'fallback');
+        activeDVR.delete(channelId);
+        setTimeout(() => {
+          const newDvr = startDVR(channelId, normalizedUrl);
+          if (newDvr) {
+            newDvr.viewers = dvr.viewers;
+            newDvr.restartCount = 0; // reset para dar 3 intentos con transcode
+            newDvr.preWarmed = dvr.preWarmed;
+            newDvr._transcode = true;
+          }
+        }, 2000);
+        return;
+      }
+      // Ya falló también con transcode → desactivar definitivamente
       dvr.recording = false;
       activeDVR.delete(channelId);
-      const reason = `DVR desactivado: init.mp4 no se creó tras ${dvr.restartCount + 1} intentos (exit code ${code})`;
+      const reason = `DVR desactivado: init.mp4 no se creó tras ${dvr.restartCount + 1} intentos con transcodificación (exit code ${code})`;
       console.error(`📹 [DVR ${channelId}] ${reason}`);
       logDvrError(channelId, reason, 'fatal');
       return;
@@ -5627,6 +5637,7 @@ function startDVR(channelId, sourceUrl) {
             newDvr.viewers = dvr.viewers;
             newDvr.restartCount = dvr.restartCount;
             newDvr.preWarmed = dvr.preWarmed;
+            newDvr._transcode = dvr._transcode || false;
           }
         }
       }, delay);
