@@ -190,7 +190,7 @@ const DvrMonitor = () => {
                         {dvr.channelName || dvr.channelId.slice(0, 8)}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        FFmpeg iniciándose... espera unos segundos
+                        Esperando pre-calentamiento...
                       </p>
                     </div>
                   </div>
