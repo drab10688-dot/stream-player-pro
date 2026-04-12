@@ -474,10 +474,29 @@ log_ok "Almacenamiento HLS en disco SSD: $HLS_DIR"
 log_info "Capacidad estimada: ~$((DISK_AVAIL_GB / 500 * 1000)) canales keep-alive (30min caché)"
 
 # Instalar FFmpeg si no está y verificar ruta real
+normalize_ffmpeg_bin() {
+  local candidate="$1"
+  if [ -z "$candidate" ]; then
+    return 1
+  fi
+  readlink -f "$candidate" 2>/dev/null || printf '%s\n' "$candidate"
+}
+
+is_native_ffmpeg_bin() {
+  local resolved
+  resolved="$(normalize_ffmpeg_bin "$1" 2>/dev/null || true)"
+  [ -n "$resolved" ] && [ -x "$resolved" ] && [[ "$resolved" != /snap/* ]]
+}
+
 resolve_ffmpeg_bin() {
-  for candidate in "${FFMPEG_PATH:-}" /usr/bin/ffmpeg /usr/local/bin/ffmpeg /bin/ffmpeg "$(PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' command -v ffmpeg 2>/dev/null)"; do
-    if [ -n "$candidate" ] && [ -x "$candidate" ] && [[ "$candidate" != /snap/* ]]; then
-      printf '%s\n' "$candidate"
+  local dpkg_candidate=""
+  if command -v dpkg-query >/dev/null 2>&1; then
+    dpkg_candidate="$(dpkg-query -L ffmpeg 2>/dev/null | grep -E '/ffmpeg$' | grep -v '/snap/' | head -1)"
+  fi
+
+  for candidate in "${FFMPEG_PATH:-}" /usr/bin/ffmpeg /usr/local/bin/ffmpeg /bin/ffmpeg "$dpkg_candidate" "$(PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' command -v ffmpeg 2>/dev/null)"; do
+    if is_native_ffmpeg_bin "$candidate"; then
+      printf '%s\n' "$(normalize_ffmpeg_bin "$candidate")"
       return 0
     fi
   done
@@ -504,6 +523,13 @@ if [ -z "$FFMPEG_BIN" ]; then
     log_warn "Instalación APT de FFmpeg falló"
   fi
 
+  hash -r 2>/dev/null || true
+  FFMPEG_BIN="$(resolve_ffmpeg_bin || true)"
+fi
+
+if [ -z "$FFMPEG_BIN" ] && dpkg -s ffmpeg >/dev/null 2>&1; then
+  log_warn "APT reporta FFmpeg instalado pero el binario no fue detectado; forzando reinstalación..."
+  DEBIAN_FRONTEND=noninteractive apt-get install --reinstall -y ffmpeg >> "$FFMPEG_INSTALL_LOG" 2>&1 || true
   hash -r 2>/dev/null || true
   FFMPEG_BIN="$(resolve_ffmpeg_bin || true)"
 fi
