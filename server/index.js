@@ -117,6 +117,12 @@ const FFMPEG_ENV = {
   ].join(':').split(':').filter(Boolean))).join(':'),
 };
 
+// Helper: check if ffmpeg binary exists on disk
+function ffmpegPathExists(p) {
+  if (!p) return false;
+  try { return fs.existsSync(p); } catch { return false; }
+}
+
 // Prefer native apt ffmpeg over snap, but allow snap as last resort
 const FFMPEG_BIN = (() => {
   // Priority 1: non-snap candidates
