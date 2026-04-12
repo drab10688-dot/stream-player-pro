@@ -3129,6 +3129,7 @@ app.put('/api/plans/:id', authAdmin, async (req, res) => {
       'UPDATE plans SET name=$1, description=$2, categories=$3, price=$4, is_active=$5, sort_order=$6 WHERE id=$7 RETURNING *',
       [name, description, categories, price, is_active, sort_order, req.params.id]
     );
+    invalidatePlanCache();
     res.json(rows[0]);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -3137,6 +3138,7 @@ app.put('/api/plans/:id', authAdmin, async (req, res) => {
 
 app.delete('/api/plans/:id', authAdmin, async (req, res) => {
   await pool.query('DELETE FROM plans WHERE id = $1', [req.params.id]);
+  invalidatePlanCache();
   res.json({ ok: true });
 });
 
