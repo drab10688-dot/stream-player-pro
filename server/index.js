@@ -4758,25 +4758,18 @@ const handleApkStreamRequest = async (req, res) => {
       const ch = localCh[0];
       const sourceUrl = ch.url;
 
-      // *** DVR PRIORITY: si el canal tiene DVR habilitado, iniciar grabación y servir playlist local ***
+      // *** DVR PRIORITY: respuesta INSTANTÁNEA — iniciar DVR en background ***
       if (ch.dvr_enabled) {
+        // Iniciar grabación si no está activa (no-blocking)
         startDVR(channelId, sourceUrl);
-        
-        // Esperar a que la playlist esté lista (máximo 5s) para reducir delay en la APK
-        const channelDir = path.join(DVR_DIR || path.join(__dirname, 'dvr-cache'), channelId);
-        const playlistPath = path.join(channelDir, 'live.m3u8');
-        playlistReady = fs.existsSync(playlistPath);
-        if (!playlistReady) {
-          for (let i = 0; i < 10; i++) {
-            await new Promise(r => setTimeout(r, 500));
-            if (fs.existsSync(playlistPath)) { playlistReady = true; break; }
-          }
-        }
         
         const baseUrl = getRequestBaseUrl(req);
         const token = req.headers.authorization?.replace('Bearer ', '') || '';
         streamUrl = `${baseUrl}/api/dvr/playlist/${channelId}?token=${encodeURIComponent(token)}`;
         dvrActive = true;
+        // playlistReady se determina sin bloquear
+        const channelDir = path.join(DVR_DIR || path.join(__dirname, 'dvr-cache'), channelId);
+        playlistReady = fs.existsSync(path.join(channelDir, 'live.m3u8'));
       } else {
         const isTsStream = /\.ts(\?|$)/i.test(sourceUrl) || /\/\d+\.ts(\?|$)/i.test(sourceUrl);
         const isDirectMode = ch.stream_mode === 'direct';
