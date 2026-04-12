@@ -5497,6 +5497,17 @@ const DVR_HLS_LIST_SIZE = Math.ceil(DVR_BUFFER_SECONDS / DVR_SEGMENT_SECONDS); /
 // Pre-calentamiento: sin idle timeout, FFmpeg corre permanentemente mientras dvr_enabled
 const activeDVR = new Map(); // channelId -> { ffmpeg, viewers, lastAccess, recording, ... }
 
+// DVR Error Log: últimos errores por canal para auditoría desde el panel
+const dvrErrorLog = new Map(); // channelId -> [{ timestamp, message, type }]
+const DVR_ERROR_LOG_MAX = 20; // máximo errores por canal
+
+function logDvrError(channelId, message, type = 'ffmpeg') {
+  if (!dvrErrorLog.has(channelId)) dvrErrorLog.set(channelId, []);
+  const log = dvrErrorLog.get(channelId);
+  log.push({ timestamp: new Date().toISOString(), message: message.substring(0, 500), type });
+  if (log.length > DVR_ERROR_LOG_MAX) log.splice(0, log.length - DVR_ERROR_LOG_MAX);
+}
+
 function startDVR(channelId, sourceUrl) {
   const validation = validateStreamSourceUrl(sourceUrl);
   if (!validation.valid) {
@@ -5582,20 +5593,24 @@ function startDVR(channelId, sourceUrl) {
   dvr.ffmpeg = ffmpeg;
 
   ffmpeg.stderr.on('data', (data) => {
-    const msg = data.toString();
-    if (/error|failed|Connection refused|404|403|Invalid data|No such file/i.test(msg)) {
-      console.error(`📹 [DVR ${channelId}] ${msg.trim()}`);
+    const msg = data.toString().trim();
+    if (/error|failed|Connection refused|404|403|Invalid data|No such file|ENOENT|unable to open/i.test(msg)) {
+      console.error(`📹 [DVR ${channelId}] ${msg}`);
+      logDvrError(channelId, msg, 'ffmpeg_stderr');
     }
   });
 
   ffmpeg.on('close', (code) => {
     console.log(`📹 [DVR ${channelId}] FFmpeg terminó (code ${code})`);
+    logDvrError(channelId, `FFmpeg exit code ${code}`, 'exit');
 
     const fatalInitError = !isDvrReady(channelId) && dvr.restartCount >= 2;
     if (fatalInitError) {
       dvr.recording = false;
       activeDVR.delete(channelId);
-      console.error(`📹 [DVR ${channelId}] DVR desactivado temporalmente tras fallar init.mp4; se usará fallback sin DVR`);
+      const reason = `DVR desactivado: init.mp4 no se creó tras ${dvr.restartCount + 1} intentos (exit code ${code})`;
+      console.error(`📹 [DVR ${channelId}] ${reason}`);
+      logDvrError(channelId, reason, 'fatal');
       return;
     }
 
@@ -5622,6 +5637,7 @@ function startDVR(channelId, sourceUrl) {
 
   ffmpeg.on('error', (err) => {
     console.error(`📹 [DVR ${channelId}] Error FFmpeg:`, err.message);
+    logDvrError(channelId, `spawn error: ${err.message}`, 'spawn');
   });
 
   activeDVR.set(channelId, dvr);
