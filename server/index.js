@@ -1474,7 +1474,7 @@ function startTSSegmenter(channelId, sourceUrl, isKeepAlive = false) {
 
   function handleDisconnect() {
     if (entry.segmentTimer) { clearInterval(entry.segmentTimer); entry.segmentTimer = null; }
-    writeSegment();
+    processIncomingData(); // flush remaining data
 
     const shouldRetry = entry.keepAlive || (entry.clients > 0 && entry.retryCount < entry.maxRetries);
     if (shouldRetry) {
