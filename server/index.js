@@ -5717,38 +5717,78 @@ function startTSDVR(channelId, sourceUrl, dvr, channelDir) {
   dvr._segStartTime = Date.now();
   console.log(`📹 [DVR ${channelId}] Iniciando DVR TS con alineación de paquetes: ${sourceUrl}`);
 
-  function writeSegment() {
-    if (dvr._bufferBytes === 0) return;
+  // Detectar PAT (PID 0x0000) para cortar en keyframe boundaries
+  function findPATInBuffer(buf, startOffset) {
+    for (let i = startOffset; i + 188 <= buf.length; i += 188) {
+      if (buf[i] === 0x47) {
+        const pid = ((buf[i + 1] & 0x1F) << 8) | buf[i + 2];
+        if (pid === 0) return i;
+      }
+    }
+    return -1;
+  }
+
+  function processData() {
+    if (dvr._bufferBytes < 188 * 10) return;
 
     // Concatenar pending + nuevos chunks
     let raw = Buffer.concat([dvr._tsPending, ...dvr._buffer]);
     dvr._tsPending = Buffer.alloc(0);
+    dvr._buffer = [];
+    dvr._bufferBytes = 0;
 
-    // Alinear a límites de paquetes TS (188 bytes, sync 0x47)
+    // Alinear a 188 bytes
     const { aligned, remainder } = alignTSPackets(raw);
     dvr._tsPending = remainder;
 
     if (aligned.length === 0) return;
 
+    // Acumular en buffer de segmento
+    if (!dvr._segAccum) dvr._segAccum = [];
+    dvr._segAccum.push(aligned);
+    if (!dvr._segAccumBytes) dvr._segAccumBytes = 0;
+    dvr._segAccumBytes += aligned.length;
+
+    const elapsed = (Date.now() - dvr._segStartTime) / 1000;
+
+    // Solo cortar si ha pasado el tiempo mínimo
+    if (elapsed < DVR_SEGMENT_SECONDS) return;
+
+    const segData = Buffer.concat(dvr._segAccum);
+    // Buscar PAT en el último 20% para cortar en keyframe
+    const searchStart = Math.max(188, Math.floor(segData.length * 0.8));
+    const patPos = findPATInBuffer(segData, searchStart);
+
+    // Si no encontramos PAT y no ha pasado 2.5x el tiempo, esperar
+    if (patPos < 0 && elapsed < DVR_SEGMENT_SECONDS * 2.5) return;
+
+    let segToWrite, leftover;
+    if (patPos > 0) {
+      segToWrite = segData.slice(0, patPos);
+      leftover = segData.slice(patPos);
+    } else {
+      segToWrite = segData;
+      leftover = Buffer.alloc(0);
+    }
+
+    if (segToWrite.length === 0) return;
+
     const segFilename = `segment${dvr.segmentIndex}.ts`;
     const segPath = path.join(channelDir, segFilename);
 
     try {
-      fs.writeFileSync(segPath, aligned);
+      fs.writeFileSync(segPath, segToWrite);
     } catch (err) {
       logDvrError(channelId, `Error escribiendo segmento: ${err.message}`, 'write');
       return;
     }
 
-    // Duración real basada en timestamp
-    const now = Date.now();
-    const realDuration = (now - dvr._segStartTime) / 1000;
+    const realDuration = (Date.now() - dvr._segStartTime) / 1000;
     dvr.segmentDurations[dvr.segmentIndex] = Math.max(realDuration, 1);
-    dvr._segStartTime = now;
-
+    dvr._segStartTime = Date.now();
     dvr.segmentIndex++;
-    dvr._buffer = [];
-    dvr._bufferBytes = 0;
+    dvr._segAccum = leftover.length > 0 ? [leftover] : [];
+    dvr._segAccumBytes = leftover.length;
 
     // Cleanup old segments
     const allSegs = fs.readdirSync(channelDir)
@@ -5789,7 +5829,7 @@ function startTSDVR(channelId, sourceUrl, dvr, channelDir) {
 
     if (!dvr.ready && currentSegs.length >= 3) {
       dvr.ready = true;
-      console.log(`✅ [DVR ${channelId}] TS DVR listo (${currentSegs.length} segmentos)`);
+      console.log(`✅ [DVR ${channelId}] TS DVR listo (${currentSegs.length} segmentos, keyframe-aligned)`);
     }
   }
 
@@ -5801,16 +5841,25 @@ function startTSDVR(channelId, sourceUrl, dvr, channelDir) {
         return;
       }
 
-      console.log(`✅ [DVR ${channelId}] TS DVR conectado (packet-aligned)`);
+      console.log(`✅ [DVR ${channelId}] TS DVR conectado (keyframe-aligned)`);
       dvr._segStartTime = Date.now();
+      dvr._segAccum = [];
+      dvr._segAccumBytes = 0;
 
       sourceRes.on('data', (chunk) => {
         dvr.lastAccess = Date.now();
         dvr._buffer.push(chunk);
         dvr._bufferBytes += chunk.length;
+        processData();
       });
 
-      dvr.segmentTimer = setInterval(() => writeSegment(), DVR_SEGMENT_SECONDS * 1000);
+      // Timer de respaldo
+      dvr.segmentTimer = setInterval(() => {
+        if (dvr._segAccumBytes > 0) {
+          const elapsed = (Date.now() - dvr._segStartTime) / 1000;
+          if (elapsed >= DVR_SEGMENT_SECONDS * 2.5) processData();
+        }
+      }, DVR_SEGMENT_SECONDS * 1000);
 
       sourceRes.on('end', () => {
         console.log(`⚠️ [DVR ${channelId}] TS origen cerró conexión`);
