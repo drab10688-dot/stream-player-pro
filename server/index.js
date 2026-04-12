@@ -4711,7 +4711,8 @@ app.post('/api/auth/login', async (req, res) => {
 // NOTA: GET /api/channels unificado arriba (admin + APK en un solo handler)
 
 // GET /api/channels/:id/stream
-app.get('/api/channels/:id/stream', authApk, async (req, res) => {
+// Legacy compatible: GET /api/stream/:id
+const handleApkStreamRequest = async (req, res) => {
   try {
     const { xtreamUser, xtreamPass, id: userId, maxConnections } = req.apkUser;
     const channelId = req.params.id;
@@ -4758,7 +4759,7 @@ app.get('/api/channels/:id/stream', authApk, async (req, res) => {
 
       // *** DVR PRIORITY: si el canal tiene DVR habilitado, iniciar grabación y servir playlist local ***
       if (ch.dvr_enabled) {
-        const dvr = startDVR(channelId, sourceUrl);
+        startDVR(channelId, sourceUrl);
         const baseUrl = getRequestBaseUrl(req);
         const token = req.headers.authorization?.replace('Bearer ', '') || '';
         streamUrl = `${baseUrl}/api/dvr/playlist/${channelId}?token=${encodeURIComponent(token)}`;
@@ -4778,10 +4779,6 @@ app.get('/api/channels/:id/stream', authApk, async (req, res) => {
       channelName = ch.name;
       channelCategory = ch.category;
       channelLogo = ch.logo_url;
-
-      channelName = localCh[0].name;
-      channelCategory = localCh[0].category;
-      channelLogo = localCh[0].logo_url;
     } else {
       // Canal Xtream → construir URL Xtream
       const quality = req.query.quality || 'auto';
@@ -4855,7 +4852,10 @@ app.get('/api/channels/:id/stream', authApk, async (req, res) => {
     console.error('APK stream error:', err.message);
     res.status(500).json({ error: 'Error al obtener stream' });
   }
-});
+};
+
+app.get('/api/channels/:id/stream', authApk, handleApkStreamRequest);
+app.get('/api/stream/:id', authApk, handleApkStreamRequest);
 
 // POST /api/sessions/close
 // Cierra sesión por token (userId) + device_id para no duplicar
