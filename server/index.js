@@ -3361,9 +3361,17 @@ app.get('/live/:username/:password/:streamId', async (req, res) => {
         const baseUrl = getRequestBaseUrl(req);
         let m3u8 = fs.readFileSync(playlistPath, 'utf8');
 
-        // Rewrite relative paths to absolute authenticated URLs
-        m3u8 = m3u8.replace(/(init\.mp4)/g, `${baseUrl}/api/dvr/file/${channelId}/$1?token=${encodeURIComponent(client.password)}`);
-        m3u8 = m3u8.replace(/(seg_\d+\.m4s)/g, `${baseUrl}/api/dvr/file/${channelId}/$1?token=${encodeURIComponent(client.password)}`);
+        // Generar JWT temporal para autenticar los segmentos DVR
+        const dvrToken = jwt.sign(
+          { id: client.id, username: client.username, xtreamUser: username, xtreamPass: password },
+          JWT_SECRET,
+          { expiresIn: '4h' }
+        );
+        const encodedToken = encodeURIComponent(dvrToken);
+
+        // Rewrite relative paths to absolute authenticated URLs with JWT
+        m3u8 = m3u8.replace(/(init\.mp4)/g, `${baseUrl}/api/dvr/file/${channelId}/$1?token=${encodedToken}`);
+        m3u8 = m3u8.replace(/(seg_\d+\.m4s)/g, `${baseUrl}/api/dvr/file/${channelId}/$1?token=${encodedToken}`);
 
         // Asegurar EXT-X-VERSION:7 para fMP4
         if (!m3u8.includes('EXT-X-VERSION')) {
