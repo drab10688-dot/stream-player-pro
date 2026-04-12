@@ -4765,7 +4765,7 @@ const handleApkStreamRequest = async (req, res) => {
         // Esperar a que la playlist esté lista (máximo 5s) para reducir delay en la APK
         const channelDir = path.join(DVR_DIR || path.join(__dirname, 'dvr-cache'), channelId);
         const playlistPath = path.join(channelDir, 'live.m3u8');
-        let playlistReady = fs.existsSync(playlistPath);
+        playlistReady = fs.existsSync(playlistPath);
         if (!playlistReady) {
           for (let i = 0; i < 10; i++) {
             await new Promise(r => setTimeout(r, 500));
