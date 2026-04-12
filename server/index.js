@@ -5372,7 +5372,8 @@ function logDvrError(channelId, message, type = 'node') {
 }
 
 // Helper: descargar URL con soporte de redirects
-function dvrFetchUrl(url, timeout = 15000) {
+// streaming=true desactiva el timeout después de conectar (para streams TS persistentes)
+function dvrFetchUrl(url, timeout = 15000, streaming = false) {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
     const httpModule = parsed.protocol === 'https:' ? https : http;
@@ -5385,8 +5386,12 @@ function dvrFetchUrl(url, timeout = 15000) {
         const redirectUrl = res.headers.location.startsWith('http')
           ? res.headers.location
           : new URL(res.headers.location, url).href;
-        dvrFetchUrl(redirectUrl, timeout).then(resolve).catch(reject);
+        dvrFetchUrl(redirectUrl, timeout, streaming).then(resolve).catch(reject);
         return;
+      }
+      // Para streams persistentes, eliminar el timeout del socket para que no se corte
+      if (streaming && req.socket) {
+        req.socket.setTimeout(0);
       }
       resolve(res);
     });
