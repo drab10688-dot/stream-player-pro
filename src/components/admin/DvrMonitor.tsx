@@ -27,8 +27,7 @@ interface DvrStatus {
 }
 
 interface DvrDiagnostics {
-  ffmpegBin: string;
-  ffmpegExists: boolean;
+  engine: string;
   dvrDir: string;
   activeCount: number;
   channelsWithErrors: number;
@@ -43,8 +42,7 @@ interface DvrDiagnostics {
 
 interface ChannelDiagnostic {
   channelId: string;
-  ffmpegBin: string;
-  ffmpegExists: boolean;
+  engine: string;
   channelDir: string;
   channelDirExists: boolean;
   
@@ -201,12 +199,9 @@ const DvrMonitor = () => {
               <CardContent className="space-y-3">
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                   <div className="flex items-center gap-2">
-                    {diagnostics.ffmpegExists 
-                      ? <CheckCircle className="w-4 h-4 text-green-500" />
-                      : <XCircle className="w-4 h-4 text-destructive" />
-                    }
-                    <span className="text-muted-foreground">FFmpeg:</span>
-                    <code className="text-xs bg-secondary px-1 rounded truncate">{diagnostics.ffmpegBin}</code>
+                    <CheckCircle className="w-4 h-4 text-green-500" />
+                    <span className="text-muted-foreground">Motor:</span>
+                    <code className="text-xs bg-secondary px-1 rounded truncate">{diagnostics.engine || 'Node.js nativo'}</code>
                   </div>
                   <div>
                     <span className="text-muted-foreground">DVR Dir:</span>
@@ -270,7 +265,7 @@ const DvrMonitor = () => {
             <div className="text-center py-8 text-muted-foreground">
               <Video className="w-10 h-10 mx-auto mb-2 opacity-30" />
               <p>No hay canales con DVR habilitado</p>
-              <p className="text-xs mt-1">Activa el DVR en la pestaña de Canales. FFmpeg se inicia automáticamente.</p>
+              <p className="text-xs mt-1">Activa el DVR en la pestaña de Canales. El segmentador Node.js se inicia automáticamente.</p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -353,12 +348,9 @@ const DvrMonitor = () => {
                         <div className="ml-8 mt-2 p-3 rounded-lg bg-secondary/50 border border-border/30 text-xs space-y-2">
                           <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
                             <div>
-                              <span className="text-muted-foreground">FFmpeg:</span>{' '}
-                              <code className="bg-background px-1 rounded">{channelDiag.ffmpegBin}</code>
-                              {channelDiag.ffmpegExists 
-                                ? <CheckCircle className="w-3 h-3 text-green-500 inline ml-1" />
-                                : <XCircle className="w-3 h-3 text-destructive inline ml-1" />
-                              }
+                              <span className="text-muted-foreground">Motor:</span>{' '}
+                              <code className="bg-background px-1 rounded">{channelDiag.engine || 'Node.js nativo'}</code>
+                              <CheckCircle className="w-3 h-3 text-green-500 inline ml-1" />
                             </div>
                             <div>
                               <span className="text-muted-foreground">Segmentos .ts:</span>{' '}
@@ -484,12 +476,9 @@ const DvrMonitor = () => {
                         <div className="ml-8 mt-2 p-3 rounded-lg bg-secondary/50 border border-border/30 text-xs space-y-2">
                           <div className="grid grid-cols-2 gap-2">
                             <div>
-                              <span className="text-muted-foreground">FFmpeg:</span>{' '}
-                              <code className="bg-background px-1 rounded">{channelDiag.ffmpegBin}</code>
-                              {channelDiag.ffmpegExists 
-                                ? <CheckCircle className="w-3 h-3 text-green-500 inline ml-1" />
-                                : <XCircle className="w-3 h-3 text-destructive inline ml-1" />
-                              }
+                              <span className="text-muted-foreground">Motor:</span>{' '}
+                              <code className="bg-background px-1 rounded">{channelDiag.engine || 'Node.js nativo'}</code>
+                              <CheckCircle className="w-3 h-3 text-green-500 inline ml-1" />
                             </div>
                             <div>
                               <span className="text-muted-foreground">Reinicios:</span> {channelDiag.restartCount}
