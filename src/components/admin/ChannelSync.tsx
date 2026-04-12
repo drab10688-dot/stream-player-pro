@@ -9,8 +9,9 @@ import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { copyToClipboard } from '@/lib/clipboard';
-import { Upload, Download, Link, Copy, Check, Loader2, ArrowRightLeft, Globe, FileText } from 'lucide-react';
+import { Upload, Download, Link, Copy, Check, Loader2, ArrowRightLeft, Globe, FileText, Shield, Video, Clock } from 'lucide-react';
 
 const ChannelSync = () => {
   const { toast } = useToast();
@@ -19,49 +20,53 @@ const ChannelSync = () => {
   // Export
   const [exportToken, setExportToken] = useState('');
   const [exportCount, setExportCount] = useState(0);
+  const [exportDvrCount, setExportDvrCount] = useState(0);
+  const [expiresHours, setExpiresHours] = useState('24');
   const [copied, setCopied] = useState(false);
 
   // Import via token
   const [importToken, setImportToken] = useState('');
   const [importMode, setImportMode] = useState<'merge' | 'replace'>('merge');
+  const [importResult, setImportResult] = useState<any>(null);
 
   // Pull from remote
   const [remoteUrl, setRemoteUrl] = useState('');
   const [remoteAdminToken, setRemoteAdminToken] = useState('');
   const [pullMode, setPullMode] = useState<'merge' | 'replace'>('merge');
 
+  const callSyncFunction = async (action: string, body?: any) => {
+    const session = await supabase.auth.getSession();
+    const token = session.data.session?.access_token;
+    const resp = await fetch(
+      `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/channel-sync?action=${action}`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+        },
+        body: body ? JSON.stringify(body) : undefined,
+      }
+    );
+    const result = await resp.json();
+    if (!resp.ok) throw new Error(result.error);
+    return result;
+  };
+
   const handleExport = async () => {
     setLoading(true);
     try {
+      let result;
       if (isLovablePreview()) {
-        const { data, error } = await supabase.functions.invoke('channel-sync', {
-          body: {},
-          headers: {},
-        });
-        // Use query param approach
-        const session = await supabase.auth.getSession();
-        const token = session.data.session?.access_token;
-        const resp = await fetch(
-          `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/channel-sync?action=export`,
-          {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json',
-              'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
-            },
-          }
-        );
-        const result = await resp.json();
-        if (!resp.ok) throw new Error(result.error);
-        setExportToken(result.export_token);
-        setExportCount(result.channels_count);
+        result = await callSyncFunction('export', { expires_hours: parseInt(expiresHours) });
       } else {
-        const result = await apiGet('/api/channels/export');
-        setExportToken(result.export_token);
-        setExportCount(result.channels_count);
+        result = await apiPost('/api/channels/export', { expires_hours: parseInt(expiresHours) });
       }
-      toast({ title: '✅ Exportación lista', description: 'Copia el token y pégalo en el otro panel' });
+      setExportToken(result.export_token);
+      setExportCount(result.channels_count);
+      setExportDvrCount(result.dvr_channels || 0);
+      toast({ title: '✅ Exportación lista', description: `${result.channels_count} canales (${result.dvr_channels || 0} con DVR). Expira en ${expiresHours}h` });
     } catch (err: any) {
       toast({ title: 'Error', description: err.message, variant: 'destructive' });
     }
@@ -83,38 +88,19 @@ const ChannelSync = () => {
       return;
     }
     setLoading(true);
+    setImportResult(null);
     try {
+      let result;
       if (isLovablePreview()) {
-        const session = await supabase.auth.getSession();
-        const token = session.data.session?.access_token;
-        const resp = await fetch(
-          `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/channel-sync?action=import`,
-          {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json',
-              'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
-            },
-            body: JSON.stringify({ export_token: importToken.trim(), mode: importMode }),
-          }
-        );
-        const result = await resp.json();
-        if (!resp.ok) throw new Error(result.error);
-        toast({
-          title: '✅ Importación completada',
-          description: `${result.imported} importados, ${result.skipped} omitidos de ${result.total} totales`,
-        });
+        result = await callSyncFunction('import', { export_token: importToken.trim(), mode: importMode });
       } else {
-        const result = await apiPost('/api/channels/import-sync', {
-          export_token: importToken.trim(),
-          mode: importMode,
-        });
-        toast({
-          title: '✅ Importación completada',
-          description: `${result.imported} importados, ${result.skipped} omitidos de ${result.total} totales`,
-        });
+        result = await apiPost('/api/channels/import-sync', { export_token: importToken.trim(), mode: importMode });
       }
+      setImportResult(result);
+      toast({
+        title: '✅ Importación completada',
+        description: `${result.imported} importados (${result.dvr_imported || 0} con DVR), ${result.skipped} omitidos`,
+      });
       setImportToken('');
     } catch (err: any) {
       toast({ title: 'Error', description: err.message, variant: 'destructive' });
@@ -129,42 +115,24 @@ const ChannelSync = () => {
     }
     setLoading(true);
     try {
+      let result;
       if (isLovablePreview()) {
-        const session = await supabase.auth.getSession();
-        const token = session.data.session?.access_token;
-        const resp = await fetch(
-          `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/channel-sync?action=pull`,
-          {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json',
-              'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
-            },
-            body: JSON.stringify({
-              remote_url: remoteUrl.trim(),
-              remote_admin_token: remoteAdminToken.trim(),
-              mode: pullMode,
-            }),
-          }
-        );
-        const result = await resp.json();
-        if (!resp.ok) throw new Error(result.error);
-        toast({
-          title: '✅ Sincronización completada',
-          description: `${result.imported} importados desde ${result.source}`,
-        });
-      } else {
-        const result = await apiPost('/api/channels/pull-remote', {
+        result = await callSyncFunction('pull', {
           remote_url: remoteUrl.trim(),
           remote_admin_token: remoteAdminToken.trim(),
           mode: pullMode,
         });
-        toast({
-          title: '✅ Sincronización completada',
-          description: `${result.imported} importados, ${result.skipped} omitidos`,
+      } else {
+        result = await apiPost('/api/channels/pull-remote', {
+          remote_url: remoteUrl.trim(),
+          remote_admin_token: remoteAdminToken.trim(),
+          mode: pullMode,
         });
       }
+      toast({
+        title: '✅ Sincronización completada',
+        description: `${result.imported} importados desde ${result.source}`,
+      });
     } catch (err: any) {
       toast({ title: 'Error', description: err.message, variant: 'destructive' });
     }
@@ -177,7 +145,7 @@ const ChannelSync = () => {
         <ArrowRightLeft className="w-6 h-6 text-primary" />
         <div>
           <h2 className="text-xl font-bold">Sincronización de Canales</h2>
-          <p className="text-sm text-muted-foreground">Comparte canales entre paneles Omnisync</p>
+          <p className="text-sm text-muted-foreground">Comparte canales entre paneles Omnisync con soporte DVR y firma digital</p>
         </div>
       </div>
 
@@ -193,18 +161,49 @@ const ChannelSync = () => {
           <Card className="glass border-border/30">
             <CardHeader>
               <CardTitle className="flex items-center gap-2"><FileText className="w-5 h-5" /> Exportar Canales</CardTitle>
-              <CardDescription>Genera un token con todos tus canales para importar en otro panel Omnisync</CardDescription>
+              <CardDescription>Genera un token firmado con todos tus canales (incluye configuración DVR)</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="flex-1">
+                  <label className="text-sm font-medium mb-1 block flex items-center gap-1">
+                    <Clock className="w-3 h-3" /> Expiración del token
+                  </label>
+                  <Select value={expiresHours} onValueChange={setExpiresHours}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="1">1 hora</SelectItem>
+                      <SelectItem value="6">6 horas</SelectItem>
+                      <SelectItem value="24">24 horas</SelectItem>
+                      <SelectItem value="72">3 días</SelectItem>
+                      <SelectItem value="168">7 días</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
               <Button onClick={handleExport} disabled={loading} className="gradient-primary">
                 {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Upload className="w-4 h-4 mr-2" />}
-                Generar Token de Exportación
+                Generar Token Firmado
               </Button>
 
               {exportToken && (
                 <div className="space-y-3">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <Badge variant="secondary">{exportCount} canales</Badge>
+                    {exportDvrCount > 0 && (
+                      <Badge variant="default" className="gap-1">
+                        <Video className="w-3 h-3" /> {exportDvrCount} DVR (fMP4)
+                      </Badge>
+                    )}
+                    <Badge variant="outline" className="gap-1">
+                      <Shield className="w-3 h-3" /> Firmado digitalmente
+                    </Badge>
+                    <Badge variant="outline" className="gap-1">
+                      <Clock className="w-3 h-3" /> Expira en {expiresHours}h
+                    </Badge>
                   </div>
                   <Textarea
                     value={exportToken}
@@ -226,11 +225,11 @@ const ChannelSync = () => {
           <Card className="glass border-border/30">
             <CardHeader>
               <CardTitle className="flex items-center gap-2"><Download className="w-5 h-5" /> Importar desde Token</CardTitle>
-              <CardDescription>Pega un token generado en otro panel Omnisync para importar sus canales</CardDescription>
+              <CardDescription>Pega un token firmado. Se verificará la firma y expiración automáticamente.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <Textarea
-                placeholder="Pega aquí el token de exportación del otro panel..."
+                placeholder="Pega aquí el token firmado del otro panel..."
                 value={importToken}
                 onChange={(e) => setImportToken(e.target.value)}
                 className="font-mono text-xs h-32"
@@ -255,8 +254,22 @@ const ChannelSync = () => {
 
               <Button onClick={handleImport} disabled={loading || !importToken.trim()} className="gradient-primary">
                 {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Download className="w-4 h-4 mr-2" />}
-                Importar Canales
+                Verificar e Importar
               </Button>
+
+              {importResult && (
+                <div className="p-3 rounded-md bg-muted/30 text-sm space-y-1">
+                  <p>✅ <strong>{importResult.imported}</strong> canales importados</p>
+                  {importResult.dvr_imported > 0 && (
+                    <p className="flex items-center gap-1">
+                      <Video className="w-3 h-3 text-primary" />
+                      <strong>{importResult.dvr_imported}</strong> con DVR activado (fMP4)
+                    </p>
+                  )}
+                  <p>⏭️ <strong>{importResult.skipped}</strong> omitidos</p>
+                  <p className="text-xs text-muted-foreground">Versión del token: v{importResult.version || 1}</p>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -286,9 +299,6 @@ const ChannelSync = () => {
                   value={remoteAdminToken}
                   onChange={(e) => setRemoteAdminToken(e.target.value)}
                 />
-                <p className="text-xs text-muted-foreground mt-1">
-                  Obtén este token iniciando sesión como admin en el otro panel (se guarda en localStorage como admin_token)
-                </p>
               </div>
 
               <div className="flex gap-2">

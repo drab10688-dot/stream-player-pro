@@ -1,10 +1,77 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { create, verify } from "https://deno.land/x/djwt@v3.0.1/mod.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
+
+// Helper: verify admin
+async function verifyAdmin(supabase: any, req: Request) {
+  const authHeader = req.headers.get('authorization');
+  if (!authHeader) throw { status: 401, message: 'No autorizado' };
+  const token = authHeader.replace('Bearer ', '');
+  const { data: { user }, error } = await supabase.auth.getUser(token);
+  if (error || !user) throw { status: 401, message: 'No autorizado' };
+  const { data: roles } = await supabase.from('user_roles').select('role').eq('user_id', user.id);
+  if (!roles || !roles.some((r: any) => r.role === 'admin')) throw { status: 403, message: 'No eres administrador' };
+  return user;
+}
+
+// HMAC key for signing export tokens
+async function getSigningKey(): Promise<CryptoKey> {
+  const secret = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+  const enc = new TextEncoder();
+  return await crypto.subtle.importKey(
+    'raw', enc.encode(secret.slice(0, 32)),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false, ['sign', 'verify']
+  );
+}
+
+async function signPayload(payload: any, expiresInHours: number): Promise<string> {
+  const key = await getSigningKey();
+  const data = {
+    ...payload,
+    exp: Date.now() + expiresInHours * 3600 * 1000,
+  };
+  const jsonStr = JSON.stringify(data);
+  const enc = new TextEncoder();
+  const signature = await crypto.subtle.sign('HMAC', key, enc.encode(jsonStr));
+  const sigHex = Array.from(new Uint8Array(signature)).map(b => b.toString(16).padStart(2, '0')).join('');
+  return btoa(JSON.stringify({ d: jsonStr, s: sigHex }));
+}
+
+async function verifyAndDecodeToken(token: string): Promise<any> {
+  const key = await getSigningKey();
+  let parsed: any;
+  try {
+    parsed = JSON.parse(atob(token));
+  } catch {
+    throw { status: 400, message: 'Token inválido (formato)' };
+  }
+
+  if (!parsed.d || !parsed.s) {
+    // Legacy token (pre-signature) - try plain base64
+    try {
+      const legacy = JSON.parse(atob(token));
+      if (legacy.system === 'omnisync') return legacy;
+    } catch {}
+    throw { status: 400, message: 'Token inválido (sin firma)' };
+  }
+
+  const enc = new TextEncoder();
+  const sigBytes = new Uint8Array(parsed.s.match(/.{2}/g).map((b: string) => parseInt(b, 16)));
+  const valid = await crypto.subtle.verify('HMAC', key, sigBytes, enc.encode(parsed.d));
+  if (!valid) throw { status: 400, message: 'Firma del token inválida - no fue generado por este sistema' };
+
+  const data = JSON.parse(parsed.d);
+  if (data.exp && Date.now() > data.exp) {
+    throw { status: 400, message: 'Token expirado' };
+  }
+  return data;
+}
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -20,85 +87,74 @@ serve(async (req) => {
     const url = new URL(req.url);
     const action = url.searchParams.get('action');
 
-    // EXPORT: Generate a signed export token with channels
+    // ── EXPORT ──
     if (action === 'export') {
-      const authHeader = req.headers.get('authorization');
-      if (!authHeader) {
-        return new Response(JSON.stringify({ error: 'No autorizado' }), {
-          status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
+      await verifyAdmin(supabase, req);
 
-      const token = authHeader.replace('Bearer ', '');
-      const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-      if (authError || !user) {
-        return new Response(JSON.stringify({ error: 'No autorizado' }), {
-          status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
+      // Parse options from body (optional)
+      let exportOptions = { expires_hours: 24, normalize_urls: true };
+      try {
+        const body = await req.json();
+        if (body.expires_hours) exportOptions.expires_hours = body.expires_hours;
+        if (body.normalize_urls !== undefined) exportOptions.normalize_urls = body.normalize_urls;
+      } catch {}
 
-      const { data: roles } = await supabase.from('user_roles').select('role').eq('user_id', user.id);
-      if (!roles || !roles.some((r: any) => r.role === 'admin')) {
-        return new Response(JSON.stringify({ error: 'No eres administrador' }), {
-          status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      // Get all channels
       const { data: channels, error: chError } = await supabase
         .from('channels')
-        .select('name, url, category, logo_url, is_active, keep_alive, sort_order, stream_mode')
+        .select('name, url, category, logo_url, is_active, sort_order, stream_mode, dvr_enabled')
         .order('sort_order');
 
       if (chError) throw chError;
 
-      // Create export package
+      // Detect server base URL from request
+      const origin = req.headers.get('origin') || req.headers.get('referer') || '';
+
+      const exportChannels = (channels || []).map((ch: any) => ({
+        name: ch.name,
+        url: ch.url,
+        category: ch.category,
+        logo_url: ch.logo_url,
+        is_active: ch.is_active,
+        sort_order: ch.sort_order,
+        stream_mode: ch.dvr_enabled ? 'dvr_fmp4' : (ch.stream_mode || 'direct'),
+        dvr_enabled: ch.dvr_enabled || false,
+      }));
+
       const exportData = {
-        version: 1,
+        version: 2,
         system: 'omnisync',
         exported_at: new Date().toISOString(),
-        channels_count: channels?.length || 0,
-        channels: channels || [],
+        channels_count: exportChannels.length,
+        format_info: {
+          dvr_channels: exportChannels.filter((c: any) => c.dvr_enabled).length,
+          stream_types: {
+            dvr_fmp4: exportChannels.filter((c: any) => c.stream_mode === 'dvr_fmp4').length,
+            direct: exportChannels.filter((c: any) => c.stream_mode === 'direct').length,
+            other: exportChannels.filter((c: any) => !['dvr_fmp4', 'direct'].includes(c.stream_mode)).length,
+          },
+        },
+        channels: exportChannels,
       };
 
-      // Encode as base64 for easy sharing
-      const encoded = btoa(JSON.stringify(exportData));
+      const signedToken = await signPayload(exportData, exportOptions.expires_hours);
 
       return new Response(JSON.stringify({
-        export_token: encoded,
-        channels_count: channels?.length || 0,
+        export_token: signedToken,
+        channels_count: exportChannels.length,
+        dvr_channels: exportData.format_info.dvr_channels,
         exported_at: exportData.exported_at,
+        expires_in_hours: exportOptions.expires_hours,
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
     }
 
-    // IMPORT: Receive channels from another panel
+    // ── IMPORT ──
     if (action === 'import') {
-      const authHeader = req.headers.get('authorization');
-      if (!authHeader) {
-        return new Response(JSON.stringify({ error: 'No autorizado' }), {
-          status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      const token = authHeader.replace('Bearer ', '');
-      const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-      if (authError || !user) {
-        return new Response(JSON.stringify({ error: 'No autorizado' }), {
-          status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      const { data: roles } = await supabase.from('user_roles').select('role').eq('user_id', user.id);
-      if (!roles || !roles.some((r: any) => r.role === 'admin')) {
-        return new Response(JSON.stringify({ error: 'No eres administrador' }), {
-          status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
+      await verifyAdmin(supabase, req);
 
       const body = await req.json();
-      const { export_token, mode } = body; // mode: 'merge' | 'replace'
+      const { export_token, mode } = body;
 
       if (!export_token) {
         return new Response(JSON.stringify({ error: 'Token de exportación requerido' }), {
@@ -108,10 +164,10 @@ serve(async (req) => {
 
       let exportData: any;
       try {
-        exportData = JSON.parse(atob(export_token));
-      } catch {
-        return new Response(JSON.stringify({ error: 'Token inválido' }), {
-          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        exportData = await verifyAndDecodeToken(export_token);
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message || 'Token inválido' }), {
+          status: e.status || 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
       }
 
@@ -128,17 +184,15 @@ serve(async (req) => {
         });
       }
 
-      // If replace mode, delete existing channels first
       if (mode === 'replace') {
         await supabase.from('channels').delete().neq('id', '00000000-0000-0000-0000-000000000000');
       }
 
-      // Insert channels one by one to handle duplicates
       let imported = 0;
       let skipped = 0;
+      let dvrImported = 0;
 
       for (const ch of channels) {
-        // Check if channel with same name and url already exists
         if (mode === 'merge') {
           const { data: existing } = await supabase
             .from('channels')
@@ -153,54 +207,40 @@ serve(async (req) => {
           }
         }
 
+        const isDvr = ch.dvr_enabled || ch.stream_mode === 'dvr_fmp4';
         const { error } = await supabase.from('channels').insert({
           name: ch.name,
           url: ch.url,
           category: ch.category || 'General',
           logo_url: ch.logo_url || null,
           is_active: ch.is_active !== false,
-          keep_alive: ch.keep_alive || false,
+          keep_alive: false,
           sort_order: ch.sort_order || 0,
-          stream_mode: ch.stream_mode || 'direct',
+          stream_mode: isDvr ? 'direct' : (ch.stream_mode || 'direct'),
+          dvr_enabled: isDvr,
         });
 
-        if (!error) imported++;
-        else skipped++;
+        if (!error) {
+          imported++;
+          if (isDvr) dvrImported++;
+        } else skipped++;
       }
 
       return new Response(JSON.stringify({
         imported,
         skipped,
         total: channels.length,
+        dvr_imported: dvrImported,
         mode,
+        version: exportData.version || 1,
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
     }
 
-    // PULL: Connect to a remote panel and pull channels directly
+    // ── PULL ──
     if (action === 'pull') {
-      const authHeader = req.headers.get('authorization');
-      if (!authHeader) {
-        return new Response(JSON.stringify({ error: 'No autorizado' }), {
-          status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      const token = authHeader.replace('Bearer ', '');
-      const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-      if (authError || !user) {
-        return new Response(JSON.stringify({ error: 'No autorizado' }), {
-          status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      const { data: roles } = await supabase.from('user_roles').select('role').eq('user_id', user.id);
-      if (!roles || !roles.some((r: any) => r.role === 'admin')) {
-        return new Response(JSON.stringify({ error: 'No eres administrador' }), {
-          status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
+      await verifyAdmin(supabase, req);
 
       const body = await req.json();
       const { remote_url, remote_admin_token, mode } = body;
@@ -211,7 +251,6 @@ serve(async (req) => {
         });
       }
 
-      // Fetch channels from remote panel's API
       try {
         const remoteResp = await fetch(`${remote_url.replace(/\/$/, '')}/api/channels`, {
           headers: {
@@ -260,6 +299,7 @@ serve(async (req) => {
             keep_alive: false,
             sort_order: ch.sort_order || 0,
             stream_mode: ch.stream_mode || 'direct',
+            dvr_enabled: ch.dvr_enabled || false,
           });
 
           if (!error) imported++;
@@ -285,9 +325,11 @@ serve(async (req) => {
     return new Response(JSON.stringify({ error: 'Acción no válida. Usa: export, import, pull' }), {
       status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
-  } catch (err) {
-    return new Response(JSON.stringify({ error: 'Error: ' + (err as Error).message }), {
-      status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+  } catch (err: any) {
+    const status = err.status || 500;
+    const message = err.message || 'Error interno';
+    return new Response(JSON.stringify({ error: message }), {
+      status, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
   }
 });
