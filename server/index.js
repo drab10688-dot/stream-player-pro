@@ -1559,8 +1559,8 @@ const SEGMENT_CACHE_TTL = 45000; // 45s - más tiempo en caché para evitar re-d
 const pendingSegments = new Map();
 
 // Connection pooling: reutilizar conexiones TCP al origen
-const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 30, maxFreeSockets: 10, timeout: 60000 });
-const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 30, maxFreeSockets: 10, timeout: 60000 });
+const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 256, maxFreeSockets: 30, timeout: 120000 });
+const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 256, maxFreeSockets: 30, timeout: 120000 });
 const getAgent = (url) => url.startsWith('https') ? httpsAgent : httpAgent;
 
 // Limpiar segmentos viejos cada 30s
@@ -2014,6 +2014,7 @@ app.get('/api/stream-pipe/:channelId', async (req, res) => {
 
     const sourceReq = httpModule.get(targetUrl, {
       timeout: 15000,
+      agent: getAgent(targetUrl),
       headers: {
         'User-Agent': 'StreamBox-Pipe/1.0',
         'Connection': 'keep-alive',
@@ -5372,7 +5373,8 @@ function logDvrError(channelId, message, type = 'node') {
 }
 
 // Helper: descargar URL con soporte de redirects
-function dvrFetchUrl(url, timeout = 15000) {
+// streaming=true desactiva el timeout después de conectar (para streams TS persistentes)
+function dvrFetchUrl(url, timeout = 15000, streaming = false) {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
     const httpModule = parsed.protocol === 'https:' ? https : http;
@@ -5385,8 +5387,12 @@ function dvrFetchUrl(url, timeout = 15000) {
         const redirectUrl = res.headers.location.startsWith('http')
           ? res.headers.location
           : new URL(res.headers.location, url).href;
-        dvrFetchUrl(redirectUrl, timeout).then(resolve).catch(reject);
+        dvrFetchUrl(redirectUrl, timeout, streaming).then(resolve).catch(reject);
         return;
+      }
+      // Para streams persistentes, eliminar el timeout del socket para que no se corte
+      if (streaming && req.socket) {
+        req.socket.setTimeout(0);
       }
       resolve(res);
     });
@@ -5711,7 +5717,7 @@ function startTSDVR(channelId, sourceUrl, dvr, channelDir) {
   }
 
   function connect() {
-    dvrFetchUrl(sourceUrl).then((sourceRes) => {
+    dvrFetchUrl(sourceUrl, 15000, true).then((sourceRes) => {
       if (sourceRes.statusCode !== 200) {
         logDvrError(channelId, `Origen respondió ${sourceRes.statusCode}`, 'http');
         handleDisconnect();
@@ -6140,7 +6146,7 @@ async function autoStartDVR() {
       console.log('📹 [DVR PRE] No hay canales con DVR habilitado');
       return;
     }
-    console.log(`📹 [DVR PRE] Pre-calentando ${rows.length} canales (Node.js puro)...`);
+    console.log(`📹 [DVR PRE] Pre-calentando ${rows.length} canales (Node.js puro, escalonado)...`);
     let started = 0;
     for (const ch of rows) {
       if (!activeDVR.has(ch.id)) {
@@ -6151,7 +6157,8 @@ async function autoStartDVR() {
             dvr.preWarmed = true;
             started++;
           }
-          await new Promise(r => setTimeout(r, 1000));
+          // Escalonar: 2 segundos entre cada canal para no saturar sockets
+          await new Promise(r => setTimeout(r, 2000));
         } catch (err) {
           console.error(`📹 [DVR PRE] Error iniciando ${ch.name}:`, err.message);
         }
