@@ -5443,7 +5443,7 @@ if (!fs.existsSync(DVR_DIR)) fs.mkdirSync(DVR_DIR, { recursive: true });
 const DVR_SEGMENT_SECONDS = 10;  // Duración de cada segmento fMP4
 const DVR_BUFFER_SECONDS = 300;  // 5 minutos de buffer
 const DVR_HLS_LIST_SIZE = Math.ceil(DVR_BUFFER_SECONDS / DVR_SEGMENT_SECONDS); // ~30 segmentos
-const DVR_IDLE_TIMEOUT_MS = 120000; // 2 min sin viewers → detener grabación
+// DVR SIEMPRE ACTIVO: sin idle timeout, FFmpeg corre mientras dvr_enabled esté true
 const activeDVR = new Map(); // channelId -> { ffmpeg, viewers, lastAccess, recording, ... }
 
 function startDVR(channelId, sourceUrl) {
@@ -5550,24 +5550,8 @@ function releaseDVR(channelId) {
   dvr.viewers = Math.max(0, dvr.viewers - 1);
   dvr.lastAccess = Date.now();
   console.log(`📹 [DVR ${channelId}] Viewer liberado (${dvr.viewers} restantes)`);
-
-  if (dvr.viewers === 0) {
-    if (dvr.idleTimer) clearTimeout(dvr.idleTimer);
-    dvr.idleTimer = setTimeout(() => {
-      const current = activeDVR.get(channelId);
-      if (current && current.viewers === 0) {
-        console.log(`📹 [DVR ${channelId}] Sin viewers, deteniendo grabación`);
-        current.recording = false;
-        if (current.ffmpeg) {
-          try { current.ffmpeg.kill('SIGTERM'); } catch {}
-        }
-        activeDVR.delete(channelId);
-        // Limpiar archivos
-        const channelDir = path.join(DVR_DIR, channelId);
-        try {
-          const files = fs.readdirSync(channelDir);
-          files.forEach(f => { try { fs.unlinkSync(path.join(channelDir, f)); } catch {} });
-          fs.rmdirSync(channelDir);
+  // DVR siempre activo: NO detener FFmpeg cuando viewers llega a 0
+  // Solo se detiene manualmente via admin o al desactivar dvr_enabled
         } catch {}
       }
     }, DVR_IDLE_TIMEOUT_MS);
