@@ -389,13 +389,13 @@ else
 fi
 
 # =============================================
-# PASO 4.5: Configurar almacenamiento HLS
-# SSD por defecto (soporta muchos más canales)
+# PASO 4.5: Configurar almacenamiento DVR
+# Buffer de 5 minutos gestionado por Node.js nativo
 # =============================================
-log_step "💾 [3.5/8] Configurando almacenamiento HLS..."
+log_step "💾 [3.5/8] Configurando almacenamiento DVR..."
 
-HLS_DIR="/opt/streambox/hls-cache"
-HLS_CACHE_DIR="/opt/streambox/hls-proxy-cache"
+DVR_DIR="/data/dvr"
+
 
 # Detectar tipo de disco
 DISK_TYPE="desconocido"
@@ -431,13 +431,13 @@ echo -e "║  RAM total:        ${TOTAL_RAM_MB}MB$(printf '%*s' $((27 - ${#TOTAL
 echo "╠══════════════════════════════════════════════════╣"
 echo "║  📊 Recomendación de disco por canales:          ║"
 echo "║                                                  ║"
-echo "║  Canales    Caché   Disco     RAM (FFmpeg)       ║"
+echo "║  Canales    Caché   Disco     RAM (Node.js)      ║"
 echo "║  ────────   ─────   ────────  ──────────         ║"
-echo "║  10 ch      30min   ~5 GB     ~4 GB              ║"
-echo "║  25 ch      30min   ~12 GB    ~8 GB              ║"
-echo "║  50 ch      30min   ~25 GB    ~12 GB             ║"
-echo "║  100 ch     30min   ~50 GB    ~20 GB             ║"
-echo "║  200 ch     30min   ~100 GB   ~35 GB             ║"
+echo "║  10 ch      5min    ~1 GB     ~512 MB            ║"
+echo "║  25 ch      5min    ~3 GB     ~1 GB              ║"
+echo "║  50 ch      5min    ~6 GB     ~2 GB              ║"
+echo "║  100 ch     5min    ~12 GB    ~4 GB              ║"
+echo "║  200 ch     5min    ~25 GB    ~8 GB              ║"
 echo "║                                                  ║"
 echo "║  💡 Tip: Solo canales keep-alive usan caché      ║"
 echo "║     Los demás se conectan bajo demanda (0 disco) ║"
@@ -466,87 +466,20 @@ if grep -q "streambox-hls.*tmpfs" /etc/fstab 2>/dev/null; then
   log_info "Entrada tmpfs removida de /etc/fstab"
 fi
 
-# Crear directorios en disco SSD
-mkdir -p "$HLS_DIR" "$HLS_CACHE_DIR"
-chmod 777 "$HLS_DIR" "$HLS_CACHE_DIR"
+# Crear directorio DVR en disco
+mkdir -p "$DVR_DIR"
+chmod 777 "$DVR_DIR"
 
-log_ok "Almacenamiento HLS en disco SSD: $HLS_DIR"
-log_info "Capacidad estimada: ~$((DISK_AVAIL_GB / 500 * 1000)) canales keep-alive (30min caché)"
+log_ok "Almacenamiento DVR en disco: $DVR_DIR"
+log_info "Buffer de 5 minutos por canal con segmentos .ts nativos"
 
-# Instalar FFmpeg si no está y verificar ruta real
-normalize_ffmpeg_bin() {
-  local candidate="$1"
-  if [ -z "$candidate" ]; then
-    return 1
-  fi
-  readlink -f "$candidate" 2>/dev/null || printf '%s\n' "$candidate"
-}
+# Crear directorio DVR para buffer de 5 minutos (Node.js nativo)
+DVR_DIR="/data/dvr"
+mkdir -p "$DVR_DIR"
+chmod 777 "$DVR_DIR"
+log_ok "Directorio DVR creado: $DVR_DIR"
 
-is_native_ffmpeg_bin() {
-  local resolved
-  resolved="$(normalize_ffmpeg_bin "$1" 2>/dev/null || true)"
-  [ -n "$resolved" ] && [ -x "$resolved" ] && [[ "$resolved" != /snap/* ]]
-}
-
-resolve_ffmpeg_bin() {
-  local dpkg_candidate=""
-  if command -v dpkg-query >/dev/null 2>&1; then
-    dpkg_candidate="$(dpkg-query -L ffmpeg 2>/dev/null | grep -E '/ffmpeg$' | grep -v '/snap/' | head -1)"
-  fi
-
-  for candidate in "${FFMPEG_PATH:-}" /usr/bin/ffmpeg /usr/local/bin/ffmpeg /bin/ffmpeg "$dpkg_candidate" "$(PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' command -v ffmpeg 2>/dev/null)"; do
-    if is_native_ffmpeg_bin "$candidate"; then
-      printf '%s\n' "$(normalize_ffmpeg_bin "$candidate")"
-      return 0
-    fi
-  done
-  return 1
-}
-
-FFMPEG_BIN="$(resolve_ffmpeg_bin || true)"
-FFMPEG_INSTALL_LOG="/tmp/omnisync-ffmpeg-install.log"
-
-if [ -z "$FFMPEG_BIN" ]; then
-  log_info "Instalando FFmpeg..."
-  : > "$FFMPEG_INSTALL_LOG"
-
-  apt-get update -qq >> "$FFMPEG_INSTALL_LOG" 2>&1 || true
-
-  if [ "${ID:-}" = "ubuntu" ]; then
-    log_info "Verificando repositorio universe para FFmpeg..."
-    DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common >> "$FFMPEG_INSTALL_LOG" 2>&1 || true
-    add-apt-repository -y universe >> "$FFMPEG_INSTALL_LOG" 2>&1 || true
-    apt-get update -qq >> "$FFMPEG_INSTALL_LOG" 2>&1 || true
-  fi
-
-  if ! DEBIAN_FRONTEND=noninteractive apt-get install -y ffmpeg >> "$FFMPEG_INSTALL_LOG" 2>&1; then
-    log_warn "Instalación APT de FFmpeg falló"
-  fi
-
-  hash -r 2>/dev/null || true
-  FFMPEG_BIN="$(resolve_ffmpeg_bin || true)"
-fi
-
-if [ -z "$FFMPEG_BIN" ] && dpkg -s ffmpeg >/dev/null 2>&1; then
-  log_warn "APT reporta FFmpeg instalado pero el binario no fue detectado; forzando reinstalación..."
-  DEBIAN_FRONTEND=noninteractive apt-get install --reinstall -y ffmpeg >> "$FFMPEG_INSTALL_LOG" 2>&1 || true
-  hash -r 2>/dev/null || true
-  FFMPEG_BIN="$(resolve_ffmpeg_bin || true)"
-fi
-
-if [ -z "$FFMPEG_BIN" ]; then
-  log_err "FFmpeg no se pudo instalar. Revisa $FFMPEG_INSTALL_LOG"
-  if command -v apt-cache >/dev/null 2>&1; then
-    log_info "Diagnóstico rápido: apt-cache policy ffmpeg"
-    apt-cache policy ffmpeg 2>/dev/null | sed 's/^/      /'
-  fi
-  exit 1
-fi
-
-FFMPEG_VERSION=$($FFMPEG_BIN -version 2>/dev/null | head -1 | awk '{print $3}')
-log_ok "FFmpeg ${FFMPEG_VERSION:-detectado} listo en $FFMPEG_BIN"
-
-log_ok "Almacenamiento configurado - streams HLS en SSD"
+log_ok "Almacenamiento configurado - Motor Node.js nativo (sin FFmpeg)"
 
 # =============================================
 # PASO 5: Configurar la API
@@ -852,7 +785,7 @@ cd /opt/streambox/server
 # Asegurar que el puerto está libre antes de iniciar
 kill_port $API_PORT 2>/dev/null
 
-FFMPEG_PATH="$FFMPEG_BIN" PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" pm2 start index.js --name streambox-api --max-restarts 10 --restart-delay 3000 > /dev/null 2>&1
+pm2 start index.js --name streambox-api --max-restarts 10 --restart-delay 3000 > /dev/null 2>&1
 pm2 startup systemd -u root --hp /root > /dev/null 2>&1 || true
 pm2 save > /dev/null 2>&1
 
@@ -866,7 +799,7 @@ else
   pm2 logs streambox-api --lines 10 --nostream
   echo ""
   log_warn "Intentando reiniciar..."
-  FFMPEG_PATH="$FFMPEG_BIN" PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" pm2 restart streambox-api --update-env > /dev/null 2>&1
+  pm2 restart streambox-api > /dev/null 2>&1
   sleep 5
   if wait_for_port $API_PORT "API" 10; then
     log_ok "API corriendo después de reinicio"
