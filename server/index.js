@@ -5383,6 +5383,7 @@ app.post('/api/dvr/stop/:channelId', authApk, async (req, res) => {
 });
 
 // API: Servir playlist HLS generada por FFmpeg (m3u8 con URLs absolutas autenticadas)
+// Compatible con VLC, OTT Player, ExoPlayer, LibVLC (RFC 8216)
 app.get('/api/dvr/playlist/:channelId', authApk, (req, res) => {
   const { channelId } = req.params;
   const dvr = activeDVR.get(channelId);
@@ -5392,15 +5393,24 @@ app.get('/api/dvr/playlist/:channelId', authApk, (req, res) => {
   const playlistPath = path.join(channelDir, 'live.m3u8');
   if (!fs.existsSync(playlistPath)) return res.status(404).json({ error: 'Playlist not ready yet' });
 
-  const token = req.headers.authorization?.replace('Bearer ', '') || req.query.token;
-  const baseUrl = `${req.protocol}://${req.get('host')}/api/dvr/file/${channelId}`;
+  const token = req.headers.authorization?.replace('Bearer ', '') || req.query.token || '';
+  // Usar getRequestBaseUrl para compatibilidad con tunnels/proxies
+  const serverBaseUrl = getRequestBaseUrl(req);
+  const fileBaseUrl = `${serverBaseUrl}/api/dvr/file/${channelId}`;
 
-  // Leer m3u8 y reescribir rutas relativas a URLs absolutas con token
+  // Leer m3u8 generado por FFmpeg y reescribir a URLs absolutas
   let m3u8 = fs.readFileSync(playlistPath, 'utf8');
-  // Reemplazar init.mp4
-  m3u8 = m3u8.replace(/^init\.mp4$/gm, `${baseUrl}/init.mp4?token=${token}`);
-  // Reemplazar seg_XXX.m4s
-  m3u8 = m3u8.replace(/^(seg_\d+\.m4s)$/gm, `${baseUrl}/$1?token=${token}`);
+
+  // Reescribir #EXT-X-MAP:URI="init.mp4" → URL absoluta con token
+  m3u8 = m3u8.replace(
+    /#EXT-X-MAP:URI="init\.mp4"/g,
+    `#EXT-X-MAP:URI="${fileBaseUrl}/init.mp4?token=${encodeURIComponent(token)}"`
+  );
+  // Fallback: init.mp4 como línea sola (por si acaso)
+  m3u8 = m3u8.replace(/^init\.mp4$/gm, `${fileBaseUrl}/init.mp4?token=${encodeURIComponent(token)}`);
+
+  // Reescribir segmentos seg_XXX.m4s → URLs absolutas con token
+  m3u8 = m3u8.replace(/^(seg_\d+\.m4s)$/gm, `${fileBaseUrl}/$1?token=${encodeURIComponent(token)}`);
 
   res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -5409,7 +5419,7 @@ app.get('/api/dvr/playlist/:channelId', authApk, (req, res) => {
   res.send(m3u8);
 });
 
-// API: Servir archivos DVR (init.mp4, seg_XXX.m4s)
+// API: Servir archivos DVR (init.mp4, seg_XXX.m4s) con MIME types correctos y Range support
 app.get('/api/dvr/file/:channelId/:filename', authApk, (req, res) => {
   const { channelId, filename } = req.params;
   // Validar filename para prevenir path traversal
@@ -5418,26 +5428,48 @@ app.get('/api/dvr/file/:channelId/:filename', authApk, (req, res) => {
   if (!fs.existsSync(filePath)) return res.status(404).send('File not found');
 
   const stat = fs.statSync(filePath);
+  // MIME types según RFC: init.mp4 → video/mp4, segmentos .m4s → video/iso.segment
   const contentType = filename.endsWith('.mp4') ? 'video/mp4' : 'video/iso.segment';
-  res.setHeader('Content-Type', contentType);
-  res.setHeader('Content-Length', stat.size);
-  res.setHeader('Cache-Control', 'no-cache');
+  
   res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Accept-Ranges', 'bytes');
   res.setHeader('X-Accel-Buffering', 'no');
-  fs.createReadStream(filePath).pipe(res);
+
+  // Soporte Range requests (VLC, ExoPlayer lo necesitan)
+  const range = req.headers.range;
+  if (range) {
+    const parts = range.replace(/bytes=/, '').split('-');
+    const start = parseInt(parts[0], 10);
+    const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
+    const chunkSize = (end - start) + 1;
+    res.writeHead(206, {
+      'Content-Range': `bytes ${start}-${end}/${stat.size}`,
+      'Content-Length': chunkSize,
+      'Content-Type': contentType,
+      'Cache-Control': 'no-cache',
+    });
+    fs.createReadStream(filePath, { start, end }).pipe(res);
+  } else {
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Length', stat.size);
+    res.setHeader('Cache-Control', 'no-cache');
+    fs.createReadStream(filePath).pipe(res);
+  }
 });
 
-// LEGACY: Mantener endpoint antiguo para compatibilidad
+// LEGACY: Mantener endpoint antiguo para compatibilidad (con MIME types correctos)
 app.get('/api/dvr/segment/:channelId/:filename', authApk, (req, res) => {
   const { channelId, filename } = req.params;
   if (!/^(init\.mp4|seg_\d{3}\.(mp4|m4s))$/.test(filename)) return res.status(400).send('Invalid filename');
   const filePath = path.join(DVR_DIR, channelId, filename);
   if (!fs.existsSync(filePath)) return res.status(404).send('Segment not found');
   const stat = fs.statSync(filePath);
-  res.setHeader('Content-Type', 'video/mp4');
+  const contentType = filename.endsWith('.mp4') ? 'video/mp4' : 'video/iso.segment';
+  res.setHeader('Content-Type', contentType);
   res.setHeader('Content-Length', stat.size);
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Accept-Ranges', 'bytes');
   fs.createReadStream(filePath).pipe(res);
 });
 
