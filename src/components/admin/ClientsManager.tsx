@@ -197,7 +197,7 @@ const ClientsManager = () => {
     }
   };
 
-  const getBaseUrl = () => window.location.origin;
+  const getBaseUrl = () => (useTunnel && tunnelUrl) ? tunnelUrl : window.location.origin;
 
   const getPlaylistFormats = (token: string | null, username: string, password: string) => {
     if (!token) return [];
