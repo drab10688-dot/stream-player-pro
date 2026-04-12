@@ -109,6 +109,52 @@ const getRequestBaseUrl = (req) => {
   return `http://127.0.0.1:${PORT}`;
 };
 
+// =============================================
+// CACHÉ EN MEMORIA PARA LISTAS DE CANALES (Ultra-Fast Load)
+// =============================================
+const channelListCache = {
+  data: null,       // { rows: [...] }
+  updatedAt: 0,
+  ttl: 60000,       // 1 min TTL como fallback
+  async get() {
+    if (this.data && (Date.now() - this.updatedAt < this.ttl)) return this.data;
+    return this.refresh();
+  },
+  async refresh() {
+    try {
+      const { rows } = await pool.query(
+        'SELECT id, name, url, category, logo_url, stream_mode, sort_order, dvr_enabled, is_active FROM channels ORDER BY sort_order'
+      );
+      this.data = rows;
+      this.updatedAt = Date.now();
+      console.log(`🔄 [Cache] Lista de canales actualizada (${rows.length} canales)`);
+      return rows;
+    } catch (err) {
+      console.error('❌ [Cache] Error refrescando canales:', err.message);
+      return this.data || [];
+    }
+  },
+  invalidate() {
+    this.data = null;
+    this.updatedAt = 0;
+    // Refrescar inmediatamente en background
+    this.refresh().catch(() => {});
+  }
+};
+
+// Helper: verificar si un canal DVR está "listo" (init.mp4 + al menos 3 segmentos .m4s)
+function isDvrReady(channelId) {
+  const channelDir = path.join(DVR_DIR || path.join(__dirname, 'dvr-cache'), channelId);
+  try {
+    if (!fs.existsSync(path.join(channelDir, 'init.mp4'))) return false;
+    const files = fs.readdirSync(channelDir);
+    const segments = files.filter(f => f.endsWith('.m4s'));
+    return segments.length >= 3;
+  } catch {
+    return false;
+  }
+}
+
 // Verificar conexión a la base de datos al iniciar
 pool.query('SELECT 1')
   .then(() => console.log('✅ Conectado a PostgreSQL'))
@@ -564,6 +610,7 @@ app.post('/api/channels', authAdmin, async (req, res) => {
       'INSERT INTO channels (name, url, category, sort_order, logo_url) VALUES ($1, $2, $3, $4, $5) RETURNING *',
       [name, validation.normalizedUrl, category || 'General', sort_order || 0, logo_url || null]
     );
+    channelListCache.invalidate();
     res.json(rows[0]);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -593,6 +640,7 @@ app.put('/api/channels/:id', authAdmin, async (req, res) => {
       [name, urlValidation.normalizedUrl, category, sort_order, is_active, logo_url, req.params.id]
     );
 
+    channelListCache.invalidate();
     res.json(rows[0]);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -623,6 +671,7 @@ app.delete('/api/channels/:id', authAdmin, async (req, res) => {
     activeTranscoders.delete(channelId);
   }
   await pool.query('DELETE FROM channels WHERE id = $1', [channelId]);
+  channelListCache.invalidate();
   res.json({ ok: true });
 });
 
@@ -2400,6 +2449,7 @@ app.post('/api/channels/import-sync', authAdmin, async (req, res) => {
         imported++;
       } catch { skipped++; }
     }
+    channelListCache.invalidate();
     res.json({ imported, skipped, total: channels.length, mode });
   } catch (err) {
     console.error('Import-sync error:', err);
@@ -2443,6 +2493,7 @@ app.post('/api/channels/pull-remote', authAdmin, async (req, res) => {
         imported++;
       } catch { skipped++; }
     }
+    channelListCache.invalidate();
     res.json({ imported, skipped, total: channels.length, mode, source: remote_url });
   } catch (err) {
     console.error('Pull-remote error:', err);
@@ -2537,6 +2588,7 @@ app.post('/api/channels/import-m3u', authAdmin, async (req, res) => {
       }
     }
 
+    channelListCache.invalidate();
     res.json({ imported: inserted, total: channels.length });
   } catch (err) {
     res.status(500).json({ error: 'Error al importar M3U: ' + err.message });
@@ -2930,15 +2982,22 @@ app.get('/api/playlist/:token', async (req, res) => {
       return res.status(403).send('#EXTM3U\n#EXTINF:-1,Suscripción expirada\nhttp://expired');
     }
     
-    // Obtener canales activos (incluir dvr_enabled para ruteo)
-    let channelsQuery = 'SELECT id, name, url, category, logo_url, stream_mode, sort_order, dvr_enabled FROM channels WHERE is_active = true ORDER BY sort_order';
-    const { rows: channels } = await pool.query(channelsQuery);
+    // Obtener canales desde caché en memoria (ultra-rápido)
+    const allChannels = await channelListCache.get();
+    let channels = allChannels.filter(ch => ch.is_active);
     
     // Filtrar por plan si tiene uno asignado
     let filteredChannels = channels;
     if (client.plan_categories && client.plan_categories.length > 0) {
       filteredChannels = channels.filter(ch => client.plan_categories.includes(ch.category));
     }
+    
+    // REGLA DE ORO: Si un canal tiene DVR activo, solo incluirlo si está "listo"
+    // (init.mp4 + al menos 3 segmentos .m4s existen en disco)
+    filteredChannels = filteredChannels.filter(ch => {
+      if (!ch.dvr_enabled) return true; // Sin DVR, siempre incluir
+      return isDvrReady(ch.id); // Con DVR, solo si está listo
+    });
     
     // Determinar base URL para los streams
     const baseUrl = getRequestBaseUrl(req);
@@ -5667,7 +5726,73 @@ app.put('/api/admin/channels/:id/dvr', authAdmin, async (req, res) => {
       if (dvr.ffmpeg) try { dvr.ffmpeg.kill('SIGTERM'); } catch {}
       activeDVR.delete(req.params.id);
     }
+    channelListCache.invalidate();
     res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// API Admin: Activar DVR en TODOS los canales (secuencial para no saturar CPU)
+app.post('/api/admin/dvr/enable-all', authAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query('UPDATE channels SET dvr_enabled = true WHERE is_active = true RETURNING id, name, url');
+    channelListCache.invalidate();
+    
+    // Iniciar FFmpeg secuencialmente con 2s de delay entre cada uno
+    let started = 0;
+    const startSequential = async () => {
+      for (const ch of rows) {
+        if (!activeDVR.has(ch.id)) {
+          try {
+            startDVR(ch.id, ch.url);
+            started++;
+            // Esperar 2 segundos entre cada inicio para no saturar CPU
+            await new Promise(r => setTimeout(r, 2000));
+          } catch (err) {
+            console.error(`📹 [DVR ALL] Error iniciando ${ch.name}:`, err.message);
+          }
+        }
+      }
+      console.log(`📹 [DVR ALL] ${started}/${rows.length} canales DVR iniciados`);
+    };
+    
+    // Ejecutar en background, responder inmediatamente
+    startSequential().catch(err => console.error('DVR enable-all error:', err));
+    
+    res.json({ 
+      ok: true, 
+      total: rows.length, 
+      message: `DVR activado en ${rows.length} canales. FFmpeg se inicia secuencialmente en segundo plano.` 
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// API Admin: Detener TODOS los DVR y liberar recursos
+app.post('/api/admin/dvr/disable-all', authAdmin, async (req, res) => {
+  try {
+    // Matar todos los procesos FFmpeg de DVR activos
+    let killed = 0;
+    activeDVR.forEach((dvr, channelId) => {
+      dvr.recording = false;
+      dvr.viewers = 0;
+      if (dvr.ffmpeg) try { dvr.ffmpeg.kill('SIGTERM'); } catch {}
+      killed++;
+    });
+    activeDVR.clear();
+    
+    // Desactivar en BD
+    const { rowCount } = await pool.query('UPDATE channels SET dvr_enabled = false WHERE dvr_enabled = true');
+    channelListCache.invalidate();
+    
+    res.json({ 
+      ok: true, 
+      disabled: rowCount, 
+      killed, 
+      message: `${killed} procesos FFmpeg detenidos, ${rowCount} canales DVR desactivados.` 
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
