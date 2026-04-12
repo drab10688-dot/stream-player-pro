@@ -5423,7 +5423,9 @@ function startDVR(channelId, sourceUrl) {
     mediaSequence: 0,
     _buffer: [],
     _bufferBytes: 0,
+    _tsPending: Buffer.alloc(0), // buffer pendiente para alinear paquetes TS
     knownSegments: new Set(),
+    segmentDurations: [],  // duración real de cada segmento (para HLS)
   };
 
   if (isHLS) {
