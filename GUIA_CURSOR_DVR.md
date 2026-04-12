@@ -64,38 +64,55 @@ Authorization: Bearer <token>
 
 ---
 
-## CAMPO dvr_enabled EN CANALES
+## IMPORTANTE: EL SERVIDOR YA MANEJA DVR AUTOMÁTICAMENTE
 
-El endpoint `/api/channels` incluye `dvr_enabled: boolean` en cada canal.
+**La APK NO necesita llamar `/api/dvr/start` ni `/api/dvr/stop` manualmente.**
+
+El endpoint `/api/stream/{channelId}` del servidor ya detecta si el canal tiene `dvr_enabled: true` y automáticamente:
+1. Inicia la grabación FFmpeg (si no estaba activa)
+2. Devuelve la URL de la playlist DVR local en vez del stream original
+
+### Respuesta de `/api/stream/{channelId}` con DVR:
+```json
+{
+  "streamUrl": "http://SERVER/api/dvr/playlist/{channelId}?token=JWT",
+  "quality": "auto",
+  "dvr": true,
+  "dvrDelay": 4500,
+  "ads": []
+}
+```
+
+### Respuesta SIN DVR (normal):
+```json
+{
+  "streamUrl": "http://origen.com/stream.m3u8",
+  "quality": "auto",
+  "dvr": false,
+  "dvrDelay": 0,
+  "ads": []
+}
+```
 
 ---
 
-## FLUJO COMPLETO EN LA APK
+## FLUJO SIMPLIFICADO EN LA APK
 
 ### Al abrir un canal:
 ```kotlin
-val channel = selectedChannel
+val response = apiService.getStream(channel.id)
+val streamUrl = response.streamUrl
 
-if (channel.dvrEnabled) {
-    // 1. Iniciar grabación DVR
-    val startResponse = apiService.startDvr(channel.id)
-    
-    if (startResponse.isSuccessful && startResponse.body()?.recording == true) {
-        // 2. Esperar 4-5 segundos para que FFmpeg genere segmentos fMP4
-        delay(4500)
-        
-        // 3. Reproducir desde playlist HLS fMP4
-        val dvrUrl = "${BuildConfig.API_BASE_URL}/api/dvr/playlist/${channel.id}"
-        playWithVlc(dvrUrl, token)
-    } else {
-        // Fallback a stream directo
-        playDirectStream(channel)
-    }
-} else {
-    // Sin DVR: stream directo
-    playDirectStream(channel)
+if (response.dvr) {
+    // DVR activo: esperar que FFmpeg genere segmentos iniciales
+    delay(response.dvrDelay.toLong()) // ~4500ms
 }
+
+// Reproducir la URL tal cual (el servidor ya decidió si es DVR o directo)
+playWithVlc(streamUrl, token)
 ```
+
+**La APK no necesita saber si es DVR o no para la lógica de reproducción.** Solo necesita respetar el `dvrDelay` antes de reproducir.
 
 ### Al cambiar de canal:
 ```kotlin
