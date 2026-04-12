@@ -5585,7 +5585,6 @@ function releaseDVR(channelId) {
     }, DVR_IDLE_TIMEOUT_MS);
   }
 }
-}
 
 // API: Iniciar DVR para un canal
 app.post('/api/dvr/start/:channelId', authApk, async (req, res) => {
