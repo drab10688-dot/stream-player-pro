@@ -4752,6 +4752,7 @@ const handleApkStreamRequest = async (req, res) => {
     let channelCategory = null;
     let channelLogo = null;
     let dvrActive = false;
+    let playlistReady = false;
 
     if (localCh.length > 0) {
       const ch = localCh[0];
