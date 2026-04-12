@@ -4801,16 +4801,19 @@ const handleApkStreamRequest = async (req, res) => {
       const ch = localCh[0];
       const sourceUrl = ch.url;
 
-      // *** DVR PRIORITY: respuesta INSTANTÁNEA — iniciar DVR en background ***
-      if (ch.dvr_enabled) {
-        // Iniciar grabación si no está activa (no-blocking)
-        startDVR(channelId, sourceUrl);
-        
+      // *** DVR PRIORITY: solo usar DVR si está LISTO (init.mp4 + 3 segmentos) ***
+      if (ch.dvr_enabled && isDvrReady(channelId)) {
         const baseUrl = getRequestBaseUrl(req);
         const token = req.headers.authorization?.replace('Bearer ', '') || '';
         streamUrl = `${baseUrl}/api/dvr/playlist/${channelId}?token=${encodeURIComponent(token)}`;
         dvrActive = true;
       } else {
+        // DVR no listo o no habilitado: usar stream directo
+        // Si DVR está habilitado pero no listo, iniciar en background
+        if (ch.dvr_enabled && !isDvrReady(channelId)) {
+          startDVR(channelId, sourceUrl); // non-blocking, prepara para próxima petición
+        }
+
         const isTsStream = /\.ts(\?|$)/i.test(sourceUrl) || /\/\d+\.ts(\?|$)/i.test(sourceUrl);
         const isDirectMode = ch.stream_mode === 'direct';
 
