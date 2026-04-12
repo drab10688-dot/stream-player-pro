@@ -5809,12 +5809,20 @@ app.put('/api/admin/channels/:id/dvr', authAdmin, async (req, res) => {
     const { dvr_enabled } = req.body;
     const { rows } = await pool.query('UPDATE channels SET dvr_enabled = $1 WHERE id = $2 RETURNING id, name, dvr_enabled', [dvr_enabled, req.params.id]);
     if (rows.length === 0) return res.status(404).json({ error: 'Canal no encontrado' });
-    if (!dvr_enabled && activeDVR.has(req.params.id)) {
-      const dvr = activeDVR.get(req.params.id);
-      dvr.recording = false;
-      dvr.viewers = 0;
-      if (dvr.ffmpeg) try { dvr.ffmpeg.kill('SIGTERM'); } catch {}
-      activeDVR.delete(req.params.id);
+    if (!dvr_enabled) {
+      if (activeDVR.has(req.params.id)) {
+        const dvr = activeDVR.get(req.params.id);
+        dvr.recording = false;
+        dvr.viewers = 0;
+        if (dvr.ffmpeg) try { dvr.ffmpeg.kill('SIGTERM'); } catch {}
+        activeDVR.delete(req.params.id);
+      }
+      const channelDir = path.join(DVR_DIR, req.params.id);
+      try {
+        const files = fs.readdirSync(channelDir);
+        files.forEach(f => { try { fs.unlinkSync(path.join(channelDir, f)); } catch {} });
+        fs.rmdirSync(channelDir);
+      } catch {}
     }
     channelListCache.invalidate();
     res.json(rows[0]);
@@ -5869,6 +5877,12 @@ app.post('/api/admin/dvr/disable-all', authAdmin, async (req, res) => {
       dvr.recording = false;
       dvr.viewers = 0;
       if (dvr.ffmpeg) try { dvr.ffmpeg.kill('SIGTERM'); } catch {}
+      try {
+        const channelDir = path.join(DVR_DIR, channelId);
+        const files = fs.readdirSync(channelDir);
+        files.forEach(f => { try { fs.unlinkSync(path.join(channelDir, f)); } catch {} });
+        fs.rmdirSync(channelDir);
+      } catch {}
       killed++;
     });
     activeDVR.clear();
