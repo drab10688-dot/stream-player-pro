@@ -19,7 +19,7 @@ interface DvrStatus {
   format: string;
   enabled?: boolean;
   active?: boolean;
-  hasInit?: boolean;
+  
   ready?: boolean;
   lastError?: string | null;
   lastErrorAt?: string | null;
@@ -47,7 +47,7 @@ interface ChannelDiagnostic {
   ffmpegExists: boolean;
   channelDir: string;
   channelDirExists: boolean;
-  hasInit: boolean;
+  
   hasPlaylist: boolean;
   segments: number;
   allFiles: string[];
@@ -314,11 +314,6 @@ const DvrMonitor = () => {
                       <Badge variant="secondary" className="gap-1 text-xs">
                         <Users className="w-3 h-3" /> {dvr.viewers}
                       </Badge>
-                      {dvr.hasInit !== undefined && (
-                        <Badge variant={dvr.hasInit ? "secondary" : "destructive"} className="gap-1 text-xs">
-                          {dvr.hasInit ? <CheckCircle className="w-3 h-3" /> : <XCircle className="w-3 h-3" />} init
-                        </Badge>
-                      )}
                       <Badge variant="outline" className="gap-1 text-xs">
                         <Video className="w-3 h-3" /> {dvr.segments} seg
                       </Badge>
@@ -366,11 +361,8 @@ const DvrMonitor = () => {
                               }
                             </div>
                             <div>
-                              <span className="text-muted-foreground">init.mp4:</span>{' '}
-                              {channelDiag.hasInit 
-                                ? <span className="text-green-500">✓ existe</span>
-                                : <span className="text-destructive">✗ falta</span>
-                              }
+                              <span className="text-muted-foreground">Segmentos .ts:</span>{' '}
+                              <span className="text-green-500">{channelDiag.segments}</span>
                             </div>
                             <div>
                               <span className="text-muted-foreground">Playlist:</span>{' '}
