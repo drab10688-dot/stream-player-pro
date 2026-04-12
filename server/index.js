@@ -5590,6 +5590,15 @@ function startDVR(channelId, sourceUrl) {
 
   ffmpeg.on('close', (code) => {
     console.log(`📹 [DVR ${channelId}] FFmpeg terminó (code ${code})`);
+
+    const fatalInitError = !isDvrReady(channelId) && dvr.restartCount >= 2;
+    if (fatalInitError) {
+      dvr.recording = false;
+      activeDVR.delete(channelId);
+      console.error(`📹 [DVR ${channelId}] DVR desactivado temporalmente tras fallar init.mp4; se usará fallback sin DVR`);
+      return;
+    }
+
     const shouldRestart = dvr.recording && (dvr.viewers > 0 || dvr.preWarmed);
     if (shouldRestart) {
       dvr.restartCount++;
