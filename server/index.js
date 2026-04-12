@@ -4739,7 +4739,7 @@ const handleApkStreamRequest = async (req, res) => {
     let channelCategory = null;
     let channelLogo = null;
     let dvrActive = false;
-    let playlistReady = false;
+    
 
     if (localCh.length > 0) {
       const ch = localCh[0];
@@ -4754,9 +4754,6 @@ const handleApkStreamRequest = async (req, res) => {
         const token = req.headers.authorization?.replace('Bearer ', '') || '';
         streamUrl = `${baseUrl}/api/dvr/playlist/${channelId}?token=${encodeURIComponent(token)}`;
         dvrActive = true;
-        // playlistReady se determina sin bloquear
-        const channelDir = path.join(DVR_DIR || path.join(__dirname, 'dvr-cache'), channelId);
-        playlistReady = fs.existsSync(path.join(channelDir, 'live.m3u8'));
       } else {
         const isTsStream = /\.ts(\?|$)/i.test(sourceUrl) || /\/\d+\.ts(\?|$)/i.test(sourceUrl);
         const isDirectMode = ch.stream_mode === 'direct';
