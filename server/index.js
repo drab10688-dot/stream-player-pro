@@ -4960,12 +4960,18 @@ const handleApkStreamRequest = async (req, res) => {
       }));
     } catch { /* sin anuncios */ }
 
+    // Calcular dvrDelay: si DVR está habilitado pero no listo, dar delay para que la APK espere
+    let dvrDelay = 0;
+    if (localCh.length > 0 && localCh[0].dvr_enabled && !dvrActive) {
+      dvrDelay = isDvrReady(channelId) ? 500 : 3000;
+    }
+
     res.json({
       streamUrl,
       quality: req.query.quality || 'auto',
       availableQualities: ['auto', 'high', 'medium', 'low'],
       dvr: dvrActive,
-      dvrDelay: 0,
+      dvrDelay,
       ads,
       ad: ads.length > 0 ? ads[0] : null,
     });
