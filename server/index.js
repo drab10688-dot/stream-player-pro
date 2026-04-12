@@ -3571,7 +3571,7 @@ app.get('/live/:username/:password/:streamId', async (req, res) => {
       );
 
       const baseUrl = getRequestBaseUrl(req);
-      const channelDir = path.join(DVR_DIR || path.join(__dirname, 'dvr-cache'), channelId);
+      const channelDir = path.join(DVR_DIR || '/data/dvr', channelId);
       const playlistPath = path.join(channelDir, 'live.m3u8');
       const encodedToken = encodeURIComponent(dvrToken);
       const fileBaseUrl = `${baseUrl}/api/dvr/file/${channelId}`;
@@ -3583,15 +3583,15 @@ app.get('/live/:username/:password/:streamId', async (req, res) => {
 
       if (fs.existsSync(playlistPath)) {
         let m3u8 = fs.readFileSync(playlistPath, 'utf8');
-        m3u8 = m3u8.replace(/#EXT-X-MAP:URI="init\.mp4"/g, `#EXT-X-MAP:URI="${fileBaseUrl}/init.mp4?token=${encodedToken}"`);
-        m3u8 = m3u8.replace(/^(seg_\d+\.m4s)$/gm, `${fileBaseUrl}/$1?token=${encodedToken}`);
+        // Reescribir segmentos .ts → URLs absolutas con token
+        m3u8 = m3u8.replace(/^(segment\d+\.ts)$/gm, `${fileBaseUrl}/$1?token=${encodedToken}`);
         if (!m3u8.includes('EXT-X-VERSION')) {
-          m3u8 = m3u8.replace('#EXTM3U', '#EXTM3U\n#EXT-X-VERSION:7');
+          m3u8 = m3u8.replace('#EXTM3U', '#EXTM3U\n#EXT-X-VERSION:3');
         }
         return res.send(m3u8);
       }
 
-      return res.send('#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n');
+      return res.send('#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:6\n#EXT-X-MEDIA-SEQUENCE:0\n');
     }
 
     const targetUrl = channel.url;
