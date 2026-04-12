@@ -5375,7 +5375,7 @@ function releaseDVR(channelId) {
 }
 
 // API: Iniciar DVR para un canal (la APK llama esto al abrir un canal con DVR)
-app.post('/api/dvr/start/:channelId', authMiddleware, async (req, res) => {
+app.post('/api/dvr/start/:channelId', authApk, async (req, res) => {
   try {
     const { channelId } = req.params;
     const { rows } = await pool.query('SELECT * FROM channels WHERE id = $1 AND dvr_enabled = true', [channelId]);
@@ -5389,13 +5389,13 @@ app.post('/api/dvr/start/:channelId', authMiddleware, async (req, res) => {
 });
 
 // API: Detener DVR (la APK llama esto al cerrar el canal)
-app.post('/api/dvr/stop/:channelId', authMiddleware, async (req, res) => {
+app.post('/api/dvr/stop/:channelId', authApk, async (req, res) => {
   releaseDVR(req.params.channelId);
   res.json({ ok: true });
 });
 
 // API: Obtener lista de segmentos DVR disponibles
-app.get('/api/dvr/segments/:channelId', authMiddleware, async (req, res) => {
+app.get('/api/dvr/segments/:channelId', authApk, async (req, res) => {
   const dvr = activeDVR.get(req.params.channelId);
   if (!dvr) return res.json({ segments: [], recording: false });
   const readySegments = dvr.segments.filter(s => s.ready).map(s => ({
@@ -5407,7 +5407,7 @@ app.get('/api/dvr/segments/:channelId', authMiddleware, async (req, res) => {
 });
 
 // API: Servir un segmento MP4 específico
-app.get('/api/dvr/segment/:channelId/:filename', authMiddleware, (req, res) => {
+app.get('/api/dvr/segment/:channelId/:filename', authApk, (req, res) => {
   const { channelId, filename } = req.params;
   // Validar filename para prevenir path traversal
   if (!/^seg_\d{3}\.mp4$/.test(filename)) return res.status(400).send('Invalid filename');
@@ -5423,7 +5423,7 @@ app.get('/api/dvr/segment/:channelId/:filename', authMiddleware, (req, res) => {
 });
 
 // API: Stream DVR continuo (playlist M3U8 con segmentos MP4 para reproducción fluida)
-app.get('/api/dvr/playlist/:channelId', authMiddleware, (req, res) => {
+app.get('/api/dvr/playlist/:channelId', authApk, (req, res) => {
   const dvr = activeDVR.get(req.params.channelId);
   if (!dvr) return res.status(404).send('DVR not active');
   const baseUrl = `${req.protocol}://${req.get('host')}`;
