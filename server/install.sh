@@ -475,8 +475,8 @@ log_info "Capacidad estimada: ~$((DISK_AVAIL_GB / 500 * 1000)) canales keep-aliv
 
 # Instalar FFmpeg si no está y verificar ruta real
 resolve_ffmpeg_bin() {
-  for candidate in "${FFMPEG_PATH:-}" "$(command -v ffmpeg 2>/dev/null)" /usr/bin/ffmpeg /usr/local/bin/ffmpeg /bin/ffmpeg /snap/bin/ffmpeg; do
-    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+  for candidate in "${FFMPEG_PATH:-}" /usr/bin/ffmpeg /usr/local/bin/ffmpeg /bin/ffmpeg "$(PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' command -v ffmpeg 2>/dev/null)"; do
+    if [ -n "$candidate" ] && [ -x "$candidate" ] && [[ "$candidate" != /snap/* ]]; then
       printf '%s\n' "$candidate"
       return 0
     fi
@@ -501,18 +501,9 @@ if [ -z "$FFMPEG_BIN" ]; then
   fi
 
   if ! DEBIAN_FRONTEND=noninteractive apt-get install -y ffmpeg >> "$FFMPEG_INSTALL_LOG" 2>&1; then
-    log_warn "Instalación APT de FFmpeg falló; probando fallback..."
+    log_warn "Instalación APT de FFmpeg falló"
   fi
 
-  hash -r 2>/dev/null || true
-  FFMPEG_BIN="$(resolve_ffmpeg_bin || true)"
-fi
-
-if [ -z "$FFMPEG_BIN" ]; then
-  log_info "Intentando instalar FFmpeg vía snap..."
-  DEBIAN_FRONTEND=noninteractive apt-get install -y snapd >> "$FFMPEG_INSTALL_LOG" 2>&1 || true
-  systemctl enable --now snapd.socket >> "$FFMPEG_INSTALL_LOG" 2>&1 || true
-  snap install ffmpeg >> "$FFMPEG_INSTALL_LOG" 2>&1 || true
   hash -r 2>/dev/null || true
   FFMPEG_BIN="$(resolve_ffmpeg_bin || true)"
 fi
@@ -835,7 +826,7 @@ cd /opt/streambox/server
 # Asegurar que el puerto está libre antes de iniciar
 kill_port $API_PORT 2>/dev/null
 
-FFMPEG_PATH="$FFMPEG_BIN" PATH="$PATH:/usr/local/bin:/usr/bin:/bin:/snap/bin" pm2 start index.js --name streambox-api --max-restarts 10 --restart-delay 3000 > /dev/null 2>&1
+FFMPEG_PATH="$FFMPEG_BIN" PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" pm2 start index.js --name streambox-api --max-restarts 10 --restart-delay 3000 > /dev/null 2>&1
 pm2 startup systemd -u root --hp /root > /dev/null 2>&1 || true
 pm2 save > /dev/null 2>&1
 
@@ -849,7 +840,7 @@ else
   pm2 logs streambox-api --lines 10 --nostream
   echo ""
   log_warn "Intentando reiniciar..."
-  FFMPEG_PATH="$FFMPEG_BIN" PATH="$PATH:/usr/local/bin:/usr/bin:/bin:/snap/bin" pm2 restart streambox-api --update-env > /dev/null 2>&1
+  FFMPEG_PATH="$FFMPEG_BIN" PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" pm2 restart streambox-api --update-env > /dev/null 2>&1
   sleep 5
   if wait_for_port $API_PORT "API" 10; then
     log_ok "API corriendo después de reinicio"
