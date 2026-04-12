@@ -1197,20 +1197,10 @@ function cleanChannelDir(channelId) {
 }
 
 // =============================================
-// TRANSCODIFICADOR TS → HLS con FFmpeg
+// SEGMENTADOR TS → HLS con Node.js puro (sin FFmpeg)
+// Lee el stream TS por HTTP, segmenta en archivos .ts
+// y genera playlist .m3u8 dinámica
 // =============================================
-// =============================================
-// CALIDADES ADAPTATIVAS (tipo Netflix)
-// Low: 480p ~800kbps (para 2-3 Mbps)
-// Med: 720p ~2Mbps (para 4-6 Mbps) 
-// High: original (copy, sin re-encode)
-// =============================================
-const QUALITY_PROFILES = [
-  { name: 'low', width: 854, height: 480, vBitrate: '800k', maxrate: '900k', bufsize: '1200k', aBitrate: '96k', bandwidth: 900000 },
-  { name: 'med', width: 1280, height: 720, vBitrate: '2000k', maxrate: '2200k', bufsize: '3000k', aBitrate: '128k', bandwidth: 2200000 },
-];
-
-// Configuración de caché según modo
 const CACHE_NORMAL = { hls_list_size: 30, hls_time: 4 };       // 30×4s = 2 min
 const CACHE_KEEPALIVE = { hls_list_size: 450, hls_time: 4 };   // 450×4s = 30 min
 
@@ -1218,24 +1208,20 @@ function validateStreamSourceUrl(sourceUrl) {
   if (!sourceUrl || typeof sourceUrl !== 'string') {
     return { valid: false, reason: 'URL vacía' };
   }
-
   const normalizedUrl = sourceUrl.trim();
   if (!/^(https?|rtmp|rtsp):\/\//i.test(normalizedUrl)) {
     return { valid: false, reason: 'protocolo no soportado (usa http/https/rtmp/rtsp)' };
   }
-
   if (/#EXTM3U|#EXTINF/i.test(normalizedUrl)) {
     return { valid: false, reason: 'la URL contiene metadatos M3U incrustados' };
   }
-
   return { valid: true, normalizedUrl };
 }
 
-function startFFmpegTranscoder(channelId, sourceUrl, isKeepAlive = false) {
-  // Validación de URL antes de lanzar FFmpeg
+function startTSSegmenter(channelId, sourceUrl, isKeepAlive = false) {
   const validation = validateStreamSourceUrl(sourceUrl);
   if (!validation.valid) {
-    console.log(`⚠️ [${channelId}] FFmpeg abortado: ${validation.reason}`);
+    console.log(`⚠️ [${channelId}] Segmenter abortado: ${validation.reason}`);
     return null;
   }
 
@@ -1249,292 +1235,194 @@ function startFFmpegTranscoder(channelId, sourceUrl, isKeepAlive = false) {
   }
 
   const channelDir = path.join(HLS_DIR, channelId);
-  if (!fs.existsSync(channelDir)) {
-    fs.mkdirSync(channelDir, { recursive: true });
-  }
+  if (!fs.existsSync(channelDir)) fs.mkdirSync(channelDir, { recursive: true });
 
-  return startAdaptiveTranscoder(channelId, streamUrl, channelDir, isKeepAlive);
-}
-
-// Adaptive multi-bitrate transcoder (Netflix-style)
-function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive = false) {
-  const masterPlaylistPath = path.join(channelDir, 'master.m3u8');
-  const copyManifestPath = path.join(channelDir, 'high', 'stream.m3u8');
   const cacheConfig = isKeepAlive ? CACHE_KEEPALIVE : CACHE_NORMAL;
+  const segmentDurationMs = cacheConfig.hls_time * 1000;
+  const maxSegments = cacheConfig.hls_list_size;
+  const cacheLabel = isKeepAlive ? `${maxSegments}seg ≈ ${Math.round(maxSegments * cacheConfig.hls_time / 60)}min` : '2min';
+  console.log(`🎬 [${channelId}] TS Segmenter Node.js (caché: ${cacheLabel}): ${streamUrl}`);
 
-  // Create subdirectories for each quality
-  ['low', 'med', 'high'].forEach(q => {
-    const qDir = path.join(channelDir, q);
-    if (!fs.existsSync(qDir)) fs.mkdirSync(qDir, { recursive: true });
-  });
-
-  const cacheLabel = isKeepAlive ? `${cacheConfig.hls_list_size}seg ≈ ${Math.round(cacheConfig.hls_list_size * cacheConfig.hls_time / 60)}min` : '2min';
-  console.log(`🎬 [${channelId}] FFmpeg adaptativo (3 calidades, caché: ${cacheLabel}): ${sourceUrl}`);
-
-  // Build FFmpeg command for multi-output adaptive streaming
-  const ffmpegArgs = [
-    '-reconnect', '1',
-    '-reconnect_streamed', '1',
-    '-reconnect_delay_max', '10',
-    '-rw_timeout', '10000000',
-    '-err_detect', 'ignore_err',
-    '-i', sourceUrl,
-
-    // --- Output 0: LOW (480p) ---
-    '-map', '0:v:0', '-map', '0:a:0?',
-    '-c:v:0', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency',
-    '-b:v:0', QUALITY_PROFILES[0].vBitrate,
-    '-maxrate:v:0', QUALITY_PROFILES[0].maxrate,
-    '-bufsize:v:0', QUALITY_PROFILES[0].bufsize,
-    '-vf:0', `scale=${QUALITY_PROFILES[0].width}:${QUALITY_PROFILES[0].height}`,
-    '-c:a:0', 'aac', '-b:a:0', QUALITY_PROFILES[0].aBitrate,
-    '-g', '48', '-keyint_min', '48', '-sc_threshold', '0',
-
-    // --- Output 1: MED (720p) ---
-    '-map', '0:v:0', '-map', '0:a:0?',
-    '-c:v:1', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency',
-    '-b:v:1', QUALITY_PROFILES[1].vBitrate,
-    '-maxrate:v:1', QUALITY_PROFILES[1].maxrate,
-    '-bufsize:v:1', QUALITY_PROFILES[1].bufsize,
-    '-vf:1', `scale=${QUALITY_PROFILES[1].width}:${QUALITY_PROFILES[1].height}`,
-    '-c:a:1', 'aac', '-b:a:1', QUALITY_PROFILES[1].aBitrate,
-    '-g', '48', '-keyint_min', '48',
-
-    // --- Output 2: HIGH (original, copy) ---
-    '-map', '0:v:0', '-map', '0:a:0?',
-    '-c:v:2', 'copy',
-    '-c:a:2', 'aac', '-b:a:2', '128k',
-
-    // --- HLS output ---
-    '-f', 'hls',
-    '-hls_time', String(cacheConfig.hls_time),
-    '-hls_list_size', String(cacheConfig.hls_list_size),
-    '-hls_flags', isKeepAlive ? 'append_list+delete_segments+temp_file' : 'append_list+temp_file',
-    '-hls_segment_type', 'mpegts',
-    '-hls_segment_filename', path.join(channelDir, 'low', 'seg_%05d.ts'),
-    '-hls_allow_cache', '1',
-    '-var_stream_map', 'v:0,a:0 v:1,a:1 v:2,a:2',
-    '-master_pl_name', 'master.m3u8',
-    '-hls_segment_filename', path.join(channelDir, '%v', 'seg_%05d.ts'),
-    '-y',
-    path.join(channelDir, '%v', 'stream.m3u8'),
-  ];
-
-  // Try adaptive first, fallback to single-quality if FFmpeg doesn't support var_stream_map
-  let ffmpeg;
-  try {
-    ffmpeg = spawnFfmpegOrThrow(`restream adaptativo ${channelId}`, ffmpegArgs);
-  } catch (err) {
-    console.error(`❌ [${channelId}] FFmpeg spawn error:`, err.message);
-    return null;
-  }
+  let mediaSequence = 0;
 
   const entry = {
-    ffmpeg,
     clients: 1,
     lastAccess: Date.now(),
     startTime: Date.now(),
-    type: 'ffmpeg-adaptive',
+    type: 'ts-segmenter',
     channelDir,
-    manifestPath: masterPlaylistPath,
-    fallbackManifest: path.join(channelDir, 'stream.m3u8'),
-    ready: false,
-    retryCount: 0,
-    maxRetries: 5,
-    adaptive: true,
-  };
-  activeTranscoders.set(channelId, entry);
-
-  let fallbackTriggered = false;
-
-  ffmpeg.stderr.on('data', (data) => {
-    const msg = data.toString();
-
-    // If var_stream_map fails, fallback to single quality optimized for slow internet
-    if (!fallbackTriggered && (msg.includes('var_stream_map') && msg.includes('Error')) || 
-        (msg.includes('Option var_stream_map not found'))) {
-      fallbackTriggered = true;
-      console.log(`⚠️ [${channelId}] var_stream_map no soportado, usando calidad única optimizada`);
-      ffmpeg.kill('SIGTERM');
-      startSingleQualityTranscoder(channelId, sourceUrl, channelDir, isKeepAlive);
-      return;
-    }
-
-    if (!entry.ready && (msg.includes('Opening') || msg.includes('muxing'))) {
-      entry.ready = true;
-      console.log(`✅ [${channelId}] FFmpeg adaptativo listo (480p/720p/original)`);
-    }
-  });
-
-  ffmpeg.on('error', (err) => {
-    console.error(`❌ [${channelId}] FFmpeg error:`, err.message);
-  });
-
-  ffmpeg.on('close', (code) => {
-    console.log(`⚠️ [${channelId}] FFmpeg terminó (code: ${code})`);
-
-    const wasKeepAlive = entry.keepAlive;
-
-    // If it crashed immediately and no fallback, try single quality
-    if (!fallbackTriggered && code !== 0 && entry.retryCount === 0) {
-      fallbackTriggered = true;
-      console.log(`🔄 [${channelId}] Fallback a calidad única optimizada`);
-      activeTranscoders.delete(channelId);
-      const fallbackEntry = startSingleQualityTranscoder(channelId, sourceUrl, channelDir, wasKeepAlive);
-      if (fallbackEntry) {
-        fallbackEntry.clients = entry.clients;
-        fallbackEntry.keepAlive = wasKeepAlive; // PRESERVAR keepAlive
-      }
-      return;
-    }
-
-    activeTranscoders.delete(channelId);
-    // Keep-alive channels ALWAYS retry, sin límite de reintentos
-    const shouldRetry = wasKeepAlive || (entry.clients > 0 && entry.retryCount < entry.maxRetries);
-    if (shouldRetry) {
-      entry.retryCount++;
-      const delay = wasKeepAlive 
-        ? Math.min(3000 * entry.retryCount, 30000) // keep-alive: más paciencia
-        : Math.min(2000 * entry.retryCount, 15000);
-      const maxLabel = wasKeepAlive ? '∞' : entry.maxRetries;
-      console.log(`🔄 [${channelId}] Reiniciando en ${delay}ms (intento ${entry.retryCount}/${maxLabel})${wasKeepAlive ? ' [KEEP-ALIVE]' : ''}`);
-      setTimeout(() => {
-        cleanChannelDir(channelId);
-        startFFmpegTranscoder(channelId, sourceUrl, wasKeepAlive);
-        const newEntry = activeTranscoders.get(channelId);
-        if (newEntry) {
-          newEntry.clients = entry.clients;
-          newEntry.keepAlive = wasKeepAlive; // PRESERVAR keepAlive
-          // Reset retry count si era keep-alive (reintentos infinitos)
-          if (wasKeepAlive) newEntry.retryCount = 0;
-        }
-      }, delay);
-    } else {
-      cleanChannelDir(channelId);
-    }
-  });
-
-  return entry;
-}
-
-// Fallback: single quality optimized for 2-3 Mbps
-function startSingleQualityTranscoder(channelId, sourceUrl, channelDir, isKeepAlive = false) {
-  const manifestPath = path.join(channelDir, 'stream.m3u8');
-  const cacheConfig = isKeepAlive ? CACHE_KEEPALIVE : CACHE_NORMAL;
-
-  const cacheLabel = isKeepAlive ? `${cacheConfig.hls_list_size}seg ≈ ${Math.round(cacheConfig.hls_list_size * cacheConfig.hls_time / 60)}min` : '2min';
-  console.log(`🎬 [${channelId}] FFmpeg calidad única (caché: ${cacheLabel}): ${sourceUrl}`);
-
-  let ffmpeg;
-  try {
-    ffmpeg = spawnFfmpegOrThrow(`restream calidad única ${channelId}`, [
-      '-reconnect', '1',
-      '-reconnect_streamed', '1',
-      '-reconnect_delay_max', '10',
-      '-rw_timeout', '10000000',
-      '-i', sourceUrl,
-      '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency',
-      '-b:v', '1200k', '-maxrate', '1400k', '-bufsize', '2000k',
-      '-vf', 'scale=1280:720',
-      '-c:a', 'aac', '-b:a', '96k',
-      '-g', '48', '-keyint_min', '48', '-sc_threshold', '0',
-      '-f', 'hls',
-      '-hls_time', String(cacheConfig.hls_time),
-      '-hls_list_size', String(cacheConfig.hls_list_size),
-      '-hls_flags', isKeepAlive ? 'append_list+delete_segments+temp_file' : 'append_list+temp_file',
-      '-hls_segment_type', 'mpegts',
-      '-hls_segment_filename', path.join(channelDir, 'seg_%05d.ts'),
-      '-hls_allow_cache', '1',
-      '-y',
-      manifestPath,
-    ]);
-  } catch (err) {
-    console.error(`❌ [${channelId}] FFmpeg spawn error:`, err.message);
-    return null;
-  }
-
-  const entry = {
-    ffmpeg,
-    clients: 1,
-    lastAccess: Date.now(),
-    startTime: Date.now(),
-    type: 'ffmpeg',
-    channelDir,
-    manifestPath,
+    manifestPath: path.join(channelDir, 'stream.m3u8'),
     ready: false,
     retryCount: 0,
     maxRetries: 5,
     adaptive: false,
+    sourceReq: null,
+    segmentIndex: 0,
+    segmentTimer: null,
+    keepAlive: isKeepAlive,
+    _buffer: [],
+    _bufferBytes: 0,
   };
-  activeTranscoders.set(channelId, entry);
 
-  // Monitorear salida de FFmpeg
-  ffmpeg.stderr.on('data', (data) => {
-    const msg = data.toString();
-    // Detectar cuando el primer segmento está listo
-    if (!entry.ready && (msg.includes('Opening') || msg.includes('muxing'))) {
-      entry.ready = true;
-      console.log(`✅ [${channelId}] FFmpeg listo, generando segmentos HLS`);
+  function writeSegment() {
+    if (entry._bufferBytes === 0) return;
+
+    const segFilename = `seg_${String(entry.segmentIndex).padStart(5, '0')}.ts`;
+    const segPath = path.join(channelDir, segFilename);
+    const data = Buffer.concat(entry._buffer);
+
+    try {
+      fs.writeFileSync(segPath, data);
+    } catch (err) {
+      console.error(`❌ [${channelId}] Error escribiendo segmento:`, err.message);
+      return;
     }
-  });
 
-  ffmpeg.on('error', (err) => {
-    console.error(`❌ [${channelId}] FFmpeg error:`, err.message);
-  });
+    entry.segmentIndex++;
+    entry._buffer = [];
+    entry._bufferBytes = 0;
 
-  ffmpeg.on('close', (code) => {
-    console.log(`⚠️ [${channelId}] FFmpeg terminó (code: ${code})`);
-    const wasKeepAlive = entry.keepAlive;
-    activeTranscoders.delete(channelId);
+    // Cleanup old segments
+    const allSegs = fs.readdirSync(channelDir)
+      .filter(f => f.startsWith('seg_') && f.endsWith('.ts'))
+      .sort();
 
-    // Keep-alive channels ALWAYS retry
-    const shouldRetry = wasKeepAlive || (entry.clients > 0 && entry.retryCount < entry.maxRetries);
+    while (allSegs.length > maxSegments) {
+      const oldest = allSegs.shift();
+      try { fs.unlinkSync(path.join(channelDir, oldest)); } catch {}
+      mediaSequence++;
+    }
+
+    // Generate m3u8
+    const currentSegs = fs.readdirSync(channelDir)
+      .filter(f => f.startsWith('seg_') && f.endsWith('.ts'))
+      .sort();
+
+    let m3u8 = '#EXTM3U\n';
+    m3u8 += '#EXT-X-VERSION:3\n';
+    m3u8 += `#EXT-X-TARGETDURATION:${cacheConfig.hls_time + 1}\n`;
+    m3u8 += `#EXT-X-MEDIA-SEQUENCE:${mediaSequence}\n`;
+
+    for (const seg of currentSegs) {
+      m3u8 += `#EXTINF:${cacheConfig.hls_time}.000,\n`;
+      m3u8 += `${seg}\n`;
+    }
+
+    try { fs.writeFileSync(entry.manifestPath, m3u8); } catch {}
+
+    if (!entry.ready && currentSegs.length >= 2) {
+      entry.ready = true;
+      console.log(`✅ [${channelId}] Segmenter Node.js listo (${currentSegs.length} segmentos)`);
+    }
+  }
+
+  function connect() {
+    const parsed = new URL(streamUrl);
+    const httpModule = parsed.protocol === 'https:' ? https : http;
+
+    const sourceReq = httpModule.get(streamUrl, {
+      timeout: 15000,
+      agent: getAgent(streamUrl),
+      headers: { 'User-Agent': 'StreamBox/1.0', 'Connection': 'keep-alive' },
+    }, (sourceRes) => {
+      if (sourceRes.statusCode >= 300 && sourceRes.statusCode < 400 && sourceRes.headers.location) {
+        const redirectUrl = sourceRes.headers.location.startsWith('http')
+          ? sourceRes.headers.location
+          : new URL(sourceRes.headers.location, streamUrl).href;
+        console.log(`🔄 [${channelId}] Segmenter: redirigido`);
+        const p2 = new URL(redirectUrl);
+        const h2 = p2.protocol === 'https:' ? https : http;
+        const r2 = h2.get(redirectUrl, {
+          timeout: 15000, agent: getAgent(redirectUrl),
+          headers: { 'User-Agent': 'StreamBox/1.0', 'Connection': 'keep-alive' },
+        }, handleResponse);
+        r2.on('error', handleConnectError);
+        entry.sourceReq = r2;
+        return;
+      }
+      handleResponse(sourceRes);
+    });
+
+    sourceReq.on('error', handleConnectError);
+    entry.sourceReq = sourceReq;
+  }
+
+  function handleResponse(sourceRes) {
+    if (sourceRes.statusCode !== 200) {
+      console.error(`❌ [${channelId}] Segmenter: origen respondió ${sourceRes.statusCode}`);
+      handleDisconnect();
+      return;
+    }
+    console.log(`✅ [${channelId}] Segmenter conectado al origen TS`);
+
+    sourceRes.on('data', (chunk) => {
+      entry.lastAccess = Date.now();
+      entry._buffer.push(chunk);
+      entry._bufferBytes += chunk.length;
+    });
+
+    entry.segmentTimer = setInterval(() => writeSegment(), segmentDurationMs);
+
+    sourceRes.on('end', () => {
+      console.log(`⚠️ [${channelId}] Segmenter: origen cerró conexión`);
+      handleDisconnect();
+    });
+
+    sourceRes.on('error', (err) => {
+      console.error(`❌ [${channelId}] Segmenter error:`, err.message);
+      handleDisconnect();
+    });
+  }
+
+  function handleConnectError(err) {
+    console.error(`❌ [${channelId}] Segmenter: no pudo conectar:`, err.message);
+    handleDisconnect();
+  }
+
+  function handleDisconnect() {
+    if (entry.segmentTimer) { clearInterval(entry.segmentTimer); entry.segmentTimer = null; }
+    writeSegment();
+
+    const shouldRetry = entry.keepAlive || (entry.clients > 0 && entry.retryCount < entry.maxRetries);
     if (shouldRetry) {
       entry.retryCount++;
-      const delay = wasKeepAlive 
+      const delay = entry.keepAlive
         ? Math.min(3000 * entry.retryCount, 30000)
         : Math.min(2000 * entry.retryCount, 15000);
-      const maxLabel = wasKeepAlive ? '∞' : entry.maxRetries;
-      console.log(`🔄 [${channelId}] Reiniciando FFmpeg en ${delay}ms (intento ${entry.retryCount}/${maxLabel})${wasKeepAlive ? ' [KEEP-ALIVE]' : ''}`);
-      setTimeout(() => {
-        cleanChannelDir(channelId);
-        startFFmpegTranscoder(channelId, sourceUrl, wasKeepAlive);
-        const newEntry = activeTranscoders.get(channelId);
-        if (newEntry) {
-          newEntry.clients = entry.clients;
-          newEntry.keepAlive = wasKeepAlive;
-          if (wasKeepAlive) newEntry.retryCount = 0;
-        }
-      }, delay);
+      console.log(`🔄 [${channelId}] Reconectando segmenter en ${delay}ms (intento ${entry.retryCount})`);
+      setTimeout(connect, delay);
+      if (entry.keepAlive) entry.retryCount = 0;
     } else {
+      activeTranscoders.delete(channelId);
       cleanChannelDir(channelId);
     }
-  });
+  }
 
+  activeTranscoders.set(channelId, entry);
+  connect();
   return entry;
 }
 
-// Detener transcodificador cuando no hay clientes
+// Detener segmenter cuando no hay clientes
 function releaseTranscoder(channelId) {
   const entry = activeTranscoders.get(channelId);
   if (!entry) return;
 
   entry.clients--;
   if (entry.clients <= 0) {
-    // Keep alive channels NEVER stop
     if (entry.keepAlive) {
-      entry.clients = 0; // Floor at 0
-      console.log(`💚 [${channelId}] Keep-alive activo, ${entry.type === 'hls-proxy' ? 'poller' : 'FFmpeg'} permanece encendido`);
+      entry.clients = 0;
+      console.log(`💚 [${channelId}] Keep-alive activo, ${entry.type} permanece encendido`);
       return;
     }
-    // Esperar 30 segundos antes de matar, por si alguien vuelve
     setTimeout(() => {
       const current = activeTranscoders.get(channelId);
       if (current && current.clients <= 0 && !current.keepAlive) {
         console.log(`🔴 [${channelId}] Sin clientes, deteniendo`);
-        stopHLSKeepAlivePoller(channelId); // detener poller si existe
-        if ((current.type === 'ffmpeg' || current.type === 'ffmpeg-adaptive') && current.ffmpeg) {
-          current.ffmpeg.kill('SIGTERM');
+        stopHLSKeepAlivePoller(channelId);
+        if (current.type === 'ts-segmenter') {
+          if (current.segmentTimer) clearInterval(current.segmentTimer);
+          if (current.sourceReq) try { current.sourceReq.destroy(); } catch {}
         }
         activeTranscoders.delete(channelId);
         cleanChannelDir(channelId);
