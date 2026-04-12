@@ -575,7 +575,6 @@ app.put('/api/channels/:id', authAdmin, async (req, res) => {
     const category = req.body.category !== undefined ? req.body.category : c.category;
     const sort_order = req.body.sort_order !== undefined ? req.body.sort_order : c.sort_order;
     const is_active = req.body.is_active !== undefined ? req.body.is_active : c.is_active;
-    const keep_alive = req.body.keep_alive !== undefined ? req.body.keep_alive : c.keep_alive;
     const logo_url = req.body.logo_url !== undefined ? req.body.logo_url : c.logo_url;
 
     const urlValidation = validateStreamSourceUrl(url);
@@ -583,31 +582,10 @@ app.put('/api/channels/:id', authAdmin, async (req, res) => {
       return res.status(400).json({ error: `URL de canal inválida: ${urlValidation.reason}` });
     }
 
-    if (keep_alive) {
-      const keepAliveValidation = validateStreamSourceUrl(urlValidation.normalizedUrl);
-      if (!keepAliveValidation.valid) {
-        return res.status(400).json({ error: `No se puede activar Keep Alive: ${keepAliveValidation.reason}` });
-      }
-    }
-
     const { rows } = await pool.query(
-      'UPDATE channels SET name=$1, url=$2, category=$3, sort_order=$4, is_active=$5, keep_alive=$6, logo_url=$7 WHERE id=$8 RETURNING *',
-      [name, urlValidation.normalizedUrl, category, sort_order, is_active, keep_alive, logo_url, req.params.id]
+      'UPDATE channels SET name=$1, url=$2, category=$3, sort_order=$4, is_active=$5, keep_alive=false, logo_url=$6 WHERE id=$7 RETURNING *',
+      [name, urlValidation.normalizedUrl, category, sort_order, is_active, logo_url, req.params.id]
     );
-
-    // If keep_alive was toggled ON, start the transcoder immediately
-    if (keep_alive && !c.keep_alive && is_active) {
-      startKeepAliveChannel(req.params.id, urlValidation.normalizedUrl);
-    }
-    // If keep_alive was toggled OFF, stop poller and release
-    if (!keep_alive && c.keep_alive) {
-      stopHLSKeepAlivePoller(req.params.id); // detener poller si existe
-      const entry = activeTranscoders.get(req.params.id);
-      if (entry) {
-        entry.keepAlive = false;
-        if (entry.clients <= 0) releaseTranscoder(req.params.id);
-      }
-    }
 
     res.json(rows[0]);
   } catch (err) {
@@ -616,7 +594,29 @@ app.put('/api/channels/:id', authAdmin, async (req, res) => {
 });
 
 app.delete('/api/channels/:id', authAdmin, async (req, res) => {
-  await pool.query('DELETE FROM channels WHERE id = $1', [req.params.id]);
+  const channelId = req.params.id;
+  // Kill DVR process if active
+  if (activeDVR && activeDVR.has(channelId)) {
+    const dvr = activeDVR.get(channelId);
+    if (dvr.ffmpeg) try { dvr.ffmpeg.kill('SIGTERM'); } catch {}
+    activeDVR.delete(channelId);
+    // Clean DVR files
+    const channelDir = path.join(DVR_DIR || '/data/dvr', channelId);
+    try {
+      const files = fs.readdirSync(channelDir);
+      files.forEach(f => { try { fs.unlinkSync(path.join(channelDir, f)); } catch {} });
+      fs.rmdirSync(channelDir);
+    } catch {}
+    console.log(`📹 [DVR ${channelId}] Proceso FFmpeg terminado por eliminación de canal`);
+  }
+  // Stop any active transcoder
+  stopHLSKeepAlivePoller(channelId);
+  const entry = activeTranscoders.get(channelId);
+  if (entry) {
+    if (entry.ffmpeg) try { entry.ffmpeg.kill('SIGTERM'); } catch {}
+    activeTranscoders.delete(channelId);
+  }
+  await pool.query('DELETE FROM channels WHERE id = $1', [channelId]);
   res.json({ ok: true });
 });
 
@@ -1459,44 +1459,13 @@ function startKeepAliveChannel(channelId, sourceUrl) {
   }
 }
 
-// Iniciar todos los canales keep_alive al arrancar el servidor
+// KEEP ALIVE DESHABILITADO: Todo el tráfico pasa por DVR
+// Las funciones startKeepAliveChannel, initKeepAliveChannels y el health monitor
+// ya no se usan. El DVR reemplaza la funcionalidad de keep-alive.
 async function initKeepAliveChannels() {
-  try {
-    const { rows } = await pool.query(
-      'SELECT id, url FROM channels WHERE is_active = true AND keep_alive = true'
-    );
-    if (rows.length === 0) {
-      console.log('📡 No hay canales keep-alive configurados');
-      return;
-    }
-    console.log(`\n💚 Iniciando ${rows.length} canal(es) keep-alive...`);
-    for (const ch of rows) {
-      startKeepAliveChannel(ch.id, ch.url);
-      // Stagger starts to avoid overwhelming the server
-      await new Promise(r => setTimeout(r, 2000));
-    }
-    console.log(`✅ ${rows.length} canal(es) keep-alive iniciados\n`);
-  } catch (err) {
-    console.error('❌ Error iniciando canales keep-alive:', err.message);
-  }
+  console.log('📡 Keep-alive deshabilitado. Usa DVR para estabilidad de canales.');
 }
 
-// Health monitor: restart crashed keep-alive channels every 30s (más rápido)
-setInterval(async () => {
-  try {
-    const { rows } = await pool.query(
-      'SELECT id, url FROM channels WHERE is_active = true AND keep_alive = true'
-    );
-    for (const ch of rows) {
-      const entry = activeTranscoders.get(ch.id);
-      if (!entry) {
-        console.log(`🔄 [${ch.id}] Keep-alive caído, reiniciando...`);
-        startKeepAliveChannel(ch.id, ch.url);
-        await new Promise(r => setTimeout(r, 1000)); // stagger
-      }
-    }
-  } catch {}
-}, 30000);
 
 // API: Estado de keep-alive y caché de todos los canales
 app.get('/api/channels/cache-status', authAdmin, async (req, res) => {
@@ -5549,6 +5518,6 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`🔗 Xtream Base: ${XTREAM_BASE_URL}`);
   console.log(`🔐 Setup inicial: POST http://localhost:${PORT}/api/admin/setup\n`);
   
-  // Iniciar canales keep-alive después de 3 segundos (esperar conexión DB)
-  setTimeout(() => initKeepAliveChannels(), 3000);
+  // Keep-alive deshabilitado - DVR es el único sistema de estabilidad
+  console.log('📡 Keep-alive deshabilitado. DVR es el sistema principal de estabilidad.');
 });
