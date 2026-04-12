@@ -1459,44 +1459,13 @@ function startKeepAliveChannel(channelId, sourceUrl) {
   }
 }
 
-// Iniciar todos los canales keep_alive al arrancar el servidor
+// KEEP ALIVE DESHABILITADO: Todo el tráfico pasa por DVR
+// Las funciones startKeepAliveChannel, initKeepAliveChannels y el health monitor
+// ya no se usan. El DVR reemplaza la funcionalidad de keep-alive.
 async function initKeepAliveChannels() {
-  try {
-    const { rows } = await pool.query(
-      'SELECT id, url FROM channels WHERE is_active = true AND keep_alive = true'
-    );
-    if (rows.length === 0) {
-      console.log('📡 No hay canales keep-alive configurados');
-      return;
-    }
-    console.log(`\n💚 Iniciando ${rows.length} canal(es) keep-alive...`);
-    for (const ch of rows) {
-      startKeepAliveChannel(ch.id, ch.url);
-      // Stagger starts to avoid overwhelming the server
-      await new Promise(r => setTimeout(r, 2000));
-    }
-    console.log(`✅ ${rows.length} canal(es) keep-alive iniciados\n`);
-  } catch (err) {
-    console.error('❌ Error iniciando canales keep-alive:', err.message);
-  }
+  console.log('📡 Keep-alive deshabilitado. Usa DVR para estabilidad de canales.');
 }
 
-// Health monitor: restart crashed keep-alive channels every 30s (más rápido)
-setInterval(async () => {
-  try {
-    const { rows } = await pool.query(
-      'SELECT id, url FROM channels WHERE is_active = true AND keep_alive = true'
-    );
-    for (const ch of rows) {
-      const entry = activeTranscoders.get(ch.id);
-      if (!entry) {
-        console.log(`🔄 [${ch.id}] Keep-alive caído, reiniciando...`);
-        startKeepAliveChannel(ch.id, ch.url);
-        await new Promise(r => setTimeout(r, 1000)); // stagger
-      }
-    }
-  } catch {}
-}, 30000);
 
 // API: Estado de keep-alive y caché de todos los canales
 app.get('/api/channels/cache-status', authAdmin, async (req, res) => {
