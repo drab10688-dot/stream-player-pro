@@ -4683,27 +4683,41 @@ app.get('/api/channels/:id/stream', authApk, async (req, res) => {
 
     // Verificar si es un canal LOCAL (de la BD) → servir via restream
     const { rows: localCh } = await pool.query(
-      'SELECT id, name, url, category, logo_url, stream_mode FROM channels WHERE id = $1 AND is_active = true', [channelId]
+      'SELECT id, name, url, category, logo_url, stream_mode, dvr_enabled FROM channels WHERE id = $1 AND is_active = true', [channelId]
     );
 
     let streamUrl;
     let channelName = null;
     let channelCategory = null;
     let channelLogo = null;
+    let dvrActive = false;
 
     if (localCh.length > 0) {
-      const sourceUrl = localCh[0].url;
-      const isTsStream = /\.ts(\?|$)/i.test(sourceUrl) || /\/\d+\.ts(\?|$)/i.test(sourceUrl);
-      const isDirectMode = localCh[0].stream_mode === 'direct';
+      const ch = localCh[0];
+      const sourceUrl = ch.url;
 
-      if (isTsStream || isDirectMode) {
-        // Para APK/VLC: TS y modo direct salen directo al origen
-        streamUrl = sourceUrl;
-      } else {
-        // Resto de formatos locales: mantener restream
+      // *** DVR PRIORITY: si el canal tiene DVR habilitado, iniciar grabación y servir playlist local ***
+      if (ch.dvr_enabled) {
+        const dvr = startDVR(channelId, sourceUrl);
         const baseUrl = getRequestBaseUrl(req);
-        streamUrl = `${baseUrl}/api/restream/${channelId}`;
+        const token = req.headers.authorization?.replace('Bearer ', '') || '';
+        streamUrl = `${baseUrl}/api/dvr/playlist/${channelId}?token=${encodeURIComponent(token)}`;
+        dvrActive = true;
+      } else {
+        const isTsStream = /\.ts(\?|$)/i.test(sourceUrl) || /\/\d+\.ts(\?|$)/i.test(sourceUrl);
+        const isDirectMode = ch.stream_mode === 'direct';
+
+        if (isTsStream || isDirectMode) {
+          streamUrl = sourceUrl;
+        } else {
+          const baseUrl = getRequestBaseUrl(req);
+          streamUrl = `${baseUrl}/api/restream/${channelId}`;
+        }
       }
+
+      channelName = ch.name;
+      channelCategory = ch.category;
+      channelLogo = ch.logo_url;
 
       channelName = localCh[0].name;
       channelCategory = localCh[0].category;
