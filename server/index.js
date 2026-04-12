@@ -410,7 +410,7 @@ async function runAutoPing() {
         const parsedUrl = new URL(ch.url);
         const httpClient = parsedUrl.protocol === 'https:' ? https : http;
         const result = await new Promise((resolve) => {
-          const req = httpClient.request(ch.url, { method: 'GET', headers: { 'User-Agent': 'StreamBox-HealthCheck/1.0', 'Range': 'bytes=0-1024' } }, (response) => {
+          const req = httpClient.request(ch.url, { method: 'GET', headers: { 'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20', 'Range': 'bytes=0-1024' } }, (response) => {
             response.destroy();
             const isOk = response.statusCode >= 200 && response.statusCode < 400;
             resolve({ id: ch.id, name: ch.name, status: isOk ? 'online' : 'offline', consecutive_failures: ch.consecutive_failures, was_auto_disabled: ch.auto_disabled, error: isOk ? null : `HTTP ${response.statusCode}` });
@@ -536,7 +536,7 @@ app.post('/api/channels/ping', authAdmin, async (req, res) => {
         const httpClient = parsedUrl.protocol === 'https:' ? https : http;
 
         const result = await new Promise((resolve) => {
-          const req = httpClient.request(ch.url, { method: 'GET', headers: { 'User-Agent': 'StreamBox-HealthCheck/1.0', 'Range': 'bytes=0-1024' } }, (response) => {
+          const req = httpClient.request(ch.url, { method: 'GET', headers: { 'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20', 'Range': 'bytes=0-1024' } }, (response) => {
             response.destroy();
             const responseTime = Date.now() - start;
             const isOk = response.statusCode >= 200 && response.statusCode < 400;
@@ -1406,7 +1406,7 @@ function startTSSegmenter(channelId, sourceUrl, isKeepAlive = false) {
     const sourceReq = httpModule.get(streamUrl, {
       timeout: 15000,
       agent: getAgent(streamUrl),
-      headers: { 'User-Agent': 'StreamBox/1.0', 'Connection': 'keep-alive' },
+      headers: { 'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20', 'Connection': 'keep-alive' },
     }, (sourceRes) => {
       if (sourceRes.statusCode >= 300 && sourceRes.statusCode < 400 && sourceRes.headers.location) {
         const redirectUrl = sourceRes.headers.location.startsWith('http')
@@ -1417,7 +1417,7 @@ function startTSSegmenter(channelId, sourceUrl, isKeepAlive = false) {
         const h2 = p2.protocol === 'https:' ? https : http;
         const r2 = h2.get(redirectUrl, {
           timeout: 15000, agent: getAgent(redirectUrl),
-          headers: { 'User-Agent': 'StreamBox/1.0', 'Connection': 'keep-alive' },
+          headers: { 'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20', 'Connection': 'keep-alive' },
         }, handleResponse);
         r2.on('error', handleConnectError);
         entry.sourceReq = r2;
@@ -1719,7 +1719,7 @@ function startHLSKeepAlivePoller(channelId, sourceUrl) {
         const req = httpClient.request(url, {
           method: 'GET',
           agent: getAgent(url),
-          headers: { 'User-Agent': 'StreamBox/1.0' },
+          headers: { 'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20' },
         }, (res) => {
           if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
             fetchUrl(res.headers.location).then(resolve).catch(reject);
@@ -1826,7 +1826,7 @@ const getCachedM3U8 = async (channelId, targetUrl) => {
     const httpClient = parsedUrl.protocol === 'https:' ? https : http;
     const req = httpClient.request(targetUrl, {
       method: 'GET',
-      headers: { 'User-Agent': 'StreamBox/1.0' },
+      headers: { 'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20' },
     }, (res) => {
       let body = '';
       res.on('data', chunk => { body += chunk.toString(); });
@@ -1861,7 +1861,7 @@ const fetchSegment = (segmentUrl) => {
     const req = httpClient.request(segmentUrl, {
       method: 'GET',
       agent: getAgent(segmentUrl),
-      headers: { 'User-Agent': 'StreamBox/1.0' },
+      headers: { 'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20' },
     }, (res) => {
       const chunks = [];
       res.on('data', chunk => chunks.push(chunk));
@@ -1979,7 +1979,7 @@ function startPipeKeepAlive(channelId, sourceUrl) {
     const sourceReq = httpModule.get(sourceUrl, {
       timeout: 15000,
       headers: {
-        'User-Agent': 'StreamBox-Pipe/1.0',
+        'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
         'Connection': 'keep-alive',
       },
     }, (sourceRes) => {
@@ -2093,7 +2093,7 @@ app.get('/api/stream-pipe/:channelId', async (req, res) => {
       timeout: 15000,
       agent: getAgent(targetUrl),
       headers: {
-        'User-Agent': 'StreamBox-Pipe/1.0',
+        'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
         'Connection': 'keep-alive',
       },
     }, (sourceRes) => {
@@ -3507,7 +3507,7 @@ app.get('/live/:username/:password/:streamId', async (req, res) => {
         const httpModule = require(targetUrl.startsWith('https') ? 'https' : 'http');
         const sourceReq = httpModule.get(targetUrl, {
           timeout: 15000,
-          headers: { 'User-Agent': 'Mozilla/5.0 StreamBox/1.0', 'Connection': 'keep-alive' },
+          headers: { 'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20', 'Connection': 'keep-alive' },
         }, (sourceRes) => {
           if (sourceRes.statusCode >= 300 && sourceRes.statusCode < 400 && sourceRes.headers.location) {
             // Follow redirect
@@ -5458,7 +5458,7 @@ function dvrFetchUrl(url, timeout = 15000, streaming = false) {
     const req = httpModule.get(url, {
       timeout,
       agent: getAgent(url),
-      headers: { 'User-Agent': 'StreamBox-DVR/1.0', 'Connection': 'keep-alive' },
+      headers: { 'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20', 'Connection': 'keep-alive' },
     }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         const redirectUrl = res.headers.location.startsWith('http')
