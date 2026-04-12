@@ -211,6 +211,31 @@ const ChannelsManager = () => {
     }
   };
 
+  const enableAllDVR = async () => {
+    if (!confirm(`¿Activar DVR en TODOS los canales activos? FFmpeg se iniciará secuencialmente.`)) return;
+    setDvrAllLoading(true);
+    try {
+      const data = await apiPost('/api/admin/dvr/enable-all', {});
+      toast({ title: '📹 DVR Global Activado', description: data.message });
+      fetchChannels();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+    setDvrAllLoading(false);
+  };
+
+  const disableAllDVR = async () => {
+    if (!confirm(`¿Detener TODOS los DVR y liberar recursos? Esto desactivará el DVR en todos los canales.`)) return;
+    setDvrAllLoading(true);
+    try {
+      const data = await apiPost('/api/admin/dvr/disable-all', {});
+      toast({ title: '⏹ DVR Global Detenido', description: data.message });
+      fetchChannels();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+    setDvrAllLoading(false);
+  };
 
 
 
