@@ -2979,15 +2979,22 @@ app.get('/api/playlist/:token', async (req, res) => {
       return res.status(403).send('#EXTM3U\n#EXTINF:-1,Suscripción expirada\nhttp://expired');
     }
     
-    // Obtener canales activos (incluir dvr_enabled para ruteo)
-    let channelsQuery = 'SELECT id, name, url, category, logo_url, stream_mode, sort_order, dvr_enabled FROM channels WHERE is_active = true ORDER BY sort_order';
-    const { rows: channels } = await pool.query(channelsQuery);
+    // Obtener canales desde caché en memoria (ultra-rápido)
+    const allChannels = await channelListCache.get();
+    let channels = allChannels.filter(ch => ch.is_active);
     
     // Filtrar por plan si tiene uno asignado
     let filteredChannels = channels;
     if (client.plan_categories && client.plan_categories.length > 0) {
       filteredChannels = channels.filter(ch => client.plan_categories.includes(ch.category));
     }
+    
+    // REGLA DE ORO: Si un canal tiene DVR activo, solo incluirlo si está "listo"
+    // (init.mp4 + al menos 3 segmentos .m4s existen en disco)
+    filteredChannels = filteredChannels.filter(ch => {
+      if (!ch.dvr_enabled) return true; // Sin DVR, siempre incluir
+      return isDvrReady(ch.id); // Con DVR, solo si está listo
+    });
     
     // Determinar base URL para los streams
     const baseUrl = getRequestBaseUrl(req);
