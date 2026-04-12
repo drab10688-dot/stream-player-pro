@@ -731,7 +731,7 @@ app.delete('/api/channels/:id', authAdmin, async (req, res) => {
   stopHLSKeepAlivePoller(channelId);
   const entry = activeTranscoders.get(channelId);
   if (entry) {
-    if (entry.ffmpeg) try { entry.ffmpeg.kill('SIGTERM'); } catch {}
+    if (entry.sourceReq) try { entry.sourceReq.destroy(); } catch {}
     activeTranscoders.delete(channelId);
   }
   await pool.query('DELETE FROM channels WHERE id = $1', [channelId]);
