@@ -5585,28 +5585,70 @@ app.get('/api/dvr/segments/:channelId', authApk, (req, res) => {
 });
 
 // API Admin: Estado DVR activos
-app.get('/api/admin/dvr/status', authAdmin, (req, res) => {
+app.get('/api/admin/dvr/status', authAdmin, async (req, res) => {
+  // Obtener canales con DVR habilitado de la BD
+  let dvrChannels = [];
+  try {
+    const { rows } = await pool.query('SELECT id, name, dvr_enabled FROM channels WHERE dvr_enabled = true ORDER BY name');
+    dvrChannels = rows;
+  } catch {}
+
   const status = [];
-  activeDVR.forEach((dvr, channelId) => {
-    const channelDir = path.join(DVR_DIR, channelId);
+  
+  for (const ch of dvrChannels) {
+    const dvr = activeDVR.get(ch.id);
+    const channelDir = path.join(DVR_DIR, ch.id);
     let segCount = 0;
     let totalSize = 0;
-    try {
-      const files = fs.readdirSync(channelDir);
-      segCount = files.filter(f => f.endsWith('.m4s')).length;
-      files.forEach(f => { try { totalSize += fs.statSync(path.join(channelDir, f)).size; } catch {} });
-    } catch {}
+    
+    if (dvr) {
+      try {
+        const files = fs.readdirSync(channelDir);
+        segCount = files.filter(f => f.endsWith('.m4s')).length;
+        files.forEach(f => { try { totalSize += fs.statSync(path.join(channelDir, f)).size; } catch {} });
+      } catch {}
+    }
+    
     status.push({
-      channelId,
-      viewers: dvr.viewers,
+      channelId: ch.id,
+      channelName: ch.name,
+      viewers: dvr ? dvr.viewers : 0,
       segments: segCount,
-      recording: dvr.recording,
-      restarts: dvr.restartCount,
-      uptime: Math.floor((Date.now() - dvr.startedAt) / 1000),
+      recording: dvr ? dvr.recording : false,
+      restarts: dvr ? (dvr.restartCount || 0) : 0,
+      uptime: dvr ? Math.floor((Date.now() - dvr.startedAt) / 1000) : 0,
       sizeMB: Math.round(totalSize / 1024 / 1024 * 100) / 100,
       format: 'fmp4',
+      enabled: true,
+      active: !!dvr,
     });
+  }
+
+  // Agregar DVR activos que no están en la lista (por si acaso)
+  activeDVR.forEach((dvr, channelId) => {
+    if (!status.find(s => s.channelId === channelId)) {
+      const channelDir = path.join(DVR_DIR, channelId);
+      let segCount = 0, totalSize = 0;
+      try {
+        const files = fs.readdirSync(channelDir);
+        segCount = files.filter(f => f.endsWith('.m4s')).length;
+        files.forEach(f => { try { totalSize += fs.statSync(path.join(channelDir, f)).size; } catch {} });
+      } catch {}
+      status.push({
+        channelId,
+        viewers: dvr.viewers,
+        segments: segCount,
+        recording: dvr.recording,
+        restarts: dvr.restartCount || 0,
+        uptime: Math.floor((Date.now() - dvr.startedAt) / 1000),
+        sizeMB: Math.round(totalSize / 1024 / 1024 * 100) / 100,
+        format: 'fmp4',
+        enabled: true,
+        active: true,
+      });
+    }
   });
+
   res.json(status);
 });
 
