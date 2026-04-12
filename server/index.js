@@ -62,7 +62,13 @@ const geoLookup = async (ip) => {
 // Servir logos estáticos
 const LOGOS_DIR = path.join(__dirname, 'uploads', 'logos');
 if (!fs.existsSync(LOGOS_DIR)) fs.mkdirSync(LOGOS_DIR, { recursive: true });
-app.use('/uploads/logos', express.static(LOGOS_DIR));
+app.use('/uploads/logos', express.static(LOGOS_DIR, {
+  setHeaders: (res, filePath) => {
+    const ext = path.extname(filePath).toLowerCase();
+    const mimeMap = { '.jpg':'image/jpeg','.jpeg':'image/jpeg','.png':'image/png','.gif':'image/gif','.webp':'image/webp','.avif':'image/avif','.svg':'image/svg+xml','.bmp':'image/bmp','.heic':'image/heic' };
+    if (mimeMap[ext]) res.setHeader('Content-Type', mimeMap[ext]);
+  }
+}));
 
 // Multer config for logo uploads
 const logoStorage = multer.diskStorage({
