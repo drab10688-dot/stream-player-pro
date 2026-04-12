@@ -98,10 +98,13 @@ const pool = new Pool({
 });
 
 const isSnapFfmpegPath = (value) => typeof value === 'string' && value.includes('/snap/bin/ffmpeg');
-const ffmpegPathExists = (value) => typeof value === 'string' && value.length > 0 && fs.existsSync(value);
 
+// ── Entorno sanitizado para FFmpeg ──
+// Eliminamos DISPLAY y WAYLAND_DISPLAY para evitar "unable to open display" con snap
 const FFMPEG_ENV = {
   ...process.env,
+  DISPLAY: '',
+  WAYLAND_DISPLAY: '',
   PATH: Array.from(new Set([
     process.env.PATH || '',
     '/usr/local/sbin',
@@ -110,34 +113,49 @@ const FFMPEG_ENV = {
     '/usr/bin',
     '/sbin',
     '/bin',
-  ].join(':').split(':').filter(Boolean).filter(p => p !== '/snap/bin'))).join(':'),
+    '/snap/bin',
+  ].join(':').split(':').filter(Boolean))).join(':'),
 };
 
-if (isSnapFfmpegPath(FFMPEG_ENV.FFMPEG_PATH)) {
-  console.warn(`⚠️ Ignorando FFMPEG_PATH inválido heredado del entorno: ${FFMPEG_ENV.FFMPEG_PATH}`);
-  delete FFMPEG_ENV.FFMPEG_PATH;
-}
-
+// Prefer native apt ffmpeg over snap, but allow snap as last resort
 const FFMPEG_BIN = (() => {
-  const candidates = [
+  // Priority 1: non-snap candidates
+  const nativeCandidates = [
     isSnapFfmpegPath(process.env.FFMPEG_PATH) ? null : process.env.FFMPEG_PATH,
     '/usr/bin/ffmpeg',
     '/usr/local/bin/ffmpeg',
     '/bin/ffmpeg',
   ].filter(Boolean);
 
-  for (const candidate of candidates) {
+  for (const candidate of nativeCandidates) {
     try {
-      if (fs.existsSync(candidate)) return candidate;
+      if (fs.existsSync(candidate)) {
+        console.log(`✅ FFmpeg nativo encontrado: ${candidate}`);
+        return candidate;
+      }
     } catch {}
   }
 
+  // Priority 2: detect via PATH (excluding snap)
   try {
+    const envNoSnap = { ...FFMPEG_ENV, PATH: FFMPEG_ENV.PATH.split(':').filter(p => p !== '/snap/bin').join(':') };
     const detected = execSync('command -v ffmpeg || which ffmpeg', {
-      env: FFMPEG_ENV,
+      env: envNoSnap,
       stdio: ['ignore', 'pipe', 'ignore'],
     }).toString().trim().split('\n')[0];
-    if (detected && !isSnapFfmpegPath(detected) && ffmpegPathExists(detected)) return detected;
+    if (detected && !isSnapFfmpegPath(detected) && ffmpegPathExists(detected)) {
+      console.log(`✅ FFmpeg nativo detectado: ${detected}`);
+      return detected;
+    }
+  } catch {}
+
+  // Priority 3: snap as last resort (with sanitized env to prevent display errors)
+  const snapPath = '/snap/bin/ffmpeg';
+  try {
+    if (fs.existsSync(snapPath)) {
+      console.warn(`⚠️ Usando FFmpeg snap como último recurso: ${snapPath} (DISPLAY desactivado para evitar errores)`);
+      return snapPath;
+    }
   } catch {}
 
   return null;
@@ -148,7 +166,7 @@ console.log(`🎞️ FFmpeg configurado: ${FFMPEG_BIN}`);
 function requireFfmpegBinary(contextLabel) {
   if (ffmpegPathExists(FFMPEG_BIN)) return FFMPEG_BIN;
 
-  const message = `FFmpeg no disponible: instala /usr/bin/ffmpeg y elimina la versión snap antes de iniciar ${contextLabel}`;
+  const message = `FFmpeg no disponible: instala ffmpeg (apt install ffmpeg) antes de iniciar ${contextLabel}`;
   console.error(`❌ ${message}`);
   throw new Error(message);
 }
