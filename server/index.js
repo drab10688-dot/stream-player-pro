@@ -1442,9 +1442,19 @@ function startTSSegmenter(channelId, sourceUrl, isKeepAlive = false) {
       entry.lastAccess = Date.now();
       entry._buffer.push(chunk);
       entry._bufferBytes += chunk.length;
+      // Intentar cortar en keyframe (PAT) cuando haya suficiente data
+      processIncomingData();
     });
 
-    entry.segmentTimer = setInterval(() => writeSegment(), segmentDurationMs);
+    // Timer de respaldo: si no se encuentra PAT, forzar corte cada 2x duración
+    entry.segmentTimer = setInterval(() => {
+      if (entry._segBuffer && entry._segBufferBytes > 0) {
+        const elapsed = (Date.now() - (entry._segStartTime || Date.now())) / 1000;
+        if (elapsed >= cacheConfig.hls_time * 2.5) {
+          processIncomingData(); // forzará corte por timeout
+        }
+      }
+    }, cacheConfig.hls_time * 1000);
 
     sourceRes.on('end', () => {
       console.log(`⚠️ [${channelId}] Segmenter: origen cerró conexión`);
