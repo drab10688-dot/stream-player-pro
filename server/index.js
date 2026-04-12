@@ -5537,6 +5537,15 @@ function startDVR(channelId, sourceUrl) {
 
   const playlistPath = path.join(channelDir, 'live.m3u8');
   const segPattern = path.join(channelDir, 'seg_%03d.m4s');
+  const ffmpegBinCandidates = [
+    process.env.FFMPEG_PATH,
+    FFMPEG_BIN,
+    '/usr/bin/ffmpeg',
+    '/usr/local/bin/ffmpeg',
+    '/bin/ffmpeg',
+    'ffmpeg',
+  ].filter(Boolean);
+  const ffmpegBin = ffmpegBinCandidates.find(candidate => candidate === 'ffmpeg' || fs.existsSync(candidate)) || 'ffmpeg';
 
   const ffmpegArgs = [
     '-hide_banner', '-loglevel', 'warning',
@@ -5560,10 +5569,16 @@ function startDVR(channelId, sourceUrl) {
     '-hls_segment_type', 'fmp4',
     '-hls_fmp4_init_filename', 'init.mp4',
     '-hls_segment_filename', segPattern,
+    '-y',
     playlistPath,
   ];
 
-  const ffmpeg = spawn(FFMPEG_BIN, ffmpegArgs, { stdio: ['pipe', 'pipe', 'pipe'], env: FFMPEG_ENV });
+  console.log(`📹 [DVR ${channelId}] Iniciando FFmpeg con: ${ffmpegBin}`);
+  const ffmpeg = spawn(ffmpegBin, ffmpegArgs, {
+    stdio: ['pipe', 'pipe', 'pipe'],
+    env: FFMPEG_ENV,
+    cwd: channelDir,
+  });
   dvr.ffmpeg = ffmpeg;
 
   ffmpeg.stderr.on('data', (data) => {
