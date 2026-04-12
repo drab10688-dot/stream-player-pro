@@ -5723,7 +5723,73 @@ app.put('/api/admin/channels/:id/dvr', authAdmin, async (req, res) => {
       if (dvr.ffmpeg) try { dvr.ffmpeg.kill('SIGTERM'); } catch {}
       activeDVR.delete(req.params.id);
     }
+    channelListCache.invalidate();
     res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// API Admin: Activar DVR en TODOS los canales (secuencial para no saturar CPU)
+app.post('/api/admin/dvr/enable-all', authAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query('UPDATE channels SET dvr_enabled = true WHERE is_active = true RETURNING id, name, url');
+    channelListCache.invalidate();
+    
+    // Iniciar FFmpeg secuencialmente con 2s de delay entre cada uno
+    let started = 0;
+    const startSequential = async () => {
+      for (const ch of rows) {
+        if (!activeDVR.has(ch.id)) {
+          try {
+            startDVR(ch.id, ch.url);
+            started++;
+            // Esperar 2 segundos entre cada inicio para no saturar CPU
+            await new Promise(r => setTimeout(r, 2000));
+          } catch (err) {
+            console.error(`📹 [DVR ALL] Error iniciando ${ch.name}:`, err.message);
+          }
+        }
+      }
+      console.log(`📹 [DVR ALL] ${started}/${rows.length} canales DVR iniciados`);
+    };
+    
+    // Ejecutar en background, responder inmediatamente
+    startSequential().catch(err => console.error('DVR enable-all error:', err));
+    
+    res.json({ 
+      ok: true, 
+      total: rows.length, 
+      message: `DVR activado en ${rows.length} canales. FFmpeg se inicia secuencialmente en segundo plano.` 
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// API Admin: Detener TODOS los DVR y liberar recursos
+app.post('/api/admin/dvr/disable-all', authAdmin, async (req, res) => {
+  try {
+    // Matar todos los procesos FFmpeg de DVR activos
+    let killed = 0;
+    activeDVR.forEach((dvr, channelId) => {
+      dvr.recording = false;
+      dvr.viewers = 0;
+      if (dvr.ffmpeg) try { dvr.ffmpeg.kill('SIGTERM'); } catch {}
+      killed++;
+    });
+    activeDVR.clear();
+    
+    // Desactivar en BD
+    const { rowCount } = await pool.query('UPDATE channels SET dvr_enabled = false WHERE dvr_enabled = true');
+    channelListCache.invalidate();
+    
+    res.json({ 
+      ok: true, 
+      disabled: rowCount, 
+      killed, 
+      message: `${killed} procesos FFmpeg detenidos, ${rowCount} canales DVR desactivados.` 
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
