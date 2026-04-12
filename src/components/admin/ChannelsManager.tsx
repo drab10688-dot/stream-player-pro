@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
-import { Plus, Trash2, Edit2, Save, X, Tv, Upload, Link, FileText, Loader2, Zap, ImagePlus, Activity, HardDrive, CheckSquare, Square as SquareIcon, Video } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, Tv, Upload, Link, FileText, Loader2, ImagePlus, Activity, HardDrive, Video } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { motion } from 'framer-motion';
 
@@ -19,7 +19,6 @@ interface Channel {
   url: string;
   category: string;
   is_active: boolean;
-  keep_alive: boolean;
   dvr_enabled: boolean;
   sort_order: number;
   logo_url: string | null;
@@ -47,7 +46,7 @@ const ChannelsManager = () => {
   const [form, setForm] = useState({ name: '', url: '', category: 'General', sort_order: 0, logo_url: '' });
   const [m3uContent, setM3uContent] = useState('');
   const [m3uUrl, setM3uUrl] = useState('');
-  const [m3uKeepAlive, setM3uKeepAlive] = useState(false);
+  
   const [importing, setImporting] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
@@ -211,25 +210,8 @@ const ChannelsManager = () => {
     }
   };
 
-  const toggleKeepAlive = async (ch: Channel) => {
-    try {
-      if (isLovablePreview()) {
-        // keep_alive not in supabase schema, skip
-        toast({ title: 'Keep Alive solo disponible en VPS', variant: 'destructive' });
-        return;
-      }
-      await apiPut(`/api/channels/${ch.id}`, { keep_alive: !ch.keep_alive });
-      toast({ 
-        title: !ch.keep_alive ? '💚 Keep Alive activado' : 'Keep Alive desactivado',
-        description: !ch.keep_alive 
-          ? `${ch.name} se mantendrá conectado permanentemente al origen` 
-          : `${ch.name} se conectará solo cuando haya clientes`
-      });
-      fetchChannels();
-    } catch (err: any) {
-      toast({ title: 'Error', description: err.message, variant: 'destructive' });
-    }
-  };
+
+
 
   const toggleDVR = async (ch: Channel) => {
     try {
@@ -259,7 +241,7 @@ const ChannelsManager = () => {
     try {
       if (isLovablePreview()) {
         const { data, error } = await supabase.functions.invoke('import-m3u', {
-          body: { m3u_content: m3uContent.trim() || undefined, m3u_url: m3uUrl.trim() || undefined, keep_alive: m3uKeepAlive },
+          body: { m3u_content: m3uContent.trim() || undefined, m3u_url: m3uUrl.trim() || undefined },
         });
         if (error) throw error;
         toast({ title: '¡Importación completada!', description: `${data.imported} de ${data.total} canales importados` });
@@ -267,7 +249,6 @@ const ChannelsManager = () => {
         const data = await apiPost('/api/channels/import-m3u', {
           m3u_content: m3uContent.trim() || undefined,
           m3u_url: m3uUrl.trim() || undefined,
-          keep_alive: m3uKeepAlive,
         });
         toast({ title: '¡Importación completada!', description: `${data.imported} de ${data.total} canales importados` });
       }
@@ -349,19 +330,6 @@ const ChannelsManager = () => {
               </label>
             </div>
             <Textarea placeholder={`#EXTM3U\n#EXTINF:-1 group-title="Deportes",ESPN\nhttp://ip:port/espn.ts`} value={m3uContent} onChange={e => setM3uContent(e.target.value)} className="bg-secondary border-border text-foreground font-mono text-xs min-h-[150px]" rows={8} />
-          </div>
-          <div className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg border border-border/30">
-            <input
-              type="checkbox"
-              id="m3u-keepalive"
-              checked={m3uKeepAlive}
-              onChange={e => setM3uKeepAlive(e.target.checked)}
-              className="w-4 h-4 rounded border-border accent-primary"
-            />
-            <label htmlFor="m3u-keepalive" className="text-sm text-foreground cursor-pointer">
-              <span className="font-medium">Activar Keep Alive</span>
-              <p className="text-xs text-muted-foreground mt-0.5">Mantener todos los canales importados conectados permanentemente al origen</p>
-            </label>
           </div>
           <div className="flex gap-2 justify-end">
             <Button variant="ghost" onClick={() => setShowM3UImport(false)} className="text-muted-foreground"><X className="w-4 h-4 mr-1" /> Cancelar</Button>
@@ -528,28 +496,15 @@ const ChannelsManager = () => {
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
                     {!isLovablePreview() && (
-                      <>
-                        <div className="flex items-center gap-1.5 mr-1" title={ch.dvr_enabled ? 'DVR: ON - Graba MP4 bajo demanda' : 'DVR: OFF'}>
-                          <Video className={`w-3.5 h-3.5 ${ch.dvr_enabled ? 'text-red-500' : 'text-muted-foreground/40'}`} />
-                          <Switch 
-                            checked={ch.dvr_enabled} 
-                            onCheckedChange={() => toggleDVR(ch)} 
-                            className="scale-75"
-                          />
-                        </div>
-                        <div className="flex items-center gap-1.5 mr-2" title={ch.keep_alive ? 'Pre-Caché: ON - Siempre conectado al origen' : 'Pre-Caché: OFF - Conexión bajo demanda'}>
-                          <Zap className={`w-3.5 h-3.5 ${ch.keep_alive ? 'text-green-500' : 'text-muted-foreground/40'}`} />
-                          <Switch 
-                            checked={ch.keep_alive} 
-                            onCheckedChange={() => toggleKeepAlive(ch)} 
-                            className="scale-75"
-                          />
-                        </div>
-                      </>
+                      <div className="flex items-center gap-1.5 mr-1" title={ch.dvr_enabled ? 'DVR: ON - Buffer de seguridad activo' : 'DVR: OFF'}>
+                        <Video className={`w-3.5 h-3.5 ${ch.dvr_enabled ? 'text-red-500' : 'text-muted-foreground/40'}`} />
+                        <Switch 
+                          checked={ch.dvr_enabled} 
+                          onCheckedChange={() => toggleDVR(ch)} 
+                          className="scale-75"
+                        />
+                      </div>
                     )}
-                    <Button variant="ghost" size="sm" onClick={() => toggleActive(ch)} className="text-xs text-muted-foreground">
-                      {ch.is_active ? 'Desactivar' : 'Activar'}
-                    </Button>
                     <Button variant="ghost" size="icon" onClick={() => handleEdit(ch)} className="text-muted-foreground hover:text-primary">
                       <Edit2 className="w-4 h-4" />
                     </Button>
