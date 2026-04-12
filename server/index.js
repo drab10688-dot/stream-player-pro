@@ -2345,7 +2345,7 @@ app.post('/api/channels/diagnose', authAdmin, async (req, res) => {
 app.get('/api/channels/export', authAdmin, async (req, res) => {
   try {
     const { rows: channels } = await pool.query(
-      `SELECT name, url, category, logo_url, is_active, keep_alive, sort_order, stream_mode FROM channels ORDER BY sort_order`
+      `SELECT name, url, category, logo_url, is_active, keep_alive, sort_order, stream_mode, dvr_enabled FROM channels ORDER BY sort_order`
     );
     const exportData = {
       version: 1,
@@ -2388,8 +2388,8 @@ app.post('/api/channels/import-sync', authAdmin, async (req, res) => {
       }
       try {
         await pool.query(
-          `INSERT INTO channels (name, url, category, logo_url, is_active, keep_alive, sort_order, stream_mode) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-          [ch.name, ch.url, ch.category || 'General', ch.logo_url || null, ch.is_active !== false, ch.keep_alive || false, ch.sort_order || 0, ch.stream_mode || 'direct']
+          `INSERT INTO channels (name, url, category, logo_url, is_active, keep_alive, sort_order, stream_mode, dvr_enabled) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          [ch.name, ch.url, ch.category || 'General', ch.logo_url || null, ch.is_active !== false, false, ch.sort_order || 0, ch.stream_mode || 'direct', ch.dvr_enabled || false]
         );
         imported++;
       } catch { skipped++; }
@@ -2431,8 +2431,8 @@ app.post('/api/channels/pull-remote', authAdmin, async (req, res) => {
       }
       try {
         await pool.query(
-          `INSERT INTO channels (name, url, category, logo_url, is_active, keep_alive, sort_order, stream_mode) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-          [ch.name, ch.url, ch.category || 'General', ch.logo_url || null, ch.is_active !== false, false, ch.sort_order || 0, ch.stream_mode || 'direct']
+          `INSERT INTO channels (name, url, category, logo_url, is_active, keep_alive, sort_order, stream_mode, dvr_enabled) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          [ch.name, ch.url, ch.category || 'General', ch.logo_url || null, ch.is_active !== false, false, ch.sort_order || 0, ch.stream_mode || 'direct', ch.dvr_enabled || false]
         );
         imported++;
       } catch { skipped++; }
