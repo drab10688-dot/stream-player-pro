@@ -5822,6 +5822,10 @@ app.get('/api/admin/dvr/status', authAdmin, async (req, res) => {
       } catch {}
     }
     
+    const hasInit = fs.existsSync(path.join(channelDir, 'init.mp4'));
+    const errors = dvrErrorLog.get(ch.id) || [];
+    const lastError = errors.length > 0 ? errors[errors.length - 1] : null;
+    
     status.push({
       channelId: ch.id,
       channelName: ch.name,
@@ -5834,6 +5838,11 @@ app.get('/api/admin/dvr/status', authAdmin, async (req, res) => {
       format: 'fmp4',
       enabled: true,
       active: !!dvr,
+      hasInit,
+      ready: isDvrReady(ch.id),
+      lastError: lastError ? lastError.message : null,
+      lastErrorAt: lastError ? lastError.timestamp : null,
+      errorCount: errors.length,
     });
   }
 
@@ -5863,6 +5872,61 @@ app.get('/api/admin/dvr/status', authAdmin, async (req, res) => {
   });
 
   res.json(status);
+});
+
+// API Admin: Diagnóstico DVR detallado con historial de errores
+app.get('/api/admin/dvr/diagnostics', authAdmin, async (req, res) => {
+  const channelId = req.query.channelId;
+  
+  if (channelId) {
+    // Diagnóstico de un canal específico
+    const errors = dvrErrorLog.get(channelId) || [];
+    const dvr = activeDVR.get(channelId);
+    const channelDir = path.join(DVR_DIR, channelId);
+    let files = [];
+    try { files = fs.readdirSync(channelDir); } catch {}
+    
+    return res.json({
+      channelId,
+      ffmpegBin: FFMPEG_BIN,
+      ffmpegExists: fs.existsSync(FFMPEG_BIN),
+      channelDir,
+      channelDirExists: fs.existsSync(channelDir),
+      hasInit: files.includes('init.mp4'),
+      hasPlaylist: files.includes('live.m3u8'),
+      segments: files.filter(f => f.endsWith('.m4s')).length,
+      allFiles: files,
+      isActive: !!dvr,
+      isRecording: dvr ? dvr.recording : false,
+      restartCount: dvr ? dvr.restartCount : 0,
+      preWarmed: dvr ? dvr.preWarmed : false,
+      sourceUrl: dvr ? dvr.sourceUrl : null,
+      errors,
+    });
+  }
+  
+  // Resumen general de todos los canales con errores
+  const summary = [];
+  dvrErrorLog.forEach((errors, chId) => {
+    const lastError = errors[errors.length - 1];
+    summary.push({
+      channelId: chId,
+      errorCount: errors.length,
+      lastError: lastError.message,
+      lastErrorAt: lastError.timestamp,
+      lastErrorType: lastError.type,
+    });
+  });
+  summary.sort((a, b) => b.errorCount - a.errorCount);
+  
+  res.json({
+    ffmpegBin: FFMPEG_BIN,
+    ffmpegExists: fs.existsSync(FFMPEG_BIN),
+    dvrDir: DVR_DIR,
+    activeCount: activeDVR.size,
+    channelsWithErrors: summary.length,
+    errors: summary,
+  });
 });
 
 // API Admin: Toggle DVR por canal
