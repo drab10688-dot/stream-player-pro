@@ -3345,7 +3345,7 @@ app.get('/live/:username/:password/:streamId', async (req, res) => {
         }
       }
 
-      const channelDir = path.join(__dirname, 'dvr', channelId);
+      const channelDir = path.join(DVR_DIR || path.join(__dirname, 'dvr-cache'), channelId);
       const playlistPath = path.join(channelDir, 'live.m3u8');
 
       // Esperar a que la playlist esté lista (máximo 6 segundos)
