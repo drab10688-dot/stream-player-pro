@@ -5331,32 +5331,56 @@ app.get('/api/reseller/plans', authReseller, async (req, res) => {
 
 // =============================================
 // =============================================
-// DVR: TIMESHIFT CON HLS NATIVO (segmentos .ts)
-// Buffer rotativo de 5 minutos en segmentos .ts estándar
+// DVR: TIMESHIFT CON NODE.JS PURO (segmentos .ts)
+// Buffer rotativo de 5 minutos - sin FFmpeg
 // =============================================
 const DVR_DIR = process.env.DVR_DIR || '/data/dvr';
 if (!fs.existsSync(DVR_DIR)) fs.mkdirSync(DVR_DIR, { recursive: true });
 
-const DVR_SEGMENT_SECONDS = 6;   // hls_time 6
+const DVR_SEGMENT_SECONDS = 6;   // duración de cada segmento
 const DVR_BUFFER_SECONDS = 300;  // 5 minutos de buffer
-const DVR_HLS_LIST_SIZE = 50;    // hls_list_size 50 (~5 min)
-const activeDVR = new Map(); // channelId -> { ffmpeg, viewers, lastAccess, recording, ... }
+const DVR_HLS_LIST_SIZE = 50;    // ~5 min de segmentos
+const activeDVR = new Map(); // channelId -> { sourceReq, viewers, lastAccess, recording, ... }
 
 // DVR Error Log
 const dvrErrorLog = new Map();
 const DVR_ERROR_LOG_MAX = 20;
 
-function logDvrError(channelId, message, type = 'ffmpeg') {
+function logDvrError(channelId, message, type = 'node') {
   if (!dvrErrorLog.has(channelId)) dvrErrorLog.set(channelId, []);
   const log = dvrErrorLog.get(channelId);
   log.push({ timestamp: new Date().toISOString(), message: message.substring(0, 500), type });
   if (log.length > DVR_ERROR_LOG_MAX) log.splice(0, log.length - DVR_ERROR_LOG_MAX);
 }
 
+// Helper: descargar URL con soporte de redirects
+function dvrFetchUrl(url, timeout = 15000) {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(url);
+    const httpModule = parsed.protocol === 'https:' ? https : http;
+    const req = httpModule.get(url, {
+      timeout,
+      agent: getAgent(url),
+      headers: { 'User-Agent': 'StreamBox-DVR/1.0', 'Connection': 'keep-alive' },
+    }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        const redirectUrl = res.headers.location.startsWith('http')
+          ? res.headers.location
+          : new URL(res.headers.location, url).href;
+        dvrFetchUrl(redirectUrl, timeout).then(resolve).catch(reject);
+        return;
+      }
+      resolve(res);
+    });
+    req.on('error', reject);
+    req.setTimeout(timeout, () => { req.destroy(); reject(new Error('Timeout')); });
+  });
+}
+
 function startDVR(channelId, sourceUrl) {
   const validation = validateStreamSourceUrl(sourceUrl);
   if (!validation.valid) {
-    console.log(`⚠️ [DVR ${channelId}] FFmpeg abortado: ${validation.reason}`);
+    console.log(`⚠️ [DVR ${channelId}] Abortado: ${validation.reason}`);
     return null;
   }
 
@@ -5371,121 +5395,303 @@ function startDVR(channelId, sourceUrl) {
     return dvr;
   }
 
-  // Verificar que ffmpeg sea ejecutable ANTES de hacer cualquier cosa
-  let ffmpegBin;
-  try {
-    ffmpegBin = requireFfmpegBinary(`DVR ${channelId}`);
-  } catch (err) {
-    const msg = 'FFmpeg no instalado en el sistema operativo';
-    console.error(`📹 [DVR ${channelId}] ${msg}`);
-    logDvrError(channelId, msg, 'spawn');
-    return null;
-  }
-
+  const isHLS = /\.m3u8?(\?|$)/i.test(normalizedUrl);
   const channelDir = path.join(DVR_DIR, channelId);
   if (!fs.existsSync(channelDir)) fs.mkdirSync(channelDir, { recursive: true });
+
+  // Limpiar segmentos viejos al iniciar
+  try {
+    fs.readdirSync(channelDir).forEach(f => { try { fs.unlinkSync(path.join(channelDir, f)); } catch {} });
+  } catch {}
 
   const dvr = {
     viewers: 1,
     lastAccess: Date.now(),
     recording: false,
-    ffmpeg: null,
     idleTimer: null,
     startedAt: Date.now(),
     restartCount: 0,
     sourceUrl: normalizedUrl,
     preWarmed: false,
-    ffmpegReady: false,
+    ready: false,
+    sourceReq: null,
+    segmentTimer: null,
+    pollTimer: null,
+    segmentIndex: 0,
+    mediaSequence: 0,
+    _buffer: [],
+    _bufferBytes: 0,
+    knownSegments: new Set(),
   };
 
-  // Limpiar segmentos viejos al iniciar
-  try {
-    const oldFiles = fs.readdirSync(channelDir);
-    oldFiles.forEach(f => { try { fs.unlinkSync(path.join(channelDir, f)); } catch {} });
-  } catch {}
+  if (isHLS) {
+    startHLSDVR(channelId, normalizedUrl, dvr, channelDir);
+  } else {
+    startTSDVR(channelId, normalizedUrl, dvr, channelDir);
+  }
 
+  activeDVR.set(channelId, dvr);
+  return dvr;
+}
+
+// DVR para fuentes HLS: descarga segmentos del origen y genera playlist local
+function startHLSDVR(channelId, sourceUrl, dvr, channelDir) {
   const playlistPath = path.join(channelDir, 'live.m3u8');
-  const segPattern = path.join(channelDir, 'segment%d.ts');
-
-  const ffmpegArgs = [
-    '-hide_banner', '-loglevel', 'warning',
-    '-fflags', '+genpts+discardcorrupt',
-    '-reconnect', '1',
-    '-reconnect_at_eof', '1',
-    '-reconnect_streamed', '1',
-    '-reconnect_delay_max', '5',
-    '-rw_timeout', '15000000',
-    '-i', normalizedUrl,
-    '-c', 'copy',
-    '-f', 'hls',
-    '-hls_time', String(DVR_SEGMENT_SECONDS),
-    '-hls_list_size', String(DVR_HLS_LIST_SIZE),
-    '-hls_flags', 'delete_segments+append_list+independent_segments',
-    '-hls_segment_filename', segPattern,
-    '-y',
-    playlistPath,
-  ];
-
-  console.log(`📹 [DVR ${channelId}] Iniciando FFmpeg HLS nativo (.ts) con: ${ffmpegBin}`);
-  const ffmpeg = spawnFfmpegOrThrow(`DVR ${channelId}`, ffmpegArgs, { cwd: channelDir });
-  dvr.ffmpeg = ffmpeg;
   dvr.recording = true;
+  console.log(`📹 [DVR ${channelId}] Iniciando DVR HLS (Node.js puro): ${sourceUrl}`);
 
-  ffmpeg.stderr.on('data', (data) => {
-    const msg = data.toString().trim();
-    if (/Opening|Stream mapping|Press \[q\]|Output #0|frame=/i.test(msg)) {
-      dvr.ffmpegReady = true;
+  const poll = async () => {
+    try {
+      // 1. Descargar manifiesto del origen
+      const res = await dvrFetchUrl(sourceUrl);
+      const chunks = [];
+      await new Promise((resolve, reject) => {
+        res.on('data', c => chunks.push(c));
+        res.on('end', resolve);
+        res.on('error', reject);
+      });
+      const manifest = Buffer.concat(chunks).toString();
+      const baseUrl = sourceUrl.substring(0, sourceUrl.lastIndexOf('/') + 1);
+
+      // Si es master playlist, seguir el primer variant
+      let mediaManifest = manifest;
+      let mediaBaseUrl = baseUrl;
+
+      const variantMatch = manifest.match(/^(?!#)(.+\.m3u8.*)$/m);
+      if (variantMatch) {
+        const variantUrl = variantMatch[1].startsWith('http') ? variantMatch[1] : baseUrl + variantMatch[1];
+        mediaBaseUrl = variantUrl.substring(0, variantUrl.lastIndexOf('/') + 1);
+        const vRes = await dvrFetchUrl(variantUrl);
+        const vChunks = [];
+        await new Promise((resolve, reject) => {
+          vRes.on('data', c => vChunks.push(c));
+          vRes.on('end', resolve);
+          vRes.on('error', reject);
+        });
+        mediaManifest = Buffer.concat(vChunks).toString();
+      }
+
+      // 2. Extraer URLs de segmentos .ts
+      const segmentLines = mediaManifest.match(/^(?!#)(.+\.ts.*)$/gm) || [];
+      const newSegments = [];
+
+      for (const seg of segmentLines) {
+        const segUrl = seg.startsWith('http') ? seg : mediaBaseUrl + seg;
+        if (!dvr.knownSegments.has(segUrl)) {
+          newSegments.push(segUrl);
+        }
+      }
+
+      // 3. Descargar nuevos segmentos
+      for (const segUrl of newSegments) {
+        try {
+          const segRes = await dvrFetchUrl(segUrl);
+          const segChunks = [];
+          await new Promise((resolve, reject) => {
+            segRes.on('data', c => segChunks.push(c));
+            segRes.on('end', resolve);
+            segRes.on('error', reject);
+          });
+          const segData = Buffer.concat(segChunks);
+
+          const segFilename = `segment${dvr.segmentIndex}.ts`;
+          fs.writeFileSync(path.join(channelDir, segFilename), segData);
+          dvr.segmentIndex++;
+          dvr.knownSegments.add(segUrl);
+        } catch (segErr) {
+          logDvrError(channelId, `Error descargando segmento: ${segErr.message}`, 'download');
+        }
+      }
+
+      // 4. Limpiar segmentos viejos (mantener 5 min)
+      const allSegs = fs.readdirSync(channelDir)
+        .filter(f => f.endsWith('.ts') && f.startsWith('segment'))
+        .sort((a, b) => {
+          const na = parseInt(a.match(/\d+/)?.[0] || '0');
+          const nb = parseInt(b.match(/\d+/)?.[0] || '0');
+          return na - nb;
+        });
+
+      while (allSegs.length > DVR_HLS_LIST_SIZE) {
+        const oldest = allSegs.shift();
+        try { fs.unlinkSync(path.join(channelDir, oldest)); } catch {}
+        dvr.mediaSequence++;
+      }
+
+      // Limpiar knownSegments si es muy grande
+      if (dvr.knownSegments.size > 500) {
+        const arr = Array.from(dvr.knownSegments);
+        dvr.knownSegments = new Set(arr.slice(-200));
+      }
+
+      // 5. Generar playlist local
+      const currentSegs = fs.readdirSync(channelDir)
+        .filter(f => f.endsWith('.ts') && f.startsWith('segment'))
+        .sort((a, b) => {
+          const na = parseInt(a.match(/\d+/)?.[0] || '0');
+          const nb = parseInt(b.match(/\d+/)?.[0] || '0');
+          return na - nb;
+        });
+
+      let m3u8 = '#EXTM3U\n';
+      m3u8 += '#EXT-X-VERSION:3\n';
+      m3u8 += `#EXT-X-TARGETDURATION:${DVR_SEGMENT_SECONDS + 1}\n`;
+      m3u8 += `#EXT-X-MEDIA-SEQUENCE:${dvr.mediaSequence}\n`;
+
+      for (const seg of currentSegs) {
+        m3u8 += `#EXTINF:${DVR_SEGMENT_SECONDS}.000,\n`;
+        m3u8 += `${seg}\n`;
+      }
+
+      fs.writeFileSync(playlistPath, m3u8);
+
+      if (!dvr.ready && currentSegs.length >= 3) {
+        dvr.ready = true;
+        console.log(`✅ [DVR ${channelId}] HLS DVR listo (${currentSegs.length} segmentos)`);
+      }
+
+    } catch (err) {
+      logDvrError(channelId, `Poll error: ${err.message}`, 'poll');
     }
-    if (/error|failed|Connection refused|404|403|Invalid data|No such file|ENOENT|unable to open display|Operation not permitted/i.test(msg)) {
-      console.error(`📹 [DVR ${channelId}] ${msg}`);
-      logDvrError(channelId, msg, 'ffmpeg_stderr');
+  };
+
+  // Primera descarga inmediata, luego cada 3 segundos
+  poll();
+  dvr.pollTimer = setInterval(poll, 3000);
+}
+
+// DVR para fuentes TS: lee el stream y segmenta manualmente
+function startTSDVR(channelId, sourceUrl, dvr, channelDir) {
+  const playlistPath = path.join(channelDir, 'live.m3u8');
+  dvr.recording = true;
+  console.log(`📹 [DVR ${channelId}] Iniciando DVR TS (Node.js puro): ${sourceUrl}`);
+
+  function writeSegment() {
+    if (dvr._bufferBytes === 0) return;
+
+    const segFilename = `segment${dvr.segmentIndex}.ts`;
+    const segPath = path.join(channelDir, segFilename);
+    const data = Buffer.concat(dvr._buffer);
+
+    try {
+      fs.writeFileSync(segPath, data);
+    } catch (err) {
+      logDvrError(channelId, `Error escribiendo segmento: ${err.message}`, 'write');
+      return;
     }
-  });
 
-  ffmpeg.stdout.on('data', (data) => {
-    const msg = data.toString().trim();
-    if (/frame=|Output #0|Opening/i.test(msg)) {
-      dvr.ffmpegReady = true;
+    dvr.segmentIndex++;
+    dvr._buffer = [];
+    dvr._bufferBytes = 0;
+
+    // Cleanup old segments
+    const allSegs = fs.readdirSync(channelDir)
+      .filter(f => f.endsWith('.ts') && f.startsWith('segment'))
+      .sort((a, b) => {
+        const na = parseInt(a.match(/\d+/)?.[0] || '0');
+        const nb = parseInt(b.match(/\d+/)?.[0] || '0');
+        return na - nb;
+      });
+
+    while (allSegs.length > DVR_HLS_LIST_SIZE) {
+      const oldest = allSegs.shift();
+      try { fs.unlinkSync(path.join(channelDir, oldest)); } catch {}
+      dvr.mediaSequence++;
     }
-  });
 
-  ffmpeg.on('close', (code) => {
-    dvr.recording = false;
-    dvr.ffmpegReady = false;
-    console.log(`📹 [DVR ${channelId}] FFmpeg terminó (code ${code})`);
-    logDvrError(channelId, `FFmpeg exit code ${code}`, 'exit');
+    // Generate m3u8
+    const currentSegs = fs.readdirSync(channelDir)
+      .filter(f => f.endsWith('.ts') && f.startsWith('segment'))
+      .sort((a, b) => {
+        const na = parseInt(a.match(/\d+/)?.[0] || '0');
+        const nb = parseInt(b.match(/\d+/)?.[0] || '0');
+        return na - nb;
+      });
 
-    const shouldRestart = dvr.recording && (dvr.viewers > 0 || dvr.preWarmed);
+    let m3u8 = '#EXTM3U\n';
+    m3u8 += '#EXT-X-VERSION:3\n';
+    m3u8 += `#EXT-X-TARGETDURATION:${DVR_SEGMENT_SECONDS + 1}\n`;
+    m3u8 += `#EXT-X-MEDIA-SEQUENCE:${dvr.mediaSequence}\n`;
+
+    for (const seg of currentSegs) {
+      m3u8 += `#EXTINF:${DVR_SEGMENT_SECONDS}.000,\n`;
+      m3u8 += `${seg}\n`;
+    }
+
+    try { fs.writeFileSync(playlistPath, m3u8); } catch {}
+
+    if (!dvr.ready && currentSegs.length >= 3) {
+      dvr.ready = true;
+      console.log(`✅ [DVR ${channelId}] TS DVR listo (${currentSegs.length} segmentos)`);
+    }
+  }
+
+  function connect() {
+    dvrFetchUrl(sourceUrl).then((sourceRes) => {
+      if (sourceRes.statusCode !== 200) {
+        logDvrError(channelId, `Origen respondió ${sourceRes.statusCode}`, 'http');
+        handleDisconnect();
+        return;
+      }
+
+      console.log(`✅ [DVR ${channelId}] TS DVR conectado al origen`);
+
+      sourceRes.on('data', (chunk) => {
+        dvr.lastAccess = Date.now();
+        dvr._buffer.push(chunk);
+        dvr._bufferBytes += chunk.length;
+      });
+
+      dvr.segmentTimer = setInterval(() => writeSegment(), DVR_SEGMENT_SECONDS * 1000);
+
+      sourceRes.on('end', () => {
+        console.log(`⚠️ [DVR ${channelId}] TS origen cerró conexión`);
+        handleDisconnect();
+      });
+
+      sourceRes.on('error', (err) => {
+        logDvrError(channelId, `Stream error: ${err.message}`, 'stream');
+        handleDisconnect();
+      });
+
+      dvr.sourceReq = sourceRes;
+    }).catch((err) => {
+      logDvrError(channelId, `No pudo conectar: ${err.message}`, 'connect');
+      handleDisconnect();
+    });
+  }
+
+  function handleDisconnect() {
+    if (dvr.segmentTimer) { clearInterval(dvr.segmentTimer); dvr.segmentTimer = null; }
+    writeSegment(); // flush
+
+    const shouldRestart = dvr.viewers > 0 || dvr.preWarmed;
     if (shouldRestart) {
       dvr.restartCount++;
       const delay = Math.min(3000 * dvr.restartCount, 15000);
-      console.log(`📹 [DVR ${channelId}] Reiniciando en ${delay/1000}s (intento #${dvr.restartCount})...`);
-      activeDVR.delete(channelId);
+      console.log(`🔄 [DVR ${channelId}] Reconectando en ${delay/1000}s (intento #${dvr.restartCount})`);
       setTimeout(() => {
-        if (dvr.recording && (dvr.viewers > 0 || dvr.preWarmed)) {
-          const newDvr = startDVR(channelId, normalizedUrl);
-          if (newDvr) {
-            newDvr.viewers = dvr.viewers;
-            newDvr.restartCount = dvr.restartCount;
-            newDvr.preWarmed = dvr.preWarmed;
-          }
+        if (dvr.viewers > 0 || dvr.preWarmed) {
+          connect();
+          if (dvr.restartCount > 3) dvr.restartCount = 0; // reset after recovery
         }
       }, delay);
-    } else {
-      activeDVR.delete(channelId);
     }
-  });
+  }
 
-  ffmpeg.on('error', (err) => {
-    dvr.recording = false;
-    dvr.ffmpegReady = false;
-    console.error(`📹 [DVR ${channelId}] Error FFmpeg:`, err.message);
-    logDvrError(channelId, `spawn error: ${err.message}`, 'spawn');
-  });
+  connect();
+}
 
-  activeDVR.set(channelId, dvr);
-  console.log(`📹 [DVR ${channelId}] Grabación HLS .ts iniciada: ${normalizedUrl}`);
-  return dvr;
+// Detener DVR de un canal
+function stopDVR(channelId) {
+  const dvr = activeDVR.get(channelId);
+  if (!dvr) return;
+  dvr.recording = false;
+  dvr.viewers = 0;
+  if (dvr.sourceReq) try { dvr.sourceReq.destroy(); } catch {}
+  if (dvr.segmentTimer) clearInterval(dvr.segmentTimer);
+  if (dvr.pollTimer) clearInterval(dvr.pollTimer);
+  activeDVR.delete(channelId);
 }
 
 function releaseDVR(channelId) {
@@ -5505,7 +5711,7 @@ app.post('/api/dvr/start/:channelId', authApk, async (req, res) => {
     const channel = rows[0];
     const dvr = startDVR(channelId, channel.url);
     if (!dvr) {
-      return res.status(500).json({ error: 'No se pudo iniciar DVR: FFmpeg no disponible o URL inválida' });
+      return res.status(500).json({ error: 'No se pudo iniciar DVR' });
     }
     res.json({ ok: true, recording: dvr.recording, segmentDuration: DVR_SEGMENT_SECONDS, bufferSeconds: DVR_BUFFER_SECONDS, format: 'ts' });
   } catch (err) {
@@ -5533,7 +5739,6 @@ app.get('/api/dvr/playlist/:channelId', authApk, (req, res) => {
   const channelDir = path.join(DVR_DIR, channelId);
   const playlistPath = path.join(channelDir, 'live.m3u8');
   
-  // Si la playlist no existe, devolver m3u8 mínimo que fuerza reintento
   if (!fs.existsSync(playlistPath)) {
     res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -5547,8 +5752,6 @@ app.get('/api/dvr/playlist/:channelId', authApk, (req, res) => {
   const fileBaseUrl = `${serverBaseUrl}/api/dvr/file/${channelId}`;
 
   let m3u8 = fs.readFileSync(playlistPath, 'utf8');
-
-  // Reescribir segmentos .ts → URLs absolutas con token
   m3u8 = m3u8.replace(/^(segment\d+\.ts)$/gm, `${fileBaseUrl}/$1?token=${encodeURIComponent(token)}`);
 
   res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
@@ -5561,7 +5764,6 @@ app.get('/api/dvr/playlist/:channelId', authApk, (req, res) => {
 // API: Servir archivos DVR (.ts segments) con Range support
 app.get('/api/dvr/file/:channelId/:filename', authApk, (req, res) => {
   const { channelId, filename } = req.params;
-  // Validar filename: solo segmentN.ts y live.m3u8
   if (!/^(segment\d+\.ts|live\.m3u8)$/.test(filename)) return res.status(400).send('Invalid filename');
   const filePath = path.join(DVR_DIR, channelId, filename);
   if (!fs.existsSync(filePath)) return res.status(404).send('File not found');
@@ -5594,7 +5796,7 @@ app.get('/api/dvr/file/:channelId/:filename', authApk, (req, res) => {
   }
 });
 
-// LEGACY: Mantener endpoint antiguo para compatibilidad
+// LEGACY: Mantener endpoint antiguo
 app.get('/api/dvr/segment/:channelId/:filename', authApk, (req, res) => {
   const { channelId, filename } = req.params;
   if (!/^(segment\d+\.ts)$/.test(filename)) return res.status(400).send('Invalid filename');
@@ -5609,7 +5811,7 @@ app.get('/api/dvr/segment/:channelId/:filename', authApk, (req, res) => {
   fs.createReadStream(filePath).pipe(res);
 });
 
-// API: Obtener lista de segmentos DVR disponibles
+// API: Lista de segmentos DVR
 app.get('/api/dvr/segments/:channelId', authApk, (req, res) => {
   const { channelId } = req.params;
   const dvr = activeDVR.get(channelId);
@@ -5645,32 +5847,30 @@ app.get('/api/admin/dvr/status', authAdmin, async (req, res) => {
     let segCount = 0;
     let totalSize = 0;
     
-    if (dvr) {
-      try {
-        const files = fs.readdirSync(channelDir);
-        segCount = files.filter(f => f.endsWith('.ts') && f.startsWith('segment')).length;
-        files.forEach(f => { try { totalSize += fs.statSync(path.join(channelDir, f)).size; } catch {} });
-      } catch {}
-    }
+    try {
+      const files = fs.readdirSync(channelDir);
+      segCount = files.filter(f => f.endsWith('.ts') && f.startsWith('segment')).length;
+      files.forEach(f => { try { totalSize += fs.statSync(path.join(channelDir, f)).size; } catch {} });
+    } catch {}
     
     const errors = dvrErrorLog.get(ch.id) || [];
     const lastError = errors.length > 0 ? errors[errors.length - 1] : null;
     
-      const hasPlaylist = fs.existsSync(path.join(channelDir, 'live.m3u8'));
-      const isReady = hasPlaylist && isDvrReady(ch.id);
-      status.push({
+    const hasPlaylist = fs.existsSync(path.join(channelDir, 'live.m3u8'));
+    const isReady = hasPlaylist && isDvrReady(ch.id);
+    status.push({
       channelId: ch.id,
       channelName: ch.name,
       viewers: dvr ? dvr.viewers : 0,
       segments: segCount,
-        recording: dvr ? (dvr.recording && !!dvr.ffmpeg && (dvr.ffmpegReady || segCount > 0 || hasPlaylist)) : false,
+      recording: dvr ? dvr.recording : false,
       restarts: dvr ? (dvr.restartCount || 0) : 0,
       uptime: dvr ? Math.floor((Date.now() - dvr.startedAt) / 1000) : 0,
       sizeMB: Math.round(totalSize / 1024 / 1024 * 100) / 100,
       format: 'ts',
       enabled: true,
-        active: !!dvr && (dvr.recording || segCount > 0 || hasPlaylist),
-        ready: isReady,
+      active: !!dvr && (dvr.recording || segCount > 0 || hasPlaylist),
+      ready: isReady,
       lastError: lastError ? lastError.message : null,
       lastErrorAt: lastError ? lastError.timestamp : null,
       errorCount: errors.length,
@@ -5692,7 +5892,7 @@ app.get('/api/admin/dvr/status', authAdmin, async (req, res) => {
         channelId,
         viewers: dvr.viewers,
         segments: segCount,
-        recording: dvr.recording && !!dvr.ffmpeg && (dvr.ffmpegReady || segCount > 0 || hasPlaylist),
+        recording: dvr.recording,
         restarts: dvr.restartCount || 0,
         uptime: Math.floor((Date.now() - dvr.startedAt) / 1000),
         sizeMB: Math.round(totalSize / 1024 / 1024 * 100) / 100,
@@ -5709,8 +5909,6 @@ app.get('/api/admin/dvr/status', authAdmin, async (req, res) => {
 
 // API Admin: Diagnóstico DVR detallado
 app.get('/api/admin/dvr/diagnostics', authAdmin, async (req, res) => {
-  const ffmpegDiagnostics = getFfmpegDiagnostics();
-  FFMPEG_BIN = ffmpegDiagnostics.resolvedPath || null;
   const channelId = req.query.channelId;
   
   if (channelId) {
@@ -5722,18 +5920,14 @@ app.get('/api/admin/dvr/diagnostics', authAdmin, async (req, res) => {
     
     return res.json({
       channelId,
-      ffmpegBin: ffmpegDiagnostics.resolvedPath || ffmpegDiagnostics.configuredPath || 'no encontrado',
-      ffmpegExists: ffmpegDiagnostics.exists && ffmpegDiagnostics.executable,
-      ffmpegExecutable: ffmpegDiagnostics.executable,
-      ffmpegConfiguredPath: ffmpegDiagnostics.configuredPath || null,
-      ffmpegSnapBlocked: ffmpegDiagnostics.isSnapBlocked,
+      engine: 'node.js (sin FFmpeg)',
       channelDir,
       channelDirExists: fs.existsSync(channelDir),
       hasPlaylist: files.includes('live.m3u8'),
       segments: files.filter(f => f.endsWith('.ts') && f.startsWith('segment')).length,
       allFiles: files,
-      isActive: !!dvr && (dvr.recording || files.includes('live.m3u8')),
-      isRecording: dvr ? (dvr.recording && !!dvr.ffmpeg && (dvr.ffmpegReady || files.includes('live.m3u8'))) : false,
+      isActive: !!dvr && dvr.recording,
+      isRecording: dvr ? dvr.recording : false,
       restartCount: dvr ? dvr.restartCount : 0,
       preWarmed: dvr ? dvr.preWarmed : false,
       sourceUrl: dvr ? dvr.sourceUrl : null,
@@ -5755,11 +5949,7 @@ app.get('/api/admin/dvr/diagnostics', authAdmin, async (req, res) => {
   summary.sort((a, b) => b.errorCount - a.errorCount);
   
   res.json({
-    ffmpegBin: ffmpegDiagnostics.resolvedPath || ffmpegDiagnostics.configuredPath || 'no encontrado',
-    ffmpegExists: ffmpegDiagnostics.exists && ffmpegDiagnostics.executable,
-    ffmpegExecutable: ffmpegDiagnostics.executable,
-    ffmpegConfiguredPath: ffmpegDiagnostics.configuredPath || null,
-    ffmpegSnapBlocked: ffmpegDiagnostics.isSnapBlocked,
+    engine: 'node.js (sin FFmpeg)',
     dvrDir: DVR_DIR,
     activeCount: activeDVR.size,
     channelsWithErrors: summary.length,
@@ -5774,13 +5964,7 @@ app.put('/api/admin/channels/:id/dvr', authAdmin, async (req, res) => {
     const { rows } = await pool.query('UPDATE channels SET dvr_enabled = $1 WHERE id = $2 RETURNING id, name, dvr_enabled', [dvr_enabled, req.params.id]);
     if (rows.length === 0) return res.status(404).json({ error: 'Canal no encontrado' });
     if (!dvr_enabled) {
-      if (activeDVR.has(req.params.id)) {
-        const dvr = activeDVR.get(req.params.id);
-        dvr.recording = false;
-        dvr.viewers = 0;
-        if (dvr.ffmpeg) try { dvr.ffmpeg.kill('SIGTERM'); } catch {}
-        activeDVR.delete(req.params.id);
-      }
+      stopDVR(req.params.id);
       const channelDir = path.join(DVR_DIR, req.params.id);
       try {
         const files = fs.readdirSync(channelDir);
@@ -5795,13 +5979,12 @@ app.put('/api/admin/channels/:id/dvr', authAdmin, async (req, res) => {
   }
 });
 
-// API Admin: Activar DVR en TODOS los canales (secuencial para no saturar CPU)
+// API Admin: Activar DVR en TODOS los canales
 app.post('/api/admin/dvr/enable-all', authAdmin, async (req, res) => {
   try {
     const { rows } = await pool.query('UPDATE channels SET dvr_enabled = true WHERE is_active = true RETURNING id, name, url');
     channelListCache.invalidate();
     
-    // Iniciar FFmpeg secuencialmente con 2s de delay entre cada uno
     let started = 0;
     const startSequential = async () => {
       for (const ch of rows) {
@@ -5809,8 +5992,7 @@ app.post('/api/admin/dvr/enable-all', authAdmin, async (req, res) => {
           try {
             startDVR(ch.id, ch.url);
             started++;
-            // Esperar 2 segundos entre cada inicio para no saturar CPU
-            await new Promise(r => setTimeout(r, 2000));
+            await new Promise(r => setTimeout(r, 1000));
           } catch (err) {
             console.error(`📹 [DVR ALL] Error iniciando ${ch.name}:`, err.message);
           }
@@ -5819,28 +6001,24 @@ app.post('/api/admin/dvr/enable-all', authAdmin, async (req, res) => {
       console.log(`📹 [DVR ALL] ${started}/${rows.length} canales DVR iniciados`);
     };
     
-    // Ejecutar en background, responder inmediatamente
     startSequential().catch(err => console.error('DVR enable-all error:', err));
     
     res.json({ 
       ok: true, 
       total: rows.length, 
-      message: `DVR activado en ${rows.length} canales. FFmpeg se inicia secuencialmente en segundo plano.` 
+      message: `DVR activado en ${rows.length} canales. Node.js inicia secuencialmente en segundo plano.` 
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// API Admin: Detener TODOS los DVR y liberar recursos
+// API Admin: Detener TODOS los DVR
 app.post('/api/admin/dvr/disable-all', authAdmin, async (req, res) => {
   try {
-    // Matar todos los procesos FFmpeg de DVR activos
     let killed = 0;
     activeDVR.forEach((dvr, channelId) => {
-      dvr.recording = false;
-      dvr.viewers = 0;
-      if (dvr.ffmpeg) try { dvr.ffmpeg.kill('SIGTERM'); } catch {}
+      stopDVR(channelId);
       try {
         const channelDir = path.join(DVR_DIR, channelId);
         const files = fs.readdirSync(channelDir);
@@ -5851,7 +6029,6 @@ app.post('/api/admin/dvr/disable-all', authAdmin, async (req, res) => {
     });
     activeDVR.clear();
     
-    // Desactivar en BD
     const { rowCount } = await pool.query('UPDATE channels SET dvr_enabled = false WHERE dvr_enabled = true');
     channelListCache.invalidate();
     
@@ -5859,17 +6036,17 @@ app.post('/api/admin/dvr/disable-all', authAdmin, async (req, res) => {
       ok: true, 
       disabled: rowCount, 
       killed, 
-      message: `${killed} procesos FFmpeg detenidos, ${rowCount} canales DVR desactivados.` 
+      message: `${killed} procesos DVR detenidos, ${rowCount} canales desactivados.` 
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-console.log('📹 DVR pre-calentamiento habilitado');
+console.log('📹 DVR Node.js puro habilitado (sin FFmpeg)');
 
 // =============================================
-// AUTO-INICIO DVR: Pre-calentar todos los canales con dvr_enabled al arrancar
+// AUTO-INICIO DVR: Pre-calentar canales DVR al arrancar
 // =============================================
 async function autoStartDVR() {
   try {
@@ -5878,19 +6055,18 @@ async function autoStartDVR() {
       console.log('📹 [DVR PRE] No hay canales con DVR habilitado');
       return;
     }
-    console.log(`📹 [DVR PRE] Pre-calentando ${rows.length} canales...`);
+    console.log(`📹 [DVR PRE] Pre-calentando ${rows.length} canales (Node.js puro)...`);
     let started = 0;
     for (const ch of rows) {
       if (!activeDVR.has(ch.id)) {
         try {
           const dvr = startDVR(ch.id, ch.url);
           if (dvr) {
-            dvr.viewers = 0; // Sin viewers reales, pero FFmpeg corre permanentemente
-            dvr.preWarmed = true; // Marcar como pre-calentado para auto-reinicio
+            dvr.viewers = 0;
+            dvr.preWarmed = true;
             started++;
           }
-          // 3s entre cada inicio para no saturar CPU al arrancar
-          await new Promise(r => setTimeout(r, 3000));
+          await new Promise(r => setTimeout(r, 1000));
         } catch (err) {
           console.error(`📹 [DVR PRE] Error iniciando ${ch.name}:`, err.message);
         }
@@ -5912,8 +6088,7 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`🔗 Xtream Base: ${XTREAM_BASE_URL}`);
   console.log(`🔐 Setup inicial: POST http://localhost:${PORT}/api/admin/setup\n`);
   
-  console.log('📡 DVR pre-calentamiento: FFmpeg arranca automáticamente para canales DVR.');
+  console.log('📡 DVR pre-calentamiento: Node.js arranca automáticamente para canales DVR (sin FFmpeg).');
   
-  // Esperar 5s para que el servidor y BD estén listos
   setTimeout(() => autoStartDVR(), 5000);
 });
