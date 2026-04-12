@@ -5481,21 +5481,34 @@ app.post('/api/dvr/stop/:channelId', authApk, async (req, res) => {
 
 // API: Servir playlist HLS generada por FFmpeg (m3u8 con URLs absolutas autenticadas)
 // Compatible con VLC, OTT Player, ExoPlayer, LibVLC (RFC 8216)
+// Si la playlist no está lista aún, devuelve un m3u8 "vacío" que hace que el reproductor reintente
 app.get('/api/dvr/playlist/:channelId', authApk, (req, res) => {
   const { channelId } = req.params;
-  const dvr = activeDVR.get(channelId);
-  if (!dvr) return res.status(404).json({ error: 'DVR not active' });
+  
+  // Auto-iniciar DVR si no está activo (el cliente está pidiendo la playlist)
+  if (!activeDVR.has(channelId)) {
+    pool.query('SELECT url FROM channels WHERE id = $1 AND dvr_enabled = true', [channelId])
+      .then(({ rows }) => { if (rows.length > 0) startDVR(channelId, rows[0].url); })
+      .catch(() => {});
+  }
 
   const channelDir = path.join(DVR_DIR, channelId);
   const playlistPath = path.join(channelDir, 'live.m3u8');
-  if (!fs.existsSync(playlistPath)) return res.status(404).json({ error: 'Playlist not ready yet' });
+  
+  // Si la playlist no existe aún, devolver un m3u8 mínimo que le dice al reproductor "reintenta en 1s"
+  // Esto evita errores 404 y el reproductor HLS recarga automáticamente
+  if (!fs.existsSync(playlistPath)) {
+    res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cache-Control', 'no-cache, no-store');
+    res.setHeader('Retry-After', '1');
+    return res.send('#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n');
+  }
 
   const token = req.headers.authorization?.replace('Bearer ', '') || req.query.token || '';
-  // Usar getRequestBaseUrl para compatibilidad con tunnels/proxies
   const serverBaseUrl = getRequestBaseUrl(req);
   const fileBaseUrl = `${serverBaseUrl}/api/dvr/file/${channelId}`;
 
-  // Leer m3u8 generado por FFmpeg y reescribir a URLs absolutas
   let m3u8 = fs.readFileSync(playlistPath, 'utf8');
 
   // Reescribir #EXT-X-MAP:URI="init.mp4" → URL absoluta con token
@@ -5503,7 +5516,6 @@ app.get('/api/dvr/playlist/:channelId', authApk, (req, res) => {
     /#EXT-X-MAP:URI="init\.mp4"/g,
     `#EXT-X-MAP:URI="${fileBaseUrl}/init.mp4?token=${encodeURIComponent(token)}"`
   );
-  // Fallback: init.mp4 como línea sola (por si acaso)
   m3u8 = m3u8.replace(/^init\.mp4$/gm, `${fileBaseUrl}/init.mp4?token=${encodeURIComponent(token)}`);
 
   // Reescribir segmentos seg_XXX.m4s → URLs absolutas con token
