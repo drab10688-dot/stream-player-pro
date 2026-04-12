@@ -1264,39 +1264,92 @@ function startTSSegmenter(channelId, sourceUrl, isKeepAlive = false) {
     _bufferBytes: 0,
   };
 
-  function writeSegment() {
-    if (entry._bufferBytes === 0) return;
+  // Detectar si un paquete TS es PAT (PID 0x0000) - indica inicio de GOP/keyframe
+  function isPATPacket(buf, offset) {
+    if (buf[offset] !== 0x47) return false;
+    const pid = ((buf[offset + 1] & 0x1F) << 8) | buf[offset + 2];
+    return pid === 0;
+  }
 
-    // Alinear a límites de paquetes TS (188 bytes, sync 0x47)
-    let raw = Buffer.concat(entry._buffer);
+  // Encontrar la posición del primer PAT en un buffer alineado a 188 bytes
+  function findPATPosition(buf, startOffset) {
+    for (let i = startOffset; i + 188 <= buf.length; i += 188) {
+      if (isPATPacket(buf, i)) return i;
+    }
+    return -1;
+  }
+
+  function processIncomingData() {
+    if (entry._bufferBytes < 188 * 10) return; // mínimo de datos
+
+    // Concatenar pending + nuevos chunks
+    let raw = Buffer.concat([entry._tsPending || Buffer.alloc(0), ...entry._buffer]);
+    entry._buffer = [];
+    entry._bufferBytes = 0;
+
+    // Alinear a 188 bytes
     let syncOffset = -1;
     for (let i = 0; i < Math.min(raw.length, 376); i++) {
       if (raw[i] === 0x47 && (i + 188 >= raw.length || raw[i + 188] === 0x47)) {
-        syncOffset = i;
-        break;
+        syncOffset = i; break;
       }
     }
     if (syncOffset > 0) raw = raw.slice(syncOffset);
     const fullPackets = Math.floor(raw.length / 188);
     const aligned = raw.slice(0, fullPackets * 188);
-    // Guardar sobrante para siguiente segmento
-    const leftover = raw.slice(fullPackets * 188);
+    entry._tsPending = raw.slice(fullPackets * 188);
 
     if (aligned.length === 0) return;
+
+    // Acumular en buffer de segmento
+    if (!entry._segBuffer) entry._segBuffer = [];
+    entry._segBuffer.push(aligned);
+    if (!entry._segBufferBytes) entry._segBufferBytes = 0;
+    entry._segBufferBytes += aligned.length;
+    if (!entry._segStartTime) entry._segStartTime = Date.now();
+
+    const elapsed = (Date.now() - entry._segStartTime) / 1000;
+    const minDuration = cacheConfig.hls_time; // 4 segundos mínimo
+
+    // Solo cortar si ha pasado el tiempo mínimo
+    if (elapsed < minDuration) return;
+
+    // Buscar PAT en los datos recientes para cortar en keyframe
+    const segData = Buffer.concat(entry._segBuffer);
+    // Buscar PAT desde el 80% del segmento para cortar cerca del final
+    const searchStart = Math.max(188, Math.floor(segData.length * 0.8));
+    // Buscar en el último 20% + datos nuevos
+    const patPos = findPATPosition(segData, searchStart);
+
+    // Si no encontramos PAT y ya pasó el doble del tiempo, forzar corte
+    if (patPos < 0 && elapsed < minDuration * 2) return;
+
+    let segToWrite, leftover;
+    if (patPos > 0) {
+      segToWrite = segData.slice(0, patPos);
+      leftover = segData.slice(patPos);
+    } else {
+      segToWrite = segData;
+      leftover = Buffer.alloc(0);
+    }
+
+    if (segToWrite.length === 0) return;
 
     const segFilename = `seg_${String(entry.segmentIndex).padStart(5, '0')}.ts`;
     const segPath = path.join(channelDir, segFilename);
 
     try {
-      fs.writeFileSync(segPath, aligned);
+      fs.writeFileSync(segPath, segToWrite);
     } catch (err) {
       console.error(`❌ [${channelId}] Error escribiendo segmento:`, err.message);
       return;
     }
 
+    const realDuration = (Date.now() - entry._segStartTime) / 1000;
     entry.segmentIndex++;
-    entry._buffer = leftover.length > 0 ? [leftover] : [];
-    entry._bufferBytes = leftover.length;
+    entry._segBuffer = leftover.length > 0 ? [leftover] : [];
+    entry._segBufferBytes = leftover.length;
+    entry._segStartTime = Date.now();
 
     // Cleanup old segments
     const allSegs = fs.readdirSync(channelDir)
@@ -1309,18 +1362,29 @@ function startTSSegmenter(channelId, sourceUrl, isKeepAlive = false) {
       mediaSequence++;
     }
 
-    // Generate m3u8
+    // Generate m3u8 con duración real
     const currentSegs = fs.readdirSync(channelDir)
       .filter(f => f.startsWith('seg_') && f.endsWith('.ts'))
       .sort();
 
+    // Guardar duración real
+    if (!entry._segDurations) entry._segDurations = {};
+    entry._segDurations[segFilename] = realDuration;
+
+    let maxDur = cacheConfig.hls_time;
+    for (const seg of currentSegs) {
+      const dur = entry._segDurations[seg] || cacheConfig.hls_time;
+      if (dur > maxDur) maxDur = dur;
+    }
+
     let m3u8 = '#EXTM3U\n';
     m3u8 += '#EXT-X-VERSION:3\n';
-    m3u8 += `#EXT-X-TARGETDURATION:${cacheConfig.hls_time + 1}\n`;
+    m3u8 += `#EXT-X-TARGETDURATION:${Math.ceil(maxDur)}\n`;
     m3u8 += `#EXT-X-MEDIA-SEQUENCE:${mediaSequence}\n`;
 
     for (const seg of currentSegs) {
-      m3u8 += `#EXTINF:${cacheConfig.hls_time}.000,\n`;
+      const dur = entry._segDurations[seg] || cacheConfig.hls_time;
+      m3u8 += `#EXTINF:${dur.toFixed(3)},\n`;
       m3u8 += `${seg}\n`;
     }
 
@@ -1328,7 +1392,7 @@ function startTSSegmenter(channelId, sourceUrl, isKeepAlive = false) {
 
     if (!entry.ready && currentSegs.length >= 2) {
       entry.ready = true;
-      console.log(`✅ [${channelId}] Segmenter Node.js listo (${currentSegs.length} segmentos)`);
+      console.log(`✅ [${channelId}] Segmenter Node.js listo (${currentSegs.length} segmentos, keyframe-aligned)`);
     }
   }
 
