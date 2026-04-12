@@ -5486,6 +5486,7 @@ function startDVR(channelId, sourceUrl) {
     startedAt: Date.now(),
     restartCount: 0,
     sourceUrl: normalizedUrl,
+    preWarmed: false, // se marca true en autoStartDVR
   };
 
   try {
