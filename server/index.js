@@ -610,6 +610,7 @@ app.post('/api/channels', authAdmin, async (req, res) => {
       'INSERT INTO channels (name, url, category, sort_order, logo_url) VALUES ($1, $2, $3, $4, $5) RETURNING *',
       [name, validation.normalizedUrl, category || 'General', sort_order || 0, logo_url || null]
     );
+    channelListCache.invalidate();
     res.json(rows[0]);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -639,6 +640,7 @@ app.put('/api/channels/:id', authAdmin, async (req, res) => {
       [name, urlValidation.normalizedUrl, category, sort_order, is_active, logo_url, req.params.id]
     );
 
+    channelListCache.invalidate();
     res.json(rows[0]);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -669,6 +671,7 @@ app.delete('/api/channels/:id', authAdmin, async (req, res) => {
     activeTranscoders.delete(channelId);
   }
   await pool.query('DELETE FROM channels WHERE id = $1', [channelId]);
+  channelListCache.invalidate();
   res.json({ ok: true });
 });
 
