@@ -1,10 +1,9 @@
-# 🎬 GUIA CURSOR: Sistema DVR Bajo Demanda
+# 🎬 GUIA CURSOR: Sistema DVR Timeshift con fMP4
 
 ## RESUMEN
-El servidor graba canales con DVR habilitado en segmentos MP4 de 15 segundos (buffer rotativo de 5 minutos).
-La grabación es **bajo demanda**: solo graba cuando un cliente está viendo el canal.
-La APK debe usar estos endpoints para reproducir desde el DVR en lugar del stream directo,
-lo que elimina cortes y buffering en canales inestables.
+El servidor graba canales con DVR habilitado en segmentos **fMP4 (.m4s)** via HLS nativo de FFmpeg.
+Buffer rotativo de 5 minutos (30 segmentos de 10s). Grabación **bajo demanda**: solo graba cuando un cliente está viendo el canal.
+La APK usa el endpoint `/api/dvr/playlist/{channelId}` que devuelve un `.m3u8` estándar con segmentos fMP4.
 
 ---
 
@@ -20,24 +19,19 @@ Authorization: Bearer <token>
 {
   "ok": true,
   "recording": true,
-  "segmentDuration": 15,
-  "bufferSeconds": 300
+  "segmentDuration": 10,
+  "bufferSeconds": 300,
+  "format": "fmp4"
 }
 ```
-**Cuándo llamar:** Al abrir un canal que tenga `dvr_enabled: true` en la lista de canales.
 
 ### 2. Detener DVR al cerrar/cambiar canal
 ```
 POST /api/dvr/stop/{channelId}
 Authorization: Bearer <token>
 ```
-**Respuesta:**
-```json
-{ "ok": true }
-```
-**Cuándo llamar:** Al salir del canal o cambiar a otro canal. Si el canal nuevo también tiene DVR, llamar stop del anterior y start del nuevo.
 
-### 3. Obtener playlist HLS con segmentos MP4 (para LibVLC)
+### 3. Obtener playlist HLS (fMP4) — URL principal para LibVLC
 ```
 GET /api/dvr/playlist/{channelId}
 Authorization: Bearer <token>
@@ -45,55 +39,34 @@ Authorization: Bearer <token>
 **Respuesta:** `Content-Type: application/vnd.apple.mpegurl`
 ```
 #EXTM3U
-#EXT-X-VERSION:3
-#EXT-X-TARGETDURATION:16
+#EXT-X-VERSION:7
+#EXT-X-TARGETDURATION:11
 #EXT-X-MEDIA-SEQUENCE:0
-#EXTINF:15,
-http://SERVER/api/dvr/segment/{channelId}/seg_000.mp4?token=JWT
-#EXTINF:15,
-http://SERVER/api/dvr/segment/{channelId}/seg_001.mp4?token=JWT
-...
+#EXT-X-MAP:URI="http://SERVER/api/dvr/file/{channelId}/init.mp4?token=JWT"
+#EXTINF:10.000,
+http://SERVER/api/dvr/file/{channelId}/seg_000.m4s?token=JWT
+#EXTINF:10.000,
+http://SERVER/api/dvr/file/{channelId}/seg_001.m4s?token=JWT
 ```
-**USO:** Esta URL se pasa directamente a LibVLC como source. LibVLC sabe reproducir HLS con segmentos MP4.
+**USO:** Esta URL se pasa a LibVLC. Es HLS estándar con fMP4, máxima compatibilidad.
 
-### 4. Obtener lista de segmentos (alternativa manual)
+### 4. Servir archivos DVR (init.mp4, seg_XXX.m4s)
+```
+GET /api/dvr/file/{channelId}/{filename}?token=JWT
+```
+Soporta: `init.mp4` (cabecera fMP4) y `seg_XXX.m4s` (segmentos).
+
+### 5. Obtener lista de segmentos (alternativa)
 ```
 GET /api/dvr/segments/{channelId}
 Authorization: Bearer <token>
 ```
-**Respuesta:**
-```json
-{
-  "segments": [
-    { "index": 0, "filename": "seg_000.mp4", "duration": 15 },
-    { "index": 1, "filename": "seg_001.mp4", "duration": 15 }
-  ],
-  "recording": true,
-  "viewers": 1
-}
-```
-
-### 5. Descargar segmento individual
-```
-GET /api/dvr/segment/{channelId}/{filename}?token=JWT
-```
-**Respuesta:** `Content-Type: video/mp4` (archivo MP4 binario)
-Soporta también `Authorization: Bearer <token>` en header.
 
 ---
 
 ## CAMPO dvr_enabled EN CANALES
 
-El endpoint `/api/channels` (GET) ahora incluye `dvr_enabled: boolean` en cada canal.
-```json
-{
-  "id": "uuid",
-  "name": "Canal HD",
-  "url": "http://...",
-  "dvr_enabled": true,
-  ...
-}
-```
+El endpoint `/api/channels` incluye `dvr_enabled: boolean` en cada canal.
 
 ---
 
@@ -103,70 +76,65 @@ El endpoint `/api/channels` (GET) ahora incluye `dvr_enabled: boolean` en cada c
 ```kotlin
 val channel = selectedChannel
 
-if (channel.dvr_enabled) {
-    // 1. Notificar al servidor que inicie grabación
-    apiService.startDvr(channel.id)
+if (channel.dvrEnabled) {
+    // 1. Iniciar grabación DVR
+    val startResponse = apiService.startDvr(channel.id)
     
-    // 2. Esperar 3-5 segundos para que se acumulen segmentos
-    delay(4000)
-    
-    // 3. Reproducir desde la playlist DVR (HLS con segmentos MP4)
-    val dvrUrl = "${BuildConfig.API_BASE_URL}/api/dvr/playlist/${channel.id}"
-    // Pasar a LibVLC con header Authorization
-    playWithVlc(dvrUrl, token)
+    if (startResponse.isSuccessful && startResponse.body()?.recording == true) {
+        // 2. Esperar 4-5 segundos para que FFmpeg genere segmentos fMP4
+        delay(4500)
+        
+        // 3. Reproducir desde playlist HLS fMP4
+        val dvrUrl = "${BuildConfig.API_BASE_URL}/api/dvr/playlist/${channel.id}"
+        playWithVlc(dvrUrl, token)
+    } else {
+        // Fallback a stream directo
+        playDirectStream(channel)
+    }
 } else {
-    // Canal sin DVR: reproducir stream directo como siempre
-    val streamUrl = "${BuildConfig.API_BASE_URL}/api/stream/${channel.id}?token=$token"
-    playWithVlc(streamUrl, token)
+    // Sin DVR: stream directo
+    playDirectStream(channel)
 }
 ```
 
 ### Al cambiar de canal:
 ```kotlin
 fun changeChannel(oldChannel: Channel, newChannel: Channel) {
-    // Siempre detener DVR del canal anterior si tenía DVR
-    if (oldChannel.dvr_enabled) {
+    if (oldChannel.dvrEnabled) {
         lifecycleScope.launch { apiService.stopDvr(oldChannel.id) }
     }
-    
-    // Abrir nuevo canal (con o sin DVR)
     openChannel(newChannel)
 }
 ```
 
-### Al cerrar la app / cerrar sesión:
+### Al cerrar la app:
 ```kotlin
-// Detener DVR del canal actual si estaba activo
-if (currentChannel?.dvr_enabled == true) {
+if (currentChannel?.dvrEnabled == true) {
     apiService.stopDvr(currentChannel.id)
 }
 ```
 
 ---
 
-## CONFIGURACIÓN LibVLC PARA DVR
+## CONFIGURACIÓN LibVLC PARA DVR fMP4
 
 ```kotlin
 fun playDvrWithVlc(dvrPlaylistUrl: String, token: String) {
     val options = arrayListOf(
         "--http-reconnect",
-        "--network-caching=3000",      // 3s de buffer de red
-        "--live-caching=3000",
-        "--file-caching=1500",
+        "--network-caching=4000",      // 4s buffer de red
+        "--live-caching=4000",
+        "--file-caching=2000",
         "--clock-jitter=0",
         "--sout-mux-caching=2000",
-        "--http-forward-cookies",
     )
     
     val libVLC = LibVLC(context, options)
     val mediaPlayer = MediaPlayer(libVLC)
     
-    // Crear media con header de autenticación
     val uri = Uri.parse(dvrPlaylistUrl)
     val media = Media(libVLC, uri)
-    media.addOption(":http-referrer=")
     media.addOption(":http-user-agent=OmnisyncTV/1.0")
-    // IMPORTANTE: Pasar el token JWT como header
     media.addOption(":http-header=Authorization: Bearer $token")
     
     mediaPlayer.media = media
@@ -177,8 +145,6 @@ fun playDvrWithVlc(dvrPlaylistUrl: String, token: String) {
 ---
 
 ## INTERFAZ ApiService (Retrofit)
-
-Agregar estos endpoints al `interface ApiService`:
 
 ```kotlin
 @POST("api/dvr/start/{channelId}")
@@ -197,24 +163,10 @@ data class DvrStartResponse(
     val ok: Boolean,
     val recording: Boolean,
     val segmentDuration: Int,
-    val bufferSeconds: Int
+    val bufferSeconds: Int,
+    val format: String  // "fmp4"
 )
 
-data class DvrSegmentsResponse(
-    val segments: List<DvrSegment>,
-    val recording: Boolean,
-    val viewers: Int
-)
-
-data class DvrSegment(
-    val index: Int,
-    val filename: String,
-    val duration: Int
-)
-```
-
-### Actualizar Channel data class:
-```kotlin
 data class Channel(
     val id: String,
     val name: String,
@@ -222,7 +174,7 @@ data class Channel(
     val category: String,
     @SerializedName("is_active") val isActive: Boolean,
     @SerializedName("logo_url") val logoUrl: String?,
-    @SerializedName("dvr_enabled") val dvrEnabled: Boolean = false  // ← NUEVO
+    @SerializedName("dvr_enabled") val dvrEnabled: Boolean = false
 )
 ```
 
@@ -233,27 +185,20 @@ data class Channel(
 ```kotlin
 suspend fun openChannelWithDvr(channel: Channel) {
     if (!channel.dvrEnabled) {
-        // Sin DVR → stream directo
         playDirectStream(channel)
         return
     }
     
     try {
-        // Intentar iniciar DVR
         val response = apiService.startDvr(channel.id)
         if (response.isSuccessful && response.body()?.recording == true) {
-            // Esperar a que haya segmentos listos
-            delay(4000)
-            
-            // Intentar reproducir desde DVR
+            delay(4500)
             val dvrUrl = "${BuildConfig.API_BASE_URL}/api/dvr/playlist/${channel.id}"
             playWithVlc(dvrUrl, token)
         } else {
-            // DVR no disponible → fallback a stream directo
             playDirectStream(channel)
         }
     } catch (e: Exception) {
-        // Error de red → fallback a stream directo
         Log.w("DVR", "Error iniciando DVR, usando stream directo", e)
         playDirectStream(channel)
     }
@@ -265,9 +210,10 @@ suspend fun openChannelWithDvr(channel: Channel) {
 ## REGLAS IMPORTANTES
 
 1. **NO cambiar el flujo de canales sin DVR** - Solo afectar canales con `dvr_enabled: true`
-2. **Siempre llamar stop** al salir de un canal DVR (para liberar recursos del servidor)
-3. **Esperar 3-5 segundos** después de `start` antes de reproducir la playlist (FFmpeg necesita generar los primeros segmentos)
+2. **Siempre llamar stop** al salir de un canal DVR
+3. **Esperar 4-5 segundos** después de `start` antes de reproducir (FFmpeg genera init.mp4 + primeros segmentos)
 4. **Fallback obligatorio** - Si DVR falla, reproducir stream directo
-5. **El token JWT** se pasa via header `Authorization: Bearer <token>` O como query param `?token=JWT` en las URLs de segmentos
-6. **La playlist se refresca sola** - LibVLC recarga la playlist HLS automáticamente para obtener nuevos segmentos
-7. **No llamar stop al cambiar canal** si el nuevo canal es el mismo (evitar reinicio innecesario)
+5. **El token JWT** se pasa via header `Authorization: Bearer <token>` O como query param `?token=JWT`
+6. **La playlist se refresca sola** - LibVLC recarga la playlist HLS automáticamente
+7. **Formato fMP4** - Los segmentos son `.m4s` con cabecera `init.mp4`, no `.mp4` sueltos
+8. **No llamar stop al cambiar canal** si el nuevo canal es el mismo
