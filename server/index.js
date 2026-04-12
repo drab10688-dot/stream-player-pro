@@ -5475,21 +5475,33 @@ function startHLSDVR(channelId, sourceUrl, dvr, channelDir) {
         mediaManifest = Buffer.concat(vChunks).toString();
       }
 
-      // 2. Extraer URLs de segmentos .ts
-      const segmentLines = mediaManifest.match(/^(?!#)(.+\.ts.*)$/gm) || [];
+      // 2. Extraer URLs de segmentos .ts CON sus duraciones reales
+      const lines = mediaManifest.split('\n');
       const newSegments = [];
+      let nextDuration = DVR_SEGMENT_SECONDS;
 
-      for (const seg of segmentLines) {
-        const segUrl = seg.startsWith('http') ? seg : mediaBaseUrl + seg;
-        if (!dvr.knownSegments.has(segUrl)) {
-          newSegments.push(segUrl);
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        // Parsear duración real del EXTINF
+        const extinfMatch = line.match(/^#EXTINF:([\d.]+)/);
+        if (extinfMatch) {
+          nextDuration = parseFloat(extinfMatch[1]);
+          continue;
+        }
+        // Línea de segmento (no es comentario, tiene extensión de video)
+        if (line && !line.startsWith('#') && /\.(ts|m4s|aac|mp4)/.test(line)) {
+          const segUrl = line.startsWith('http') ? line : mediaBaseUrl + line;
+          if (!dvr.knownSegments.has(segUrl)) {
+            newSegments.push({ url: segUrl, duration: nextDuration });
+          }
+          nextDuration = DVR_SEGMENT_SECONDS; // reset
         }
       }
 
       // 3. Descargar nuevos segmentos
-      for (const segUrl of newSegments) {
+      for (const seg of newSegments) {
         try {
-          const segRes = await dvrFetchUrl(segUrl);
+          const segRes = await dvrFetchUrl(seg.url);
           const segChunks = [];
           await new Promise((resolve, reject) => {
             segRes.on('data', c => segChunks.push(c));
@@ -5500,8 +5512,10 @@ function startHLSDVR(channelId, sourceUrl, dvr, channelDir) {
 
           const segFilename = `segment${dvr.segmentIndex}.ts`;
           fs.writeFileSync(path.join(channelDir, segFilename), segData);
+          // Guardar duración real asociada a este segmento
+          dvr.segmentDurations[dvr.segmentIndex] = seg.duration;
           dvr.segmentIndex++;
-          dvr.knownSegments.add(segUrl);
+          dvr.knownSegments.add(seg.url);
         } catch (segErr) {
           logDvrError(channelId, `Error descargando segmento: ${segErr.message}`, 'download');
         }
@@ -5528,7 +5542,7 @@ function startHLSDVR(channelId, sourceUrl, dvr, channelDir) {
         dvr.knownSegments = new Set(arr.slice(-200));
       }
 
-      // 5. Generar playlist local
+      // 5. Generar playlist local con DURACIONES REALES
       const currentSegs = fs.readdirSync(channelDir)
         .filter(f => f.endsWith('.ts') && f.startsWith('segment'))
         .sort((a, b) => {
@@ -5537,13 +5551,23 @@ function startHLSDVR(channelId, sourceUrl, dvr, channelDir) {
           return na - nb;
         });
 
+      // Calcular TARGETDURATION como el máximo de las duraciones reales
+      let maxDuration = DVR_SEGMENT_SECONDS;
+      for (const seg of currentSegs) {
+        const idx = parseInt(seg.match(/\d+/)?.[0] || '0');
+        const dur = dvr.segmentDurations[idx] || DVR_SEGMENT_SECONDS;
+        if (dur > maxDuration) maxDuration = dur;
+      }
+
       let m3u8 = '#EXTM3U\n';
       m3u8 += '#EXT-X-VERSION:3\n';
-      m3u8 += `#EXT-X-TARGETDURATION:${DVR_SEGMENT_SECONDS + 1}\n`;
+      m3u8 += `#EXT-X-TARGETDURATION:${Math.ceil(maxDuration)}\n`;
       m3u8 += `#EXT-X-MEDIA-SEQUENCE:${dvr.mediaSequence}\n`;
 
       for (const seg of currentSegs) {
-        m3u8 += `#EXTINF:${DVR_SEGMENT_SECONDS}.000,\n`;
+        const idx = parseInt(seg.match(/\d+/)?.[0] || '0');
+        const dur = dvr.segmentDurations[idx] || DVR_SEGMENT_SECONDS;
+        m3u8 += `#EXTINF:${dur.toFixed(3)},\n`;
         m3u8 += `${seg}\n`;
       }
 
