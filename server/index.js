@@ -5453,6 +5453,14 @@ const DVR_IDLE_TIMEOUT_MS = 120000; // 2 min sin viewers → detener grabación
 const activeDVR = new Map(); // channelId -> { ffmpeg, viewers, lastAccess, recording, ... }
 
 function startDVR(channelId, sourceUrl) {
+  const validation = validateStreamSourceUrl(sourceUrl);
+  if (!validation.valid) {
+    console.log(`⚠️ [DVR ${channelId}] FFmpeg abortado: ${validation.reason}`);
+    return null;
+  }
+
+  const normalizedUrl = validation.normalizedUrl;
+
   if (activeDVR.has(channelId)) {
     const dvr = activeDVR.get(channelId);
     dvr.viewers++;
@@ -5473,38 +5481,36 @@ function startDVR(channelId, sourceUrl) {
     idleTimer: null,
     startedAt: Date.now(),
     restartCount: 0,
+    sourceUrl: normalizedUrl,
   };
 
-  // Limpiar segmentos anteriores
   try {
     const oldFiles = fs.readdirSync(channelDir);
     oldFiles.forEach(f => { try { fs.unlinkSync(path.join(channelDir, f)); } catch {} });
   } catch {}
 
   const playlistPath = path.join(channelDir, 'live.m3u8');
-  const initSegPath = path.join(channelDir, 'init.mp4');
   const segPattern = path.join(channelDir, 'seg_%03d.m4s');
 
-  // FFmpeg: source → HLS con segmentos fMP4
-  const { spawn } = require('child_process');
   const ffmpegArgs = [
     '-hide_banner', '-loglevel', 'warning',
-    // Auto-reconexión al origen
+    '-fflags', '+genpts+discardcorrupt',
     '-reconnect', '1',
     '-reconnect_streamed', '1',
     '-reconnect_delay_max', '5',
     '-reconnect_on_network_error', '1',
     '-reconnect_on_http_error', '4xx,5xx',
-    // Input
-    '-i', sourceUrl,
-    // Codecs: copy video, normalizar audio a AAC
+    '-i', normalizedUrl,
+    '-map', '0:v:0?',
+    '-map', '0:a:0?',
+    '-dn',
+    '-sn',
     '-c:v', 'copy',
-    '-c:a', 'aac', '-b:a', '128k',
-    // Output HLS con fMP4
+    '-c:a', 'aac', '-b:a', '128k', '-ac', '2',
     '-f', 'hls',
     '-hls_time', String(DVR_SEGMENT_SECONDS),
     '-hls_list_size', String(DVR_HLS_LIST_SIZE),
-    '-hls_flags', 'delete_segments+append_list+independent_segments',
+    '-hls_flags', 'delete_segments+append_list+independent_segments+temp_file',
     '-hls_segment_type', 'fmp4',
     '-hls_fmp4_init_filename', 'init.mp4',
     '-hls_segment_filename', segPattern,
@@ -5516,8 +5522,7 @@ function startDVR(channelId, sourceUrl) {
 
   ffmpeg.stderr.on('data', (data) => {
     const msg = data.toString();
-    // Log solo errores reales, no warnings repetitivos
-    if (msg.includes('error') || msg.includes('Error') || msg.includes('Connection refused')) {
+    if (/error|failed|Connection refused|404|403|Invalid data|No such file/i.test(msg)) {
       console.error(`📹 [DVR ${channelId}] ${msg.trim()}`);
     }
   });
@@ -5526,14 +5531,16 @@ function startDVR(channelId, sourceUrl) {
     console.log(`📹 [DVR ${channelId}] FFmpeg terminó (code ${code})`);
     if (dvr.recording && dvr.viewers > 0) {
       dvr.restartCount++;
-      const delay = Math.min(3000 * dvr.restartCount, 15000); // backoff: 3s, 6s, 9s... max 15s
+      const delay = Math.min(3000 * dvr.restartCount, 15000);
       console.log(`📹 [DVR ${channelId}] Reiniciando en ${delay/1000}s (intento #${dvr.restartCount})...`);
       activeDVR.delete(channelId);
       setTimeout(() => {
         if (dvr.viewers > 0 && dvr.recording) {
-          const newDvr = startDVR(channelId, sourceUrl);
-          newDvr.viewers = dvr.viewers; // Preservar viewers
-          newDvr.restartCount = dvr.restartCount;
+          const newDvr = startDVR(channelId, normalizedUrl);
+          if (newDvr) {
+            newDvr.viewers = dvr.viewers;
+            newDvr.restartCount = dvr.restartCount;
+          }
         }
       }, delay);
     } else {
@@ -5546,7 +5553,7 @@ function startDVR(channelId, sourceUrl) {
   });
 
   activeDVR.set(channelId, dvr);
-  console.log(`📹 [DVR ${channelId}] Grabación fMP4 iniciada: ${sourceUrl}`);
+  console.log(`📹 [DVR ${channelId}] Grabación fMP4 iniciada: ${normalizedUrl}`);
   return dvr;
 }
 
@@ -5556,8 +5563,28 @@ function releaseDVR(channelId) {
   dvr.viewers = Math.max(0, dvr.viewers - 1);
   dvr.lastAccess = Date.now();
   console.log(`📹 [DVR ${channelId}] Viewer liberado (${dvr.viewers} restantes)`);
-  // DVR siempre activo: NO detener FFmpeg cuando viewers llega a 0
-  // Solo se detiene manualmente via admin o al desactivar dvr_enabled
+
+  if (dvr.viewers === 0) {
+    if (dvr.idleTimer) clearTimeout(dvr.idleTimer);
+    dvr.idleTimer = setTimeout(() => {
+      const current = activeDVR.get(channelId);
+      if (current && current.viewers === 0) {
+        console.log(`📹 [DVR ${channelId}] Sin viewers, deteniendo grabación`);
+        current.recording = false;
+        if (current.ffmpeg) {
+          try { current.ffmpeg.kill('SIGTERM'); } catch {}
+        }
+        activeDVR.delete(channelId);
+        const channelDir = path.join(DVR_DIR, channelId);
+        try {
+          const files = fs.readdirSync(channelDir);
+          files.forEach(f => { try { fs.unlinkSync(path.join(channelDir, f)); } catch {} });
+          fs.rmdirSync(channelDir);
+        } catch {}
+      }
+    }, DVR_IDLE_TIMEOUT_MS);
+  }
+}
 }
 
 // API: Iniciar DVR para un canal
