@@ -3334,7 +3334,7 @@ app.get('/live/:username/:password/:streamId', async (req, res) => {
     // *** DVR PRIORITY: si el canal tiene dvr_enabled, servir playlist DVR ***
     if (channel.dvr_enabled) {
       // Iniciar DVR si no está activo
-      if (!activeDVR.has(channelId)) {
+      if (typeof activeDVR !== 'undefined' && !activeDVR.has(channelId)) {
         try {
           const { rows: chRows } = await pool.query('SELECT * FROM channels WHERE id = $1 AND dvr_enabled = true', [channelId]);
           if (chRows.length > 0) {
