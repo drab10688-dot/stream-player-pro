@@ -109,6 +109,52 @@ const getRequestBaseUrl = (req) => {
   return `http://127.0.0.1:${PORT}`;
 };
 
+// =============================================
+// CACHÉ EN MEMORIA PARA LISTAS DE CANALES (Ultra-Fast Load)
+// =============================================
+const channelListCache = {
+  data: null,       // { rows: [...] }
+  updatedAt: 0,
+  ttl: 60000,       // 1 min TTL como fallback
+  async get() {
+    if (this.data && (Date.now() - this.updatedAt < this.ttl)) return this.data;
+    return this.refresh();
+  },
+  async refresh() {
+    try {
+      const { rows } = await pool.query(
+        'SELECT id, name, url, category, logo_url, stream_mode, sort_order, dvr_enabled, is_active FROM channels ORDER BY sort_order'
+      );
+      this.data = rows;
+      this.updatedAt = Date.now();
+      console.log(`🔄 [Cache] Lista de canales actualizada (${rows.length} canales)`);
+      return rows;
+    } catch (err) {
+      console.error('❌ [Cache] Error refrescando canales:', err.message);
+      return this.data || [];
+    }
+  },
+  invalidate() {
+    this.data = null;
+    this.updatedAt = 0;
+    // Refrescar inmediatamente en background
+    this.refresh().catch(() => {});
+  }
+};
+
+// Helper: verificar si un canal DVR está "listo" (init.mp4 + al menos 3 segmentos .m4s)
+function isDvrReady(channelId) {
+  const channelDir = path.join(DVR_DIR || path.join(__dirname, 'dvr-cache'), channelId);
+  try {
+    if (!fs.existsSync(path.join(channelDir, 'init.mp4'))) return false;
+    const files = fs.readdirSync(channelDir);
+    const segments = files.filter(f => f.endsWith('.m4s'));
+    return segments.length >= 3;
+  } catch {
+    return false;
+  }
+}
+
 // Verificar conexión a la base de datos al iniciar
 pool.query('SELECT 1')
   .then(() => console.log('✅ Conectado a PostgreSQL'))
