@@ -2014,6 +2014,7 @@ app.get('/api/stream-pipe/:channelId', async (req, res) => {
 
     const sourceReq = httpModule.get(targetUrl, {
       timeout: 15000,
+      agent: getAgent(targetUrl),
       headers: {
         'User-Agent': 'StreamBox-Pipe/1.0',
         'Connection': 'keep-alive',
