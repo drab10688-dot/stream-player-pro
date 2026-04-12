@@ -1267,20 +1267,36 @@ function startTSSegmenter(channelId, sourceUrl, isKeepAlive = false) {
   function writeSegment() {
     if (entry._bufferBytes === 0) return;
 
+    // Alinear a límites de paquetes TS (188 bytes, sync 0x47)
+    let raw = Buffer.concat(entry._buffer);
+    let syncOffset = -1;
+    for (let i = 0; i < Math.min(raw.length, 376); i++) {
+      if (raw[i] === 0x47 && (i + 188 >= raw.length || raw[i + 188] === 0x47)) {
+        syncOffset = i;
+        break;
+      }
+    }
+    if (syncOffset > 0) raw = raw.slice(syncOffset);
+    const fullPackets = Math.floor(raw.length / 188);
+    const aligned = raw.slice(0, fullPackets * 188);
+    // Guardar sobrante para siguiente segmento
+    const leftover = raw.slice(fullPackets * 188);
+
+    if (aligned.length === 0) return;
+
     const segFilename = `seg_${String(entry.segmentIndex).padStart(5, '0')}.ts`;
     const segPath = path.join(channelDir, segFilename);
-    const data = Buffer.concat(entry._buffer);
 
     try {
-      fs.writeFileSync(segPath, data);
+      fs.writeFileSync(segPath, aligned);
     } catch (err) {
       console.error(`❌ [${channelId}] Error escribiendo segmento:`, err.message);
       return;
     }
 
     entry.segmentIndex++;
-    entry._buffer = [];
-    entry._bufferBytes = 0;
+    entry._buffer = leftover.length > 0 ? [leftover] : [];
+    entry._bufferBytes = leftover.length;
 
     // Cleanup old segments
     const allSegs = fs.readdirSync(channelDir)
@@ -5337,9 +5353,11 @@ app.get('/api/reseller/plans', authReseller, async (req, res) => {
 const DVR_DIR = process.env.DVR_DIR || '/data/dvr';
 if (!fs.existsSync(DVR_DIR)) fs.mkdirSync(DVR_DIR, { recursive: true });
 
-const DVR_SEGMENT_SECONDS = 6;   // duración de cada segmento
+const DVR_SEGMENT_SECONDS = 6;   // duración de cada segmento TS
 const DVR_BUFFER_SECONDS = 300;  // 5 minutos de buffer
 const DVR_HLS_LIST_SIZE = 50;    // ~5 min de segmentos
+const TS_PACKET_SIZE = 188;      // tamaño estándar paquete MPEG-TS
+const TS_SYNC_BYTE = 0x47;       // byte de sincronización TS
 const activeDVR = new Map(); // channelId -> { sourceReq, viewers, lastAccess, recording, ... }
 
 // DVR Error Log
@@ -5421,7 +5439,9 @@ function startDVR(channelId, sourceUrl) {
     mediaSequence: 0,
     _buffer: [],
     _bufferBytes: 0,
+    _tsPending: Buffer.alloc(0), // buffer pendiente para alinear paquetes TS
     knownSegments: new Set(),
+    segmentDurations: [],  // duración real de cada segmento (para HLS)
   };
 
   if (isHLS) {
@@ -5471,21 +5491,33 @@ function startHLSDVR(channelId, sourceUrl, dvr, channelDir) {
         mediaManifest = Buffer.concat(vChunks).toString();
       }
 
-      // 2. Extraer URLs de segmentos .ts
-      const segmentLines = mediaManifest.match(/^(?!#)(.+\.ts.*)$/gm) || [];
+      // 2. Extraer URLs de segmentos .ts CON sus duraciones reales
+      const lines = mediaManifest.split('\n');
       const newSegments = [];
+      let nextDuration = DVR_SEGMENT_SECONDS;
 
-      for (const seg of segmentLines) {
-        const segUrl = seg.startsWith('http') ? seg : mediaBaseUrl + seg;
-        if (!dvr.knownSegments.has(segUrl)) {
-          newSegments.push(segUrl);
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        // Parsear duración real del EXTINF
+        const extinfMatch = line.match(/^#EXTINF:([\d.]+)/);
+        if (extinfMatch) {
+          nextDuration = parseFloat(extinfMatch[1]);
+          continue;
+        }
+        // Línea de segmento (no es comentario, tiene extensión de video)
+        if (line && !line.startsWith('#') && /\.(ts|m4s|aac|mp4)/.test(line)) {
+          const segUrl = line.startsWith('http') ? line : mediaBaseUrl + line;
+          if (!dvr.knownSegments.has(segUrl)) {
+            newSegments.push({ url: segUrl, duration: nextDuration });
+          }
+          nextDuration = DVR_SEGMENT_SECONDS; // reset
         }
       }
 
       // 3. Descargar nuevos segmentos
-      for (const segUrl of newSegments) {
+      for (const seg of newSegments) {
         try {
-          const segRes = await dvrFetchUrl(segUrl);
+          const segRes = await dvrFetchUrl(seg.url);
           const segChunks = [];
           await new Promise((resolve, reject) => {
             segRes.on('data', c => segChunks.push(c));
@@ -5496,8 +5528,10 @@ function startHLSDVR(channelId, sourceUrl, dvr, channelDir) {
 
           const segFilename = `segment${dvr.segmentIndex}.ts`;
           fs.writeFileSync(path.join(channelDir, segFilename), segData);
+          // Guardar duración real asociada a este segmento
+          dvr.segmentDurations[dvr.segmentIndex] = seg.duration;
           dvr.segmentIndex++;
-          dvr.knownSegments.add(segUrl);
+          dvr.knownSegments.add(seg.url);
         } catch (segErr) {
           logDvrError(channelId, `Error descargando segmento: ${segErr.message}`, 'download');
         }
@@ -5524,7 +5558,7 @@ function startHLSDVR(channelId, sourceUrl, dvr, channelDir) {
         dvr.knownSegments = new Set(arr.slice(-200));
       }
 
-      // 5. Generar playlist local
+      // 5. Generar playlist local con DURACIONES REALES
       const currentSegs = fs.readdirSync(channelDir)
         .filter(f => f.endsWith('.ts') && f.startsWith('segment'))
         .sort((a, b) => {
@@ -5533,13 +5567,23 @@ function startHLSDVR(channelId, sourceUrl, dvr, channelDir) {
           return na - nb;
         });
 
+      // Calcular TARGETDURATION como el máximo de las duraciones reales
+      let maxDuration = DVR_SEGMENT_SECONDS;
+      for (const seg of currentSegs) {
+        const idx = parseInt(seg.match(/\d+/)?.[0] || '0');
+        const dur = dvr.segmentDurations[idx] || DVR_SEGMENT_SECONDS;
+        if (dur > maxDuration) maxDuration = dur;
+      }
+
       let m3u8 = '#EXTM3U\n';
       m3u8 += '#EXT-X-VERSION:3\n';
-      m3u8 += `#EXT-X-TARGETDURATION:${DVR_SEGMENT_SECONDS + 1}\n`;
+      m3u8 += `#EXT-X-TARGETDURATION:${Math.ceil(maxDuration)}\n`;
       m3u8 += `#EXT-X-MEDIA-SEQUENCE:${dvr.mediaSequence}\n`;
 
       for (const seg of currentSegs) {
-        m3u8 += `#EXTINF:${DVR_SEGMENT_SECONDS}.000,\n`;
+        const idx = parseInt(seg.match(/\d+/)?.[0] || '0');
+        const dur = dvr.segmentDurations[idx] || DVR_SEGMENT_SECONDS;
+        m3u8 += `#EXTINF:${dur.toFixed(3)},\n`;
         m3u8 += `${seg}\n`;
       }
 
@@ -5560,25 +5604,64 @@ function startHLSDVR(channelId, sourceUrl, dvr, channelDir) {
   dvr.pollTimer = setInterval(poll, 3000);
 }
 
-// DVR para fuentes TS: lee el stream y segmenta manualmente
+// Alinear buffer a límites de paquetes MPEG-TS (188 bytes)
+function alignTSPackets(data) {
+  let syncOffset = -1;
+  for (let i = 0; i < Math.min(data.length, TS_PACKET_SIZE * 2); i++) {
+    if (data[i] === TS_SYNC_BYTE) {
+      if (i + TS_PACKET_SIZE >= data.length || data[i + TS_PACKET_SIZE] === TS_SYNC_BYTE) {
+        syncOffset = i;
+        break;
+      }
+    }
+  }
+  if (syncOffset < 0) {
+    return { aligned: data, remainder: Buffer.alloc(0) };
+  }
+  const usable = data.slice(syncOffset);
+  const fullPackets = Math.floor(usable.length / TS_PACKET_SIZE);
+  const alignedEnd = fullPackets * TS_PACKET_SIZE;
+  return {
+    aligned: usable.slice(0, alignedEnd),
+    remainder: usable.slice(alignedEnd),
+  };
+}
+
+// DVR para fuentes TS: lee el stream y segmenta con alineación de paquetes
 function startTSDVR(channelId, sourceUrl, dvr, channelDir) {
   const playlistPath = path.join(channelDir, 'live.m3u8');
   dvr.recording = true;
-  console.log(`📹 [DVR ${channelId}] Iniciando DVR TS (Node.js puro): ${sourceUrl}`);
+  dvr._segStartTime = Date.now();
+  console.log(`📹 [DVR ${channelId}] Iniciando DVR TS con alineación de paquetes: ${sourceUrl}`);
 
   function writeSegment() {
     if (dvr._bufferBytes === 0) return;
 
+    // Concatenar pending + nuevos chunks
+    let raw = Buffer.concat([dvr._tsPending, ...dvr._buffer]);
+    dvr._tsPending = Buffer.alloc(0);
+
+    // Alinear a límites de paquetes TS (188 bytes, sync 0x47)
+    const { aligned, remainder } = alignTSPackets(raw);
+    dvr._tsPending = remainder;
+
+    if (aligned.length === 0) return;
+
     const segFilename = `segment${dvr.segmentIndex}.ts`;
     const segPath = path.join(channelDir, segFilename);
-    const data = Buffer.concat(dvr._buffer);
 
     try {
-      fs.writeFileSync(segPath, data);
+      fs.writeFileSync(segPath, aligned);
     } catch (err) {
       logDvrError(channelId, `Error escribiendo segmento: ${err.message}`, 'write');
       return;
     }
+
+    // Duración real basada en timestamp
+    const now = Date.now();
+    const realDuration = (now - dvr._segStartTime) / 1000;
+    dvr.segmentDurations[dvr.segmentIndex] = Math.max(realDuration, 1);
+    dvr._segStartTime = now;
 
     dvr.segmentIndex++;
     dvr._buffer = [];
@@ -5587,11 +5670,7 @@ function startTSDVR(channelId, sourceUrl, dvr, channelDir) {
     // Cleanup old segments
     const allSegs = fs.readdirSync(channelDir)
       .filter(f => f.endsWith('.ts') && f.startsWith('segment'))
-      .sort((a, b) => {
-        const na = parseInt(a.match(/\d+/)?.[0] || '0');
-        const nb = parseInt(b.match(/\d+/)?.[0] || '0');
-        return na - nb;
-      });
+      .sort((a, b) => parseInt(a.match(/\d+/)?.[0] || '0') - parseInt(b.match(/\d+/)?.[0] || '0'));
 
     while (allSegs.length > DVR_HLS_LIST_SIZE) {
       const oldest = allSegs.shift();
@@ -5599,22 +5678,27 @@ function startTSDVR(channelId, sourceUrl, dvr, channelDir) {
       dvr.mediaSequence++;
     }
 
-    // Generate m3u8
+    // Generate m3u8 con duraciones reales
     const currentSegs = fs.readdirSync(channelDir)
       .filter(f => f.endsWith('.ts') && f.startsWith('segment'))
-      .sort((a, b) => {
-        const na = parseInt(a.match(/\d+/)?.[0] || '0');
-        const nb = parseInt(b.match(/\d+/)?.[0] || '0');
-        return na - nb;
-      });
+      .sort((a, b) => parseInt(a.match(/\d+/)?.[0] || '0') - parseInt(b.match(/\d+/)?.[0] || '0'));
+
+    let maxDuration = DVR_SEGMENT_SECONDS;
+    for (const seg of currentSegs) {
+      const idx = parseInt(seg.match(/\d+/)?.[0] || '0');
+      const dur = dvr.segmentDurations[idx] || DVR_SEGMENT_SECONDS;
+      if (dur > maxDuration) maxDuration = dur;
+    }
 
     let m3u8 = '#EXTM3U\n';
     m3u8 += '#EXT-X-VERSION:3\n';
-    m3u8 += `#EXT-X-TARGETDURATION:${DVR_SEGMENT_SECONDS + 1}\n`;
+    m3u8 += `#EXT-X-TARGETDURATION:${Math.ceil(maxDuration)}\n`;
     m3u8 += `#EXT-X-MEDIA-SEQUENCE:${dvr.mediaSequence}\n`;
 
     for (const seg of currentSegs) {
-      m3u8 += `#EXTINF:${DVR_SEGMENT_SECONDS}.000,\n`;
+      const idx = parseInt(seg.match(/\d+/)?.[0] || '0');
+      const dur = dvr.segmentDurations[idx] || DVR_SEGMENT_SECONDS;
+      m3u8 += `#EXTINF:${dur.toFixed(3)},\n`;
       m3u8 += `${seg}\n`;
     }
 
@@ -5634,7 +5718,8 @@ function startTSDVR(channelId, sourceUrl, dvr, channelDir) {
         return;
       }
 
-      console.log(`✅ [DVR ${channelId}] TS DVR conectado al origen`);
+      console.log(`✅ [DVR ${channelId}] TS DVR conectado (packet-aligned)`);
+      dvr._segStartTime = Date.now();
 
       sourceRes.on('data', (chunk) => {
         dvr.lastAccess = Date.now();
@@ -5673,7 +5758,7 @@ function startTSDVR(channelId, sourceUrl, dvr, channelDir) {
       setTimeout(() => {
         if (dvr.viewers > 0 || dvr.preWarmed) {
           connect();
-          if (dvr.restartCount > 3) dvr.restartCount = 0; // reset after recovery
+          if (dvr.restartCount > 3) dvr.restartCount = 0;
         }
       }, delay);
     }
