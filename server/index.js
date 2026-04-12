@@ -97,6 +97,8 @@ const pool = new Pool({
   password: 'tu_password_seguro',
 });
 
+const isSnapFfmpegPath = (value) => typeof value === 'string' && value.includes('/snap/bin/ffmpeg');
+
 const FFMPEG_ENV = {
   ...process.env,
   PATH: Array.from(new Set([
@@ -107,12 +109,17 @@ const FFMPEG_ENV = {
     '/usr/bin',
     '/sbin',
     '/bin',
-  ].join(':').split(':').filter(Boolean))).join(':'),
+  ].join(':').split(':').filter(Boolean).filter(p => p !== '/snap/bin'))).join(':'),
 };
+
+if (isSnapFfmpegPath(FFMPEG_ENV.FFMPEG_PATH)) {
+  console.warn(`⚠️ Ignorando FFMPEG_PATH inválido heredado del entorno: ${FFMPEG_ENV.FFMPEG_PATH}`);
+  delete FFMPEG_ENV.FFMPEG_PATH;
+}
 
 const FFMPEG_BIN = (() => {
   const candidates = [
-    process.env.FFMPEG_PATH,
+    isSnapFfmpegPath(process.env.FFMPEG_PATH) ? null : process.env.FFMPEG_PATH,
     '/usr/bin/ffmpeg',
     '/usr/local/bin/ffmpeg',
     '/bin/ffmpeg',
@@ -129,7 +136,7 @@ const FFMPEG_BIN = (() => {
       env: FFMPEG_ENV,
       stdio: ['ignore', 'pipe', 'ignore'],
     }).toString().trim().split('\n')[0];
-    if (detected) return detected;
+    if (detected && !isSnapFfmpegPath(detected)) return detected;
   } catch {}
 
   return 'ffmpeg';
