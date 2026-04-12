@@ -4786,6 +4786,8 @@ app.get('/api/channels/:id/stream', authApk, async (req, res) => {
       streamUrl,
       quality: req.query.quality || 'auto',
       availableQualities: ['auto', 'high', 'medium', 'low'],
+      dvr: dvrActive,
+      dvrDelay: dvrActive ? 4500 : 0,
       ads,
       ad: ads.length > 0 ? ads[0] : null,
     });
