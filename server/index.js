@@ -5419,7 +5419,7 @@ app.get('/api/dvr/playlist/:channelId', authApk, (req, res) => {
   res.send(m3u8);
 });
 
-// API: Servir archivos DVR (init.mp4, seg_XXX.m4s)
+// API: Servir archivos DVR (init.mp4, seg_XXX.m4s) con MIME types correctos y Range support
 app.get('/api/dvr/file/:channelId/:filename', authApk, (req, res) => {
   const { channelId, filename } = req.params;
   // Validar filename para prevenir path traversal
@@ -5428,13 +5428,33 @@ app.get('/api/dvr/file/:channelId/:filename', authApk, (req, res) => {
   if (!fs.existsSync(filePath)) return res.status(404).send('File not found');
 
   const stat = fs.statSync(filePath);
+  // MIME types según RFC: init.mp4 → video/mp4, segmentos .m4s → video/iso.segment
   const contentType = filename.endsWith('.mp4') ? 'video/mp4' : 'video/iso.segment';
-  res.setHeader('Content-Type', contentType);
-  res.setHeader('Content-Length', stat.size);
-  res.setHeader('Cache-Control', 'no-cache');
+  
   res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Accept-Ranges', 'bytes');
   res.setHeader('X-Accel-Buffering', 'no');
-  fs.createReadStream(filePath).pipe(res);
+
+  // Soporte Range requests (VLC, ExoPlayer lo necesitan)
+  const range = req.headers.range;
+  if (range) {
+    const parts = range.replace(/bytes=/, '').split('-');
+    const start = parseInt(parts[0], 10);
+    const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
+    const chunkSize = (end - start) + 1;
+    res.writeHead(206, {
+      'Content-Range': `bytes ${start}-${end}/${stat.size}`,
+      'Content-Length': chunkSize,
+      'Content-Type': contentType,
+      'Cache-Control': 'no-cache',
+    });
+    fs.createReadStream(filePath, { start, end }).pipe(res);
+  } else {
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Length', stat.size);
+    res.setHeader('Cache-Control', 'no-cache');
+    fs.createReadStream(filePath).pipe(res);
+  }
 });
 
 // LEGACY: Mantener endpoint antiguo para compatibilidad
