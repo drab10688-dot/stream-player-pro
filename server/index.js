@@ -10,7 +10,7 @@ const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 const crypto = require('crypto');
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
 
 const app = express();
 app.use(cors());
@@ -96,6 +96,48 @@ const pool = new Pool({
   user: 'streambox_user',
   password: 'tu_password_seguro',
 });
+
+const FFMPEG_ENV = {
+  ...process.env,
+  PATH: Array.from(new Set([
+    process.env.PATH || '',
+    '/usr/local/sbin',
+    '/usr/local/bin',
+    '/usr/sbin',
+    '/usr/bin',
+    '/sbin',
+    '/bin',
+    '/snap/bin',
+  ].join(':').split(':').filter(Boolean))).join(':'),
+};
+
+const FFMPEG_BIN = (() => {
+  const candidates = [
+    process.env.FFMPEG_PATH,
+    '/usr/bin/ffmpeg',
+    '/usr/local/bin/ffmpeg',
+    '/bin/ffmpeg',
+    '/snap/bin/ffmpeg',
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate)) return candidate;
+    } catch {}
+  }
+
+  try {
+    const detected = execSync('command -v ffmpeg || which ffmpeg', {
+      env: FFMPEG_ENV,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).toString().trim().split('\n')[0];
+    if (detected) return detected;
+  } catch {}
+
+  return 'ffmpeg';
+})();
+
+console.log(`🎞️ FFmpeg configurado: ${FFMPEG_BIN}`);
 
 // Helper: obtener base URL pública del request (respeta proxy/túnel)
 const getRequestBaseUrl = (req) => {
@@ -1269,6 +1311,7 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
     '-reconnect_streamed', '1',
     '-reconnect_delay_max', '10',
     '-rw_timeout', '10000000',
+    '-err_detect', 'ignore_err',
     '-i', sourceUrl,
 
     // --- Output 0: LOW (480p) ---
@@ -1314,7 +1357,7 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
   // Try adaptive first, fallback to single-quality if FFmpeg doesn't support var_stream_map
   let ffmpeg;
   try {
-    ffmpeg = spawn('ffmpeg', ffmpegArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
+    ffmpeg = spawn(FFMPEG_BIN, ffmpegArgs, { stdio: ['pipe', 'pipe', 'pipe'], env: FFMPEG_ENV });
   } catch (err) {
     console.error(`❌ [${channelId}] FFmpeg spawn error:`, err.message);
     return null;
@@ -1416,7 +1459,7 @@ function startSingleQualityTranscoder(channelId, sourceUrl, channelDir, isKeepAl
   const cacheLabel = isKeepAlive ? `${cacheConfig.hls_list_size}seg ≈ ${Math.round(cacheConfig.hls_list_size * cacheConfig.hls_time / 60)}min` : '2min';
   console.log(`🎬 [${channelId}] FFmpeg calidad única (caché: ${cacheLabel}): ${sourceUrl}`);
 
-  const ffmpeg = spawn('ffmpeg', [
+  const ffmpeg = spawn(FFMPEG_BIN, [
     '-reconnect', '1',
     '-reconnect_streamed', '1',
     '-reconnect_delay_max', '10',
@@ -1436,7 +1479,7 @@ function startSingleQualityTranscoder(channelId, sourceUrl, channelDir, isKeepAl
     '-hls_allow_cache', '1',
     '-y',
     manifestPath,
-  ], { stdio: ['pipe', 'pipe', 'pipe'] });
+  ], { stdio: ['pipe', 'pipe', 'pipe'], env: FFMPEG_ENV });
 
   const entry = {
     ffmpeg,
@@ -5499,12 +5542,12 @@ function startDVR(channelId, sourceUrl) {
 
   const ffmpegArgs = [
     '-hide_banner', '-loglevel', 'warning',
-    '-fflags', '+genpts+discardcorrupt',
+    '-fflags', '+genpts+discardcorrupt+nobuffer',
     '-reconnect', '1',
     '-reconnect_streamed', '1',
-    '-reconnect_delay_max', '5',
-    '-reconnect_on_network_error', '1',
-    '-reconnect_on_http_error', '4xx,5xx',
+    '-reconnect_delay_max', '10',
+    '-rw_timeout', '15000000',
+    '-timeout', '15000000',
     '-i', normalizedUrl,
     '-map', '0:v:0?',
     '-map', '0:a:0?',
@@ -5522,7 +5565,7 @@ function startDVR(channelId, sourceUrl) {
     playlistPath,
   ];
 
-  const ffmpeg = spawn('ffmpeg', ffmpegArgs);
+  const ffmpeg = spawn(FFMPEG_BIN, ffmpegArgs, { stdio: ['pipe', 'pipe', 'pipe'], env: FFMPEG_ENV });
   dvr.ffmpeg = ffmpeg;
 
   ffmpeg.stderr.on('data', (data) => {

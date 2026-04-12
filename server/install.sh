@@ -473,13 +473,30 @@ chmod 777 "$HLS_DIR" "$HLS_CACHE_DIR"
 log_ok "Almacenamiento HLS en disco SSD: $HLS_DIR"
 log_info "Capacidad estimada: ~$((DISK_AVAIL_GB / 500 * 1000)) canales keep-alive (30min caché)"
 
-# Instalar FFmpeg si no está
-if ! command -v ffmpeg &> /dev/null; then
+# Instalar FFmpeg si no está y verificar ruta real
+FFMPEG_BIN="$(command -v ffmpeg 2>/dev/null || true)"
+if [ -z "$FFMPEG_BIN" ]; then
   log_info "Instalando FFmpeg..."
-  apt install -y -qq ffmpeg > /dev/null 2>&1
+  apt install -y -qq ffmpeg > /dev/null 2>&1 || true
+  FFMPEG_BIN="$(command -v ffmpeg 2>/dev/null || true)"
 fi
-FFMPEG_VERSION=$(ffmpeg -version 2>/dev/null | head -1 | awk '{print $3}')
-log_ok "FFmpeg ${FFMPEG_VERSION} listo"
+
+if [ -z "$FFMPEG_BIN" ]; then
+  for candidate in /usr/bin/ffmpeg /usr/local/bin/ffmpeg /bin/ffmpeg /snap/bin/ffmpeg; do
+    if [ -x "$candidate" ]; then
+      FFMPEG_BIN="$candidate"
+      break
+    fi
+  done
+fi
+
+if [ -z "$FFMPEG_BIN" ]; then
+  log_err "FFmpeg no se pudo instalar o no quedó disponible para la API"
+  exit 1
+fi
+
+FFMPEG_VERSION=$($FFMPEG_BIN -version 2>/dev/null | head -1 | awk '{print $3}')
+log_ok "FFmpeg ${FFMPEG_VERSION:-detectado} listo en $FFMPEG_BIN"
 
 log_ok "Almacenamiento configurado - streams HLS en SSD"
 
@@ -787,7 +804,7 @@ cd /opt/streambox/server
 # Asegurar que el puerto está libre antes de iniciar
 kill_port $API_PORT 2>/dev/null
 
-pm2 start index.js --name streambox-api --max-restarts 10 --restart-delay 3000 > /dev/null 2>&1
+FFMPEG_PATH="$FFMPEG_BIN" PATH="$PATH:/usr/local/bin:/usr/bin:/bin:/snap/bin" pm2 start index.js --name streambox-api --max-restarts 10 --restart-delay 3000 > /dev/null 2>&1
 pm2 startup systemd -u root --hp /root > /dev/null 2>&1 || true
 pm2 save > /dev/null 2>&1
 
@@ -801,7 +818,7 @@ else
   pm2 logs streambox-api --lines 10 --nostream
   echo ""
   log_warn "Intentando reiniciar..."
-  pm2 restart streambox-api > /dev/null 2>&1
+  FFMPEG_PATH="$FFMPEG_BIN" PATH="$PATH:/usr/local/bin:/usr/bin:/bin:/snap/bin" pm2 restart streambox-api --update-env > /dev/null 2>&1
   sleep 5
   if wait_for_port $API_PORT "API" 10; then
     log_ok "API corriendo después de reinicio"
