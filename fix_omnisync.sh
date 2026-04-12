@@ -26,8 +26,8 @@ fi
 SERVER_DIR=$(dirname "$INDEX_JS")
 
 resolve_ffmpeg_bin() {
-  for candidate in "${FFMPEG_PATH:-}" "$(command -v ffmpeg 2>/dev/null)" /usr/bin/ffmpeg /usr/local/bin/ffmpeg /bin/ffmpeg /snap/bin/ffmpeg; do
-    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+  for candidate in "${FFMPEG_PATH:-}" /usr/bin/ffmpeg /usr/local/bin/ffmpeg /bin/ffmpeg "$(PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' command -v ffmpeg 2>/dev/null)"; do
+    if [ -n "$candidate" ] && [ -x "$candidate" ] && [[ "$candidate" != /snap/* ]]; then
       printf '%s\n' "$candidate"
       return 0
     fi
@@ -128,7 +128,7 @@ fi
 
 echo -e "\n${CYAN}═══ FASE 2: CORRECCIÓN ═══${NC}\n"
 
-echo -e "${YELLOW}FIX 0: Verificando FFmpeg real para la API...${NC}"
+echo -e "${YELLOW}FIX 0: Verificando FFmpeg nativo para la API (snap bloqueado)...${NC}"
 if [ -z "$FFMPEG_BIN" ]; then
   APT_LOG="/tmp/omnisync-fix-ffmpeg.log"
   : > "$APT_LOG"
@@ -147,6 +147,7 @@ fi
 
 if [ -z "$FFMPEG_BIN" ]; then
   echo -e "${RED}❌ FFmpeg no quedó instalado correctamente${NC}"
+  echo "Nota: la versión snap está bloqueada porque rompe el DVR y la APK"
   echo "Revisa: /tmp/omnisync-fix-ffmpeg.log"
   apt-cache policy ffmpeg 2>/dev/null || true
   exit 1
@@ -269,7 +270,7 @@ fi
 # ── FIX 6: Reiniciar PM2 ──
 echo -e "\n${YELLOW}FIX 6: Reiniciando PM2...${NC}"
 cd "$SERVER_DIR"
-FFMPEG_PATH="$FFMPEG_BIN" PATH="$PATH:/usr/local/bin:/usr/bin:/bin:/snap/bin" pm2 restart streambox-api --update-env 2>/dev/null || FFMPEG_PATH="$FFMPEG_BIN" PATH="$PATH:/usr/local/bin:/usr/bin:/bin:/snap/bin" pm2 start index.js --name streambox-api
+FFMPEG_PATH="$FFMPEG_BIN" PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" pm2 restart streambox-api --update-env 2>/dev/null || FFMPEG_PATH="$FFMPEG_BIN" PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" pm2 start index.js --name streambox-api
 sleep 3
 
 echo -e "\n${CYAN}═══ FASE 3: VERIFICACIÓN ═══${NC}\n"
