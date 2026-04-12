@@ -330,8 +330,22 @@ const Dashboard = () => {
                           onClick={() => navigate(`/series/${s.id}`)}
                           className="group glass-strong rounded-2xl overflow-hidden text-left hover:border-primary/30 transition-all duration-300 cursor-pointer relative tv-focusable">
                           <div className="w-full aspect-[2/3] bg-secondary/60 flex items-center justify-center overflow-hidden">
-                            {s.poster_url ? <img src={s.poster_url} alt={s.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
-                              : <Tv2 className="w-10 h-10 text-muted-foreground" />}
+                            {s.poster_url ? (
+                              <img 
+                                src={s.poster_url} 
+                                alt={s.title} 
+                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                                onError={(e) => {
+                                  const img = e.currentTarget;
+                                  img.style.display = 'none';
+                                  const fallback = img.nextElementSibling as HTMLElement;
+                                  if (fallback) fallback.style.display = 'flex';
+                                }}
+                              />
+                            ) : null}
+                            <div className={`w-full h-full items-center justify-center ${s.poster_url ? 'hidden' : 'flex'}`}>
+                              <Tv2 className="w-10 h-10 text-muted-foreground" />
+                            </div>
                           </div>
                           <div className="p-3">
                             <p className="font-medium text-foreground text-sm truncate">{s.title}</p>
