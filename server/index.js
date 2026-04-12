@@ -1559,8 +1559,8 @@ const SEGMENT_CACHE_TTL = 45000; // 45s - más tiempo en caché para evitar re-d
 const pendingSegments = new Map();
 
 // Connection pooling: reutilizar conexiones TCP al origen
-const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 30, maxFreeSockets: 10, timeout: 60000 });
-const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 30, maxFreeSockets: 10, timeout: 60000 });
+const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 256, maxFreeSockets: 30, timeout: 120000 });
+const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 256, maxFreeSockets: 30, timeout: 120000 });
 const getAgent = (url) => url.startsWith('https') ? httpsAgent : httpAgent;
 
 // Limpiar segmentos viejos cada 30s
