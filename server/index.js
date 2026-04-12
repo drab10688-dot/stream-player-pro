@@ -4882,24 +4882,22 @@ const handleApkStreamRequest = async (req, res) => {
           streamUrl = `${baseUrl}/api/dvr/playlist/${channelId}?token=${encodeURIComponent(token)}`;
           dvrActive = true;
         } else {
+          // Fallback DVR no pudo iniciar: usar restream 1-a-N local
+          const baseUrl = getRequestBaseUrl(req);
           const isTsStream = /\.ts(\?|$)/i.test(sourceUrl) || /\/\d+\.ts(\?|$)/i.test(sourceUrl);
-          const isDirectMode = ch.stream_mode === 'direct';
-
-          if (isTsStream || isDirectMode) {
-            streamUrl = sourceUrl;
+          if (isTsStream) {
+            streamUrl = `${baseUrl}/api/stream-pipe/${channelId}`;
           } else {
-            const baseUrl = getRequestBaseUrl(req);
             streamUrl = `${baseUrl}/api/restream/${channelId}`;
           }
         }
       } else {
+        // Sin DVR: siempre usar proxy local 1-a-N (NUNCA exponer URL del proveedor)
+        const baseUrl = getRequestBaseUrl(req);
         const isTsStream = /\.ts(\?|$)/i.test(sourceUrl) || /\/\d+\.ts(\?|$)/i.test(sourceUrl);
-        const isDirectMode = ch.stream_mode === 'direct';
-
-        if (isTsStream || isDirectMode) {
-          streamUrl = sourceUrl;
+        if (isTsStream) {
+          streamUrl = `${baseUrl}/api/stream-pipe/${channelId}`;
         } else {
-          const baseUrl = getRequestBaseUrl(req);
           streamUrl = `${baseUrl}/api/restream/${channelId}`;
         }
       }
