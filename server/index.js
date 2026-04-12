@@ -2969,20 +2969,19 @@ app.get('/api/playlist/:token', async (req, res) => {
     const baseUrl = getRequestBaseUrl(req);
     
     // Generar M3U compatible con OTT Player, VLC, TiviMate, IPTV Smarters, Smart IPTV
+    // IMPORTANTE: si el origen es HLS, publicar .m3u8; si no, publicar .ts
     let m3u = '#EXTM3U\n';
     
     for (const ch of filteredChannels) {
-      // Logo URL completa
-      const logoUrl = ch.logo_url 
-        ? (ch.logo_url.startsWith('http') ? ch.logo_url : baseUrl + ch.logo_url) 
+      const logoUrl = ch.logo_url
+        ? (ch.logo_url.startsWith('http') ? ch.logo_url : baseUrl + ch.logo_url)
         : '';
+
+      const isHlsSource = /\.m3u8?(\?|$)/i.test(ch.url);
+      const outputExt = isHlsSource ? 'm3u8' : 'ts';
       
-      // Formato estricto Xtream compatible con tvg-id, tvg-name, tvg-logo, group-title
       m3u += `#EXTINF:-1 tvg-id="${ch.id}" tvg-name="${ch.name}" tvg-logo="${logoUrl}" group-title="${ch.category}",${ch.name}\n`;
-      
-      // URL formato Xtream: /live/username/password/channelId.ts
-      // Compatible con OTT Player, VLC, TiviMate, XCIPTV, Smarters
-      m3u += `${baseUrl}/live/${encodeURIComponent(client.username)}/${encodeURIComponent(client.password)}/${ch.id}.ts\n`;
+      m3u += `${baseUrl}/live/${encodeURIComponent(client.username)}/${encodeURIComponent(client.password)}/${ch.id}.${outputExt}\n`;
     }
     
     res.set({
