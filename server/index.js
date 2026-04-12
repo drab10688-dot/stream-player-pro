@@ -1260,8 +1260,11 @@ function startTSSegmenter(channelId, sourceUrl, isKeepAlive = false) {
     segmentIndex: 0,
     segmentTimer: null,
     keepAlive: isKeepAlive,
-    _buffer: [],
-    _bufferBytes: 0,
+    _tsPending: Buffer.alloc(0),
+    _segBuffer: [],
+    _segBufferBytes: 0,
+    _segStartTime: Date.now(),
+    _segDurations: {},
   };
 
   // Detectar si un paquete TS es PAT (PID 0x0000) - indica inicio de GOP/keyframe
