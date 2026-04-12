@@ -98,6 +98,7 @@ const pool = new Pool({
 });
 
 const isSnapFfmpegPath = (value) => typeof value === 'string' && value.includes('/snap/bin/ffmpeg');
+const ffmpegPathExists = (value) => typeof value === 'string' && value.length > 0 && fs.existsSync(value);
 
 const FFMPEG_ENV = {
   ...process.env,
@@ -136,13 +137,30 @@ const FFMPEG_BIN = (() => {
       env: FFMPEG_ENV,
       stdio: ['ignore', 'pipe', 'ignore'],
     }).toString().trim().split('\n')[0];
-    if (detected && !isSnapFfmpegPath(detected)) return detected;
+    if (detected && !isSnapFfmpegPath(detected) && ffmpegPathExists(detected)) return detected;
   } catch {}
 
-  return 'ffmpeg';
+  return null;
 })();
 
 console.log(`🎞️ FFmpeg configurado: ${FFMPEG_BIN}`);
+
+function requireFfmpegBinary(contextLabel) {
+  if (ffmpegPathExists(FFMPEG_BIN)) return FFMPEG_BIN;
+
+  const message = `FFmpeg no disponible: instala /usr/bin/ffmpeg y elimina la versión snap antes de iniciar ${contextLabel}`;
+  console.error(`❌ ${message}`);
+  throw new Error(message);
+}
+
+function spawnFfmpegOrThrow(contextLabel, args, options = {}) {
+  const ffmpegBin = requireFfmpegBinary(contextLabel);
+  return spawn(ffmpegBin, args, {
+    stdio: ['pipe', 'pipe', 'pipe'],
+    env: FFMPEG_ENV,
+    ...options,
+  });
+}
 
 // Helper: obtener base URL pública del request (respeta proxy/túnel)
 const getRequestBaseUrl = (req) => {
@@ -1362,7 +1380,7 @@ function startAdaptiveTranscoder(channelId, sourceUrl, channelDir, isKeepAlive =
   // Try adaptive first, fallback to single-quality if FFmpeg doesn't support var_stream_map
   let ffmpeg;
   try {
-    ffmpeg = spawn(FFMPEG_BIN, ffmpegArgs, { stdio: ['pipe', 'pipe', 'pipe'], env: FFMPEG_ENV });
+    ffmpeg = spawnFfmpegOrThrow(`restream adaptativo ${channelId}`, ffmpegArgs);
   } catch (err) {
     console.error(`❌ [${channelId}] FFmpeg spawn error:`, err.message);
     return null;
@@ -1464,27 +1482,33 @@ function startSingleQualityTranscoder(channelId, sourceUrl, channelDir, isKeepAl
   const cacheLabel = isKeepAlive ? `${cacheConfig.hls_list_size}seg ≈ ${Math.round(cacheConfig.hls_list_size * cacheConfig.hls_time / 60)}min` : '2min';
   console.log(`🎬 [${channelId}] FFmpeg calidad única (caché: ${cacheLabel}): ${sourceUrl}`);
 
-  const ffmpeg = spawn(FFMPEG_BIN, [
-    '-reconnect', '1',
-    '-reconnect_streamed', '1',
-    '-reconnect_delay_max', '10',
-    '-rw_timeout', '10000000',
-    '-i', sourceUrl,
-    '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency',
-    '-b:v', '1200k', '-maxrate', '1400k', '-bufsize', '2000k',
-    '-vf', 'scale=1280:720',
-    '-c:a', 'aac', '-b:a', '96k',
-    '-g', '48', '-keyint_min', '48', '-sc_threshold', '0',
-    '-f', 'hls',
-    '-hls_time', String(cacheConfig.hls_time),
-    '-hls_list_size', String(cacheConfig.hls_list_size),
-    '-hls_flags', isKeepAlive ? 'append_list+delete_segments+temp_file' : 'append_list+temp_file',
-    '-hls_segment_type', 'mpegts',
-    '-hls_segment_filename', path.join(channelDir, 'seg_%05d.ts'),
-    '-hls_allow_cache', '1',
-    '-y',
-    manifestPath,
-  ], { stdio: ['pipe', 'pipe', 'pipe'], env: FFMPEG_ENV });
+  let ffmpeg;
+  try {
+    ffmpeg = spawnFfmpegOrThrow(`restream calidad única ${channelId}`, [
+      '-reconnect', '1',
+      '-reconnect_streamed', '1',
+      '-reconnect_delay_max', '10',
+      '-rw_timeout', '10000000',
+      '-i', sourceUrl,
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency',
+      '-b:v', '1200k', '-maxrate', '1400k', '-bufsize', '2000k',
+      '-vf', 'scale=1280:720',
+      '-c:a', 'aac', '-b:a', '96k',
+      '-g', '48', '-keyint_min', '48', '-sc_threshold', '0',
+      '-f', 'hls',
+      '-hls_time', String(cacheConfig.hls_time),
+      '-hls_list_size', String(cacheConfig.hls_list_size),
+      '-hls_flags', isKeepAlive ? 'append_list+delete_segments+temp_file' : 'append_list+temp_file',
+      '-hls_segment_type', 'mpegts',
+      '-hls_segment_filename', path.join(channelDir, 'seg_%05d.ts'),
+      '-hls_allow_cache', '1',
+      '-y',
+      manifestPath,
+    ]);
+  } catch (err) {
+    console.error(`❌ [${channelId}] FFmpeg spawn error:`, err.message);
+    return null;
+  }
 
   const entry = {
     ffmpeg,
@@ -5553,7 +5577,13 @@ function startDVR(channelId, sourceUrl) {
 
   const playlistPath = path.join(channelDir, 'live.m3u8');
   const segPattern = path.join(channelDir, 'seg_%03d.m4s');
-  const ffmpegBin = FFMPEG_BIN;
+  let ffmpegBin;
+  try {
+    ffmpegBin = requireFfmpegBinary(`DVR ${channelId}`);
+  } catch (err) {
+    logDvrError(channelId, err.message, 'spawn');
+    return null;
+  }
 
   const ffmpegArgs = [
     '-hide_banner', '-loglevel', 'warning',
@@ -5585,11 +5615,7 @@ function startDVR(channelId, sourceUrl) {
   ];
 
   console.log(`📹 [DVR ${channelId}] Iniciando FFmpeg con: ${ffmpegBin}`);
-  const ffmpeg = spawn(ffmpegBin, ffmpegArgs, {
-    stdio: ['pipe', 'pipe', 'pipe'],
-    env: FFMPEG_ENV,
-    cwd: channelDir,
-  });
+  const ffmpeg = spawnFfmpegOrThrow(`DVR ${channelId}`, ffmpegArgs, { cwd: channelDir });
   dvr.ffmpeg = ffmpeg;
 
   ffmpeg.stderr.on('data', (data) => {
@@ -5907,7 +5933,7 @@ app.get('/api/admin/dvr/diagnostics', authAdmin, async (req, res) => {
     return res.json({
       channelId,
       ffmpegBin: FFMPEG_BIN,
-      ffmpegExists: fs.existsSync(FFMPEG_BIN),
+      ffmpegExists: ffmpegPathExists(FFMPEG_BIN),
       channelDir,
       channelDirExists: fs.existsSync(channelDir),
       hasInit: files.includes('init.mp4'),
@@ -5939,7 +5965,7 @@ app.get('/api/admin/dvr/diagnostics', authAdmin, async (req, res) => {
   
   res.json({
     ffmpegBin: FFMPEG_BIN,
-    ffmpegExists: fs.existsSync(FFMPEG_BIN),
+    ffmpegExists: ffmpegPathExists(FFMPEG_BIN),
     dvrDir: DVR_DIR,
     activeCount: activeDVR.size,
     channelsWithErrors: summary.length,
