@@ -4960,12 +4960,18 @@ const handleApkStreamRequest = async (req, res) => {
       }));
     } catch { /* sin anuncios */ }
 
+    // Calcular dvrDelay: si DVR está habilitado pero no listo, dar delay para que la APK espere
+    let dvrDelay = 0;
+    if (localCh.length > 0 && localCh[0].dvr_enabled && !dvrActive) {
+      dvrDelay = isDvrReady(channelId) ? 500 : 3000;
+    }
+
     res.json({
       streamUrl,
       quality: req.query.quality || 'auto',
       availableQualities: ['auto', 'high', 'medium', 'low'],
       dvr: dvrActive,
-      dvrDelay: 0,
+      dvrDelay,
       ads,
       ad: ads.length > 0 ? ads[0] : null,
     });
@@ -5443,7 +5449,7 @@ if (!fs.existsSync(DVR_DIR)) fs.mkdirSync(DVR_DIR, { recursive: true });
 const DVR_SEGMENT_SECONDS = 10;  // Duración de cada segmento fMP4
 const DVR_BUFFER_SECONDS = 300;  // 5 minutos de buffer
 const DVR_HLS_LIST_SIZE = Math.ceil(DVR_BUFFER_SECONDS / DVR_SEGMENT_SECONDS); // ~30 segmentos
-const DVR_IDLE_TIMEOUT_MS = 120000; // 2 min sin viewers → detener grabación
+// DVR SIEMPRE ACTIVO: sin idle timeout, FFmpeg corre mientras dvr_enabled esté true
 const activeDVR = new Map(); // channelId -> { ffmpeg, viewers, lastAccess, recording, ... }
 
 function startDVR(channelId, sourceUrl) {
@@ -5550,28 +5556,8 @@ function releaseDVR(channelId) {
   dvr.viewers = Math.max(0, dvr.viewers - 1);
   dvr.lastAccess = Date.now();
   console.log(`📹 [DVR ${channelId}] Viewer liberado (${dvr.viewers} restantes)`);
-
-  if (dvr.viewers === 0) {
-    if (dvr.idleTimer) clearTimeout(dvr.idleTimer);
-    dvr.idleTimer = setTimeout(() => {
-      const current = activeDVR.get(channelId);
-      if (current && current.viewers === 0) {
-        console.log(`📹 [DVR ${channelId}] Sin viewers, deteniendo grabación`);
-        current.recording = false;
-        if (current.ffmpeg) {
-          try { current.ffmpeg.kill('SIGTERM'); } catch {}
-        }
-        activeDVR.delete(channelId);
-        // Limpiar archivos
-        const channelDir = path.join(DVR_DIR, channelId);
-        try {
-          const files = fs.readdirSync(channelDir);
-          files.forEach(f => { try { fs.unlinkSync(path.join(channelDir, f)); } catch {} });
-          fs.rmdirSync(channelDir);
-        } catch {}
-      }
-    }, DVR_IDLE_TIMEOUT_MS);
-  }
+  // DVR siempre activo: NO detener FFmpeg cuando viewers llega a 0
+  // Solo se detiene manualmente via admin o al desactivar dvr_enabled
 }
 
 // API: Iniciar DVR para un canal
@@ -5870,7 +5856,38 @@ app.post('/api/admin/dvr/disable-all', authAdmin, async (req, res) => {
   }
 });
 
-console.log('📹 DVR fMP4 bajo demanda habilitado');
+console.log('📹 DVR siempre activo habilitado (no bajo demanda)');
+
+// =============================================
+// AUTO-INICIO DVR: Iniciar FFmpeg para todos los canales con dvr_enabled al arrancar
+// =============================================
+async function autoStartDVR() {
+  try {
+    const { rows } = await pool.query('SELECT id, name, url FROM channels WHERE dvr_enabled = true AND is_active = true ORDER BY name');
+    if (rows.length === 0) {
+      console.log('📹 [DVR AUTO] No hay canales con DVR habilitado');
+      return;
+    }
+    console.log(`📹 [DVR AUTO] Iniciando DVR para ${rows.length} canales...`);
+    let started = 0;
+    for (const ch of rows) {
+      if (!activeDVR.has(ch.id)) {
+        try {
+          const dvr = startDVR(ch.id, ch.url);
+          dvr.viewers = 0; // No hay viewers reales aún, pero FFmpeg corre
+          started++;
+          // Delay de 2s entre cada inicio para no saturar CPU
+          await new Promise(r => setTimeout(r, 2000));
+        } catch (err) {
+          console.error(`📹 [DVR AUTO] Error iniciando ${ch.name}:`, err.message);
+        }
+      }
+    }
+    console.log(`📹 [DVR AUTO] ${started}/${rows.length} canales DVR iniciados correctamente`);
+  } catch (err) {
+    console.error('📹 [DVR AUTO] Error general:', err.message);
+  }
+}
 
 //
 // INICIAR SERVIDOR
@@ -5882,6 +5899,8 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`🔗 Xtream Base: ${XTREAM_BASE_URL}`);
   console.log(`🔐 Setup inicial: POST http://localhost:${PORT}/api/admin/setup\n`);
   
-  // Keep-alive deshabilitado - DVR es el único sistema de estabilidad
-  console.log('📡 Keep-alive deshabilitado. DVR es el sistema principal de estabilidad.');
+  console.log('📡 DVR siempre activo. FFmpeg se inicia automáticamente para canales con DVR.');
+  
+  // Esperar 3 segundos para que el servidor esté listo, luego iniciar DVR
+  setTimeout(() => autoStartDVR(), 3000);
 });
