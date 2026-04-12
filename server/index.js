@@ -2930,8 +2930,8 @@ app.get('/api/playlist/:token', async (req, res) => {
       return res.status(403).send('#EXTM3U\n#EXTINF:-1,Suscripción expirada\nhttp://expired');
     }
     
-    // Obtener canales activos
-    let channelsQuery = 'SELECT id, name, url, category, logo_url, stream_mode, sort_order FROM channels WHERE is_active = true ORDER BY sort_order';
+    // Obtener canales activos (incluir dvr_enabled para ruteo)
+    let channelsQuery = 'SELECT id, name, url, category, logo_url, stream_mode, sort_order, dvr_enabled FROM channels WHERE is_active = true ORDER BY sort_order';
     const { rows: channels } = await pool.query(channelsQuery);
     
     // Filtrar por plan si tiene uno asignado
@@ -2944,7 +2944,6 @@ app.get('/api/playlist/:token', async (req, res) => {
     const baseUrl = getRequestBaseUrl(req);
     
     // Generar M3U compatible con OTT Player, VLC, TiviMate, IPTV Smarters, Smart IPTV
-    // IMPORTANTE: si el origen es HLS, publicar .m3u8; si no, publicar .ts
     let m3u = '#EXTM3U\n';
     
     for (const ch of filteredChannels) {
@@ -2952,11 +2951,16 @@ app.get('/api/playlist/:token', async (req, res) => {
         ? (ch.logo_url.startsWith('http') ? ch.logo_url : baseUrl + ch.logo_url)
         : '';
 
-      const isHlsSource = /\.m3u8?(\?|$)/i.test(ch.url);
-      const outputExt = isHlsSource ? 'm3u8' : 'ts';
-      
       m3u += `#EXTINF:-1 tvg-id="${ch.id}" tvg-name="${ch.name}" tvg-logo="${logoUrl}" group-title="${ch.category}",${ch.name}\n`;
-      m3u += `${baseUrl}/live/${encodeURIComponent(client.username)}/${encodeURIComponent(client.password)}/${ch.id}.${outputExt}\n`;
+
+      if (ch.dvr_enabled) {
+        // DVR activo: apuntar a la playlist DVR local (fMP4/HLS) con autenticación por credenciales
+        m3u += `${baseUrl}/live/${encodeURIComponent(client.username)}/${encodeURIComponent(client.password)}/${ch.id}.m3u8\n`;
+      } else {
+        const isHlsSource = /\.m3u8?(\?|$)/i.test(ch.url);
+        const outputExt = isHlsSource ? 'm3u8' : 'ts';
+        m3u += `${baseUrl}/live/${encodeURIComponent(client.username)}/${encodeURIComponent(client.password)}/${ch.id}.${outputExt}\n`;
+      }
     }
     
     res.set({
@@ -3326,6 +3330,63 @@ app.get('/live/:username/:password/:streamId', async (req, res) => {
     const channels = await getXtreamChannels(client);
     const channel = channels.find(ch => ch.id === channelId);
     if (!channel) return res.status(404).send('Channel not found');
+
+    // *** DVR PRIORITY: si el canal tiene dvr_enabled, servir playlist DVR ***
+    if (channel.dvr_enabled) {
+      // Iniciar DVR si no está activo
+      if (typeof activeDVR !== 'undefined' && !activeDVR.has(channelId)) {
+        try {
+          const { rows: chRows } = await pool.query('SELECT * FROM channels WHERE id = $1 AND dvr_enabled = true', [channelId]);
+          if (chRows.length > 0) {
+            startDVR(channelId, chRows[0].url);
+          }
+        } catch (e) {
+          console.error(`DVR auto-start error for ${channelId}:`, e.message);
+        }
+      }
+
+      const channelDir = path.join(DVR_DIR || path.join(__dirname, 'dvr-cache'), channelId);
+      const playlistPath = path.join(channelDir, 'live.m3u8');
+
+      // Esperar a que la playlist esté lista (máximo 6 segundos)
+      let ready = fs.existsSync(playlistPath);
+      if (!ready) {
+        for (let i = 0; i < 12; i++) {
+          await new Promise(r => setTimeout(r, 500));
+          if (fs.existsSync(playlistPath)) { ready = true; break; }
+        }
+      }
+
+      if (ready) {
+        const baseUrl = getRequestBaseUrl(req);
+        let m3u8 = fs.readFileSync(playlistPath, 'utf8');
+
+        // Generar JWT temporal para autenticar los segmentos DVR
+        const dvrToken = jwt.sign(
+          { id: client.id, username: client.username, xtreamUser: username, xtreamPass: password },
+          JWT_SECRET,
+          { expiresIn: '4h' }
+        );
+        const encodedToken = encodeURIComponent(dvrToken);
+
+        // Rewrite relative paths to absolute authenticated URLs with JWT
+        m3u8 = m3u8.replace(/(init\.mp4)/g, `${baseUrl}/api/dvr/file/${channelId}/$1?token=${encodedToken}`);
+        m3u8 = m3u8.replace(/(seg_\d+\.m4s)/g, `${baseUrl}/api/dvr/file/${channelId}/$1?token=${encodedToken}`);
+
+        // Asegurar EXT-X-VERSION:7 para fMP4
+        if (!m3u8.includes('EXT-X-VERSION')) {
+          m3u8 = m3u8.replace('#EXTM3U', '#EXTM3U\n#EXT-X-VERSION:7');
+        }
+
+        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Cache-Control', 'no-cache, no-store');
+        return res.send(m3u8);
+      } else {
+        // DVR no listo, fallback al stream directo
+        console.warn(`DVR playlist not ready for ${channelId}, falling back to direct`);
+      }
+    }
 
     const targetUrl = channel.url;
     const isHLS = /\.m3u8?(\?|$)/i.test(targetUrl);
