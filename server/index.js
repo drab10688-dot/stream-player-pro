@@ -5518,6 +5518,6 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`🔗 Xtream Base: ${XTREAM_BASE_URL}`);
   console.log(`🔐 Setup inicial: POST http://localhost:${PORT}/api/admin/setup\n`);
   
-  // Iniciar canales keep-alive después de 3 segundos (esperar conexión DB)
-  setTimeout(() => initKeepAliveChannels(), 3000);
+  // Keep-alive deshabilitado - DVR es el único sistema de estabilidad
+  console.log('📡 Keep-alive deshabilitado. DVR es el sistema principal de estabilidad.');
 });
