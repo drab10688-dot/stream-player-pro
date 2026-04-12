@@ -3237,6 +3237,10 @@ app.delete('/api/backups/:id', authAdmin, async (req, res) => {
 
 // Helper: authenticate Xtream client
 const xtreamAuth = async (username, password) => {
+  // Verificar caché primero (evita consulta BD en cada segmento HLS)
+  const cached = getCachedAuth(username, password);
+  if (cached) return cached;
+
   const { rows } = await pool.query(
     'SELECT * FROM clients WHERE username = $1 AND password = $2',
     [username, password]
@@ -3245,6 +3249,9 @@ const xtreamAuth = async (username, password) => {
   const client = rows[0];
   if (!client.is_active) return null;
   if (new Date(client.expiry_date) < new Date()) return null;
+
+  // Guardar en caché para evitar consultas repetidas
+  setCachedAuth(username, password, client);
   return client;
 };
 
@@ -3254,11 +3261,10 @@ const getXtreamChannels = async (client) => {
   const allChannels = await channelListCache.get();
   let channels = allChannels.filter(ch => ch.is_active);
 
-  // Filter by plan if client has one
+  // Filter by plan if client has one (usando caché de planes)
   if (client.plan_id) {
-    const { rows: planRows } = await pool.query('SELECT categories FROM plans WHERE id = $1', [client.plan_id]);
-    if (planRows.length > 0 && planRows[0].categories && planRows[0].categories.length > 0) {
-      const allowedCategories = planRows[0].categories;
+    const allowedCategories = await getCachedPlanCategories(client.plan_id);
+    if (allowedCategories) {
       channels = channels.filter(ch => allowedCategories.includes(ch.category));
     }
   }
