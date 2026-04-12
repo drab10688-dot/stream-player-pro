@@ -3459,9 +3459,18 @@ app.get('/live/:username/:password/:streamId', async (req, res) => {
     const channel = channels.find(ch => ch.id === channelId);
     if (!channel) return res.status(404).send('Channel not found');
 
-    // *** DVR PRIORITY: si el canal tiene dvr_enabled Y está listo, servir playlist DVR ***
-    if (channel.dvr_enabled && isDvrReady(channelId)) {
-      // Generar JWT temporal para autenticar los segmentos DVR
+    // DVR: para reproductores externos siempre servir la playlist local
+    // aunque aún esté calentando, para activar el DVR bajo demanda correctamente.
+    if (channel.dvr_enabled) {
+      if (!activeDVR.has(channelId)) {
+        try {
+          const { rows: chRows } = await pool.query('SELECT url FROM channels WHERE id = $1 AND dvr_enabled = true', [channelId]);
+          if (chRows.length > 0) startDVR(channelId, chRows[0].url);
+        } catch (e) {
+          console.error(`DVR auto-start error for ${channelId}:`, e.message);
+        }
+      }
+
       const dvrToken = jwt.sign(
         { id: client.id, username: client.username, xtreamUser: username, xtreamPass: password },
         JWT_SECRET,
@@ -3477,30 +3486,19 @@ app.get('/live/:username/:password/:streamId', async (req, res) => {
       res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Cache-Control', 'no-cache, no-store');
+      res.setHeader('X-Accel-Buffering', 'no');
 
       if (fs.existsSync(playlistPath)) {
         let m3u8 = fs.readFileSync(playlistPath, 'utf8');
-        m3u8 = m3u8.replace(/(init\.mp4)/g, `${fileBaseUrl}/$1?token=${encodedToken}`);
-        m3u8 = m3u8.replace(/(seg_\d+\.m4s)/g, `${fileBaseUrl}/$1?token=${encodedToken}`);
+        m3u8 = m3u8.replace(/#EXT-X-MAP:URI="init\.mp4"/g, `#EXT-X-MAP:URI="${fileBaseUrl}/init.mp4?token=${encodedToken}"`);
+        m3u8 = m3u8.replace(/^(seg_\d+\.m4s)$/gm, `${fileBaseUrl}/$1?token=${encodedToken}`);
         if (!m3u8.includes('EXT-X-VERSION')) {
           m3u8 = m3u8.replace('#EXTM3U', '#EXTM3U\n#EXT-X-VERSION:7');
         }
         return res.send(m3u8);
       }
-      // Si playlist no existe aún, fall through al stream directo abajo
-    }
 
-    // DVR activo pero NO listo: auto-iniciar DVR en background (non-blocking)
-    if (channel.dvr_enabled && !isDvrReady(channelId)) {
-      if (typeof activeDVR !== 'undefined' && !activeDVR.has(channelId)) {
-        try {
-          const { rows: chRows } = await pool.query('SELECT * FROM channels WHERE id = $1 AND dvr_enabled = true', [channelId]);
-          if (chRows.length > 0) startDVR(channelId, chRows[0].url);
-        } catch (e) {
-          console.error(`DVR auto-start error for ${channelId}:`, e.message);
-        }
-      }
-      // Fall through: servir stream directo mientras DVR se prepara
+      return res.send('#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n');
     }
 
     const targetUrl = channel.url;
@@ -4873,19 +4871,28 @@ const handleApkStreamRequest = async (req, res) => {
       const ch = localCh[0];
       const sourceUrl = ch.url;
 
-      // *** DVR PRIORITY: solo usar DVR si está LISTO (init.mp4 + 3 segmentos) ***
-      if (ch.dvr_enabled && isDvrReady(channelId)) {
-        const baseUrl = getRequestBaseUrl(req);
-        const token = req.headers.authorization?.replace('Bearer ', '') || '';
-        streamUrl = `${baseUrl}/api/dvr/playlist/${channelId}?token=${encodeURIComponent(token)}`;
-        dvrActive = true;
-      } else {
-        // DVR no listo o no habilitado: usar stream directo
-        // Si DVR está habilitado pero no listo, iniciar en background
-        if (ch.dvr_enabled && !isDvrReady(channelId)) {
-          startDVR(channelId, sourceUrl); // non-blocking, prepara para próxima petición
-        }
+      // DVR: para la APK siempre devolver la playlist local si el canal tiene DVR.
+      // El endpoint de playlist ya maneja el calentamiento y reintentos sin pantalla blanca.
+      if (ch.dvr_enabled) {
+        const dvr = activeDVR.has(channelId) ? activeDVR.get(channelId) : startDVR(channelId, sourceUrl);
 
+        if (dvr || isDvrReady(channelId)) {
+          const baseUrl = getRequestBaseUrl(req);
+          const token = req.headers.authorization?.replace('Bearer ', '') || '';
+          streamUrl = `${baseUrl}/api/dvr/playlist/${channelId}?token=${encodeURIComponent(token)}`;
+          dvrActive = true;
+        } else {
+          const isTsStream = /\.ts(\?|$)/i.test(sourceUrl) || /\/\d+\.ts(\?|$)/i.test(sourceUrl);
+          const isDirectMode = ch.stream_mode === 'direct';
+
+          if (isTsStream || isDirectMode) {
+            streamUrl = sourceUrl;
+          } else {
+            const baseUrl = getRequestBaseUrl(req);
+            streamUrl = `${baseUrl}/api/restream/${channelId}`;
+          }
+        }
+      } else {
         const isTsStream = /\.ts(\?|$)/i.test(sourceUrl) || /\/\d+\.ts(\?|$)/i.test(sourceUrl);
         const isDirectMode = ch.stream_mode === 'direct';
 
