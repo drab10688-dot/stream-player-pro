@@ -3192,10 +3192,11 @@ const xtreamAuth = async (username, password) => {
   return client;
 };
 
-// Helper: get channels for client (filtered by plan)
+// Helper: get channels for client (filtered by plan) - uses memory cache
 const getXtreamChannels = async (client) => {
-  let query = 'SELECT * FROM channels WHERE is_active = true ORDER BY sort_order';
-  let { rows: channels } = await pool.query(query);
+  // Usar caché en memoria en vez de consultar BD cada vez
+  const allChannels = await channelListCache.get();
+  let channels = allChannels.filter(ch => ch.is_active);
 
   // Filter by plan if client has one
   if (client.plan_id) {
