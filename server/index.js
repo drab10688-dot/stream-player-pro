@@ -5903,6 +5903,7 @@ async function autoStartDVR() {
           const dvr = startDVR(ch.id, ch.url);
           if (dvr) {
             dvr.viewers = 0; // Sin viewers reales, pero FFmpeg corre permanentemente
+            dvr.preWarmed = true; // Marcar como pre-calentado para auto-reinicio
             started++;
           }
           // 3s entre cada inicio para no saturar CPU al arrancar
