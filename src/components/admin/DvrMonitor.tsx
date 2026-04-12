@@ -129,7 +129,7 @@ const DvrMonitor = () => {
             <div className="text-center py-8 text-muted-foreground">
               <Video className="w-10 h-10 mx-auto mb-2 opacity-30" />
               <p>No hay canales con DVR habilitado</p>
-              <p className="text-xs mt-1">Activa el DVR en la pestaña de Canales usando el interruptor 📹</p>
+              <p className="text-xs mt-1">Activa el DVR en la pestaña de Canales. FFmpeg se inicia automáticamente.</p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -190,7 +190,7 @@ const DvrMonitor = () => {
                         {dvr.channelName || dvr.channelId.slice(0, 8)}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        En espera — se activa cuando un cliente lo abra
+                        FFmpeg iniciándose... espera unos segundos
                       </p>
                     </div>
                   </div>
