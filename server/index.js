@@ -5534,17 +5534,19 @@ function startDVR(channelId, sourceUrl) {
 
   ffmpeg.on('close', (code) => {
     console.log(`📹 [DVR ${channelId}] FFmpeg terminó (code ${code})`);
-    if (dvr.recording && dvr.viewers > 0) {
+    const shouldRestart = dvr.recording && (dvr.viewers > 0 || dvr.preWarmed);
+    if (shouldRestart) {
       dvr.restartCount++;
       const delay = Math.min(3000 * dvr.restartCount, 15000);
       console.log(`📹 [DVR ${channelId}] Reiniciando en ${delay/1000}s (intento #${dvr.restartCount})...`);
       activeDVR.delete(channelId);
       setTimeout(() => {
-        if (dvr.viewers > 0 && dvr.recording) {
+        if (dvr.recording && (dvr.viewers > 0 || dvr.preWarmed)) {
           const newDvr = startDVR(channelId, normalizedUrl);
           if (newDvr) {
             newDvr.viewers = dvr.viewers;
             newDvr.restartCount = dvr.restartCount;
+            newDvr.preWarmed = dvr.preWarmed;
           }
         }
       }, delay);
