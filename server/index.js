@@ -3192,10 +3192,11 @@ const xtreamAuth = async (username, password) => {
   return client;
 };
 
-// Helper: get channels for client (filtered by plan)
+// Helper: get channels for client (filtered by plan) - uses memory cache
 const getXtreamChannels = async (client) => {
-  let query = 'SELECT * FROM channels WHERE is_active = true ORDER BY sort_order';
-  let { rows: channels } = await pool.query(query);
+  // Usar caché en memoria en vez de consultar BD cada vez
+  const allChannels = await channelListCache.get();
+  let channels = allChannels.filter(ch => ch.is_active);
 
   // Filter by plan if client has one
   if (client.plan_id) {
@@ -3386,18 +3387,8 @@ app.get('/live/:username/:password/:streamId', async (req, res) => {
     const channel = channels.find(ch => ch.id === channelId);
     if (!channel) return res.status(404).send('Channel not found');
 
-    // *** DVR PRIORITY: si el canal tiene dvr_enabled, servir playlist DVR ***
-    if (channel.dvr_enabled) {
-      // Iniciar DVR si no está activo (non-blocking)
-      if (typeof activeDVR !== 'undefined' && !activeDVR.has(channelId)) {
-        try {
-          const { rows: chRows } = await pool.query('SELECT * FROM channels WHERE id = $1 AND dvr_enabled = true', [channelId]);
-          if (chRows.length > 0) startDVR(channelId, chRows[0].url);
-        } catch (e) {
-          console.error(`DVR auto-start error for ${channelId}:`, e.message);
-        }
-      }
-
+    // *** DVR PRIORITY: si el canal tiene dvr_enabled Y está listo, servir playlist DVR ***
+    if (channel.dvr_enabled && isDvrReady(channelId)) {
       // Generar JWT temporal para autenticar los segmentos DVR
       const dvrToken = jwt.sign(
         { id: client.id, username: client.username, xtreamUser: username, xtreamPass: password },
@@ -3405,7 +3396,6 @@ app.get('/live/:username/:password/:streamId', async (req, res) => {
         { expiresIn: '4h' }
       );
 
-      // Responder con la playlist DVR directamente (el endpoint playlist maneja el "warming")
       const baseUrl = getRequestBaseUrl(req);
       const channelDir = path.join(DVR_DIR || path.join(__dirname, 'dvr-cache'), channelId);
       const playlistPath = path.join(channelDir, 'live.m3u8');
@@ -3424,10 +3414,21 @@ app.get('/live/:username/:password/:streamId', async (req, res) => {
           m3u8 = m3u8.replace('#EXTM3U', '#EXTM3U\n#EXT-X-VERSION:7');
         }
         return res.send(m3u8);
-      } else {
-        // Playlist no lista — enviar m3u8 mínimo, el reproductor reintenta solo
-        return res.send('#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n');
       }
+      // Si playlist no existe aún, fall through al stream directo abajo
+    }
+
+    // DVR activo pero NO listo: auto-iniciar DVR en background (non-blocking)
+    if (channel.dvr_enabled && !isDvrReady(channelId)) {
+      if (typeof activeDVR !== 'undefined' && !activeDVR.has(channelId)) {
+        try {
+          const { rows: chRows } = await pool.query('SELECT * FROM channels WHERE id = $1 AND dvr_enabled = true', [channelId]);
+          if (chRows.length > 0) startDVR(channelId, chRows[0].url);
+        } catch (e) {
+          console.error(`DVR auto-start error for ${channelId}:`, e.message);
+        }
+      }
+      // Fall through: servir stream directo mientras DVR se prepara
     }
 
     const targetUrl = channel.url;
@@ -4800,16 +4801,19 @@ const handleApkStreamRequest = async (req, res) => {
       const ch = localCh[0];
       const sourceUrl = ch.url;
 
-      // *** DVR PRIORITY: respuesta INSTANTÁNEA — iniciar DVR en background ***
-      if (ch.dvr_enabled) {
-        // Iniciar grabación si no está activa (no-blocking)
-        startDVR(channelId, sourceUrl);
-        
+      // *** DVR PRIORITY: solo usar DVR si está LISTO (init.mp4 + 3 segmentos) ***
+      if (ch.dvr_enabled && isDvrReady(channelId)) {
         const baseUrl = getRequestBaseUrl(req);
         const token = req.headers.authorization?.replace('Bearer ', '') || '';
         streamUrl = `${baseUrl}/api/dvr/playlist/${channelId}?token=${encodeURIComponent(token)}`;
         dvrActive = true;
       } else {
+        // DVR no listo o no habilitado: usar stream directo
+        // Si DVR está habilitado pero no listo, iniciar en background
+        if (ch.dvr_enabled && !isDvrReady(channelId)) {
+          startDVR(channelId, sourceUrl); // non-blocking, prepara para próxima petición
+        }
+
         const isTsStream = /\.ts(\?|$)/i.test(sourceUrl) || /\/\d+\.ts(\?|$)/i.test(sourceUrl);
         const isDirectMode = ch.stream_mode === 'direct';
 
