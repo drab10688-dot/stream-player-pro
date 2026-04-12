@@ -1,207 +1,313 @@
 # =============================================
-# 🚀 StreamBox - Guía de Instalación en Ubuntu
-# Sistema IPTV completo sin internet
+# 🚀 Omnisync TV - Guía de Instalación
+# Sistema IPTV profesional · 100% Node.js nativo
 # =============================================
 
-## REQUISITOS
-- Ubuntu 20.04/22.04/24.04 (Server o Desktop)
-- Mínimo 2GB RAM, 20GB disco
-- Red local (LAN) para que los clientes se conecten
+## ¿QUÉ ES OMNISYNC TV?
+
+Omnisync TV es un sistema IPTV completo que permite:
+- **Transmitir canales en vivo** (TV, deportes, noticias, etc.)
+- **DVR / Timeshift** — buffer de 5 minutos para pausar/retroceder TV en vivo
+- **Películas (VOD)** — streaming con seeking (avanzar/retroceder)
+- **Series** — organización por temporadas y episodios
+- **Gestión de clientes** — usuarios, planes, expiración, pantallas simultáneas
+- **Resellers** — panel de revendedores con comisiones
+- **APK Android** — app dedicada con LibVLC para Smart TVs y dispositivos Android
 
 ---
 
-## PASO 1: Instalar dependencias
+## ARQUITECTURA DEL SISTEMA
+
+```
+┌─────────────────────────────────────────────────────┐
+│                    CLIENTES                          │
+│         (APK Android / Navegador Web)                │
+└──────────────────┬──────────────────────────────────┘
+                   │
+┌──────────────────▼──────────────────────────────────┐
+│                 NGINX (Puerto 80)                    │
+│  • Sirve frontend React compilado                    │
+│  • Proxy reverso hacia API Node.js                   │
+│  • Puerto 25461 para apps IPTV directas              │
+└──────────────────┬──────────────────────────────────┘
+                   │
+┌──────────────────▼──────────────────────────────────┐
+│            NODE.JS API (Puerto 3001)                 │
+│                                                      │
+│  📺 Streaming en Vivo                                │
+│  • Proxy passthrough de canales HLS/TS               │
+│  • Keep-alive con reconexión automática              │
+│  • Segmentación TS nativa (sin FFmpeg)               │
+│                                                      │
+│  🎬 DVR / Timeshift (100% Node.js)                   │
+│  • Descarga segmentos HLS del origen                 │
+│  • Segmentación manual de streams MPEG-TS            │
+│  • Buffer rotativo de 5 min en disco                 │
+│  • Generación dinámica de playlists .m3u8            │
+│  • Limpieza automática de segmentos antiguos         │
+│                                                      │
+│  🎥 VOD (Películas y Series)                         │
+│  • Streaming con Range Headers (seeking)             │
+│  • fs.createReadStream — sin cargar en RAM            │
+│  • Soporte HEAD requests (LibVLC)                    │
+│                                                      │
+│  👥 Gestión                                          │
+│  • Autenticación JWT                                 │
+│  • Clientes, planes, resellers                       │
+│  • Monitoreo y diagnósticos                          │
+│  • Publicidad (ads)                                  │
+└──────────────────┬──────────────────────────────────┘
+                   │
+┌──────────────────▼──────────────────────────────────┐
+│              POSTGRESQL                              │
+│  • Canales, clientes, planes, logs                   │
+│  • Conexiones activas y heartbeats                   │
+│  • Backups y configuración                           │
+└─────────────────────────────────────────────────────┘
+```
+
+**⚡ Sin FFmpeg ni binarios externos** — Todo el procesamiento de video
+(segmentación, DVR, restreaming) se hace con Node.js nativo usando
+`http/https`, `fs.createReadStream` y gestión manual de buffers.
+
+---
+
+## REQUISITOS DEL SERVIDOR
+
+| Recurso | Mínimo | Recomendado |
+|---------|--------|-------------|
+| SO | Ubuntu 20.04/22.04/24.04 | Ubuntu 24.04 LTS |
+| RAM | 2 GB | 4+ GB |
+| Disco | 20 GB | 50+ GB (SSD recomendado) |
+| CPU | 1 core | 2+ cores |
+| Red | LAN | LAN + acceso a internet |
+
+---
+
+## INSTALACIÓN AUTOMÁTICA (Recomendado)
+
+El script `install.sh` automatiza todo el proceso:
 
 ```bash
-# Actualizar sistema
+# Clonar el repositorio
+git clone https://github.com/TU_REPO/omnisync-tv.git
+cd omnisync-tv/server
+
+# Ejecutar instalador como root
+sudo bash install.sh
+```
+
+### ¿Qué hace el instalador?
+
+1. **Detecta el sistema** — Verifica Ubuntu/Debian, versión, y hardware (SSD/HDD)
+2. **Instala dependencias**:
+   - Node.js 20 (runtime principal)
+   - PM2 (gestor de procesos)
+   - PostgreSQL (base de datos)
+   - Nginx (proxy reverso y servidor web)
+3. **Configura PostgreSQL** — Crea usuario, base de datos e importa schema
+4. **Genera credenciales** — JWT secret aleatorio, contraseña de BD
+5. **Compila el frontend** — Build de React y copia a `/var/www/streambox/`
+6. **Configura Nginx** — Proxy reverso + puerto IPTV (25461)
+7. **Crea directorio DVR** — `/data/dvr/` para almacenamiento de segmentos
+8. **Optimiza el kernel** — `sysctl` para conexiones de red y límites de archivos
+9. **Inicia la API** — Via PM2 con auto-restart y arranque al boot
+10. **Crea administrador** — Primer usuario admin
+11. **Verifica salud** — Health check automático al finalizar
+
+### Reinstalación / Actualización
+
+Si ya tienes una instalación previa, el script:
+- Detecta la instalación existente
+- Preserva credenciales (BD, JWT, admin)
+- Actualiza código y dependencias
+- Reinicia servicios
+
+---
+
+## INSTALACIÓN MANUAL
+
+### Paso 1: Dependencias del sistema
+
+```bash
 sudo apt update && sudo apt upgrade -y
+sudo apt install -y postgresql postgresql-contrib nginx git
 
-# Instalar PostgreSQL
-sudo apt install -y postgresql postgresql-contrib
-
-# Instalar Nginx
-sudo apt install -y nginx
-
-# Instalar Node.js 20
+# Node.js 20
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt install -y nodejs
 
-# Instalar Git
-sudo apt install -y git
+# PM2
+sudo npm install -g pm2
 ```
 
----
-
-## PASO 2: Configurar PostgreSQL
+### Paso 2: PostgreSQL
 
 ```bash
-# Entrar a PostgreSQL
-sudo -u postgres psql
-
-# Dentro de psql, ejecutar:
+sudo -u postgres psql <<EOF
 CREATE USER streambox_user WITH PASSWORD 'tu_password_seguro';
 CREATE DATABASE streambox OWNER streambox_user;
 GRANT ALL PRIVILEGES ON DATABASE streambox TO streambox_user;
-\q
+EOF
 
-# Importar el schema
-sudo -u postgres psql -d streambox -f /ruta/a/server/database/schema.sql
-
-# Dar permisos al usuario sobre las tablas
+sudo -u postgres psql -d streambox -f server/database/schema.sql
 sudo -u postgres psql -d streambox -c "GRANT ALL ON ALL TABLES IN SCHEMA public TO streambox_user;"
 sudo -u postgres psql -d streambox -c "GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO streambox_user;"
 ```
 
----
-
-## PASO 3: Configurar la API (Node.js)
+### Paso 3: API Node.js
 
 ```bash
-# Ir a la carpeta del servidor
-cd /ruta/a/server
-
-# Instalar dependencias
+cd server
 npm install
 
-# IMPORTANTE: Editar index.js y cambiar:
-# - JWT_SECRET: pon un string largo y aleatorio
-# - password en la config de Pool: 'tu_password_seguro' (el que pusiste en paso 2)
+# Editar index.js: configurar JWT_SECRET y password del Pool
+node index.js  # Verificar que arranca
 
-# Probar que funciona
-node index.js
-# Deberías ver: 🚀 StreamBox API corriendo en http://0.0.0.0:3001
-
-# Para que corra como servicio permanente:
-sudo npm install -g pm2
+# Iniciar con PM2
 pm2 start index.js --name streambox-api
-pm2 startup
-pm2 save
+pm2 startup && pm2 save
 ```
 
----
-
-## PASO 4: Compilar el Frontend
+### Paso 4: Frontend
 
 ```bash
-# Desde la raíz del proyecto Lovable (el que exportaste de GitHub)
-npm install
-npm run build
-
-# Copiar el build a Nginx
+# Desde la raíz del proyecto
+npm install && npm run build
 sudo mkdir -p /var/www/streambox
 sudo cp -r dist/* /var/www/streambox/
 ```
 
----
-
-## PASO 5: Configurar Nginx
+### Paso 5: Nginx
 
 ```bash
-# Copiar la configuración
 sudo cp server/nginx/streambox.conf /etc/nginx/sites-available/streambox
-
-# Habilitar el sitio
 sudo ln -s /etc/nginx/sites-available/streambox /etc/nginx/sites-enabled/
-sudo rm /etc/nginx/sites-enabled/default
-
-# IMPORTANTE: Editar el archivo y cambiar la IP del stream origen
-sudo nano /etc/nginx/sites-available/streambox
-# Cambiar: proxy_pass http://201.182.249.222:8281/;
-# Por tu IP real de origen de streams
-
-# Verificar configuración
-sudo nginx -t
-
-# Reiniciar Nginx
-sudo systemctl restart nginx
-sudo systemctl enable nginx
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo nginx -t && sudo systemctl restart nginx && sudo systemctl enable nginx
 ```
 
----
-
-## PASO 6: Crear el primer administrador
+### Paso 6: Crear administrador
 
 ```bash
-# Desde cualquier terminal en el servidor:
 curl -X POST http://localhost:3001/api/admin/setup \
   -H "Content-Type: application/json" \
   -d '{"email":"admin@local.com","password":"tu_password_admin"}'
 ```
 
----
+### Paso 7: Crear directorio DVR
 
-## PASO 7: Acceder al sistema
-
-Averigua la IP de tu servidor:
 ```bash
-ip addr show | grep "inet " | grep -v 127.0.0.1
-# Ejemplo: 192.168.1.100
+sudo mkdir -p /data/dvr
+sudo chown $(whoami):$(whoami) /data/dvr
 ```
-
-- **Panel Admin**: http://192.168.1.100/admin
-- **App Cliente**: http://192.168.1.100/login
-- **Streams**: http://192.168.1.100/stream/601.ts?user=USUARIO&pass=CONTRASEÑA
 
 ---
 
-## PASO 8: Configurar el Frontend para API local
+## CÓMO FUNCIONA EL STREAMING
 
-IMPORTANTE: Antes de compilar (paso 4), necesitas cambiar la app para que 
-use la API local en vez de Lovable Cloud. Ver archivo:
-`src/contexts/AuthContext.tsx` - cambiar para que llame a `/api/client/login`
+### Canales en Vivo (sin DVR)
+1. Cliente solicita `/api/stream/:channelId`
+2. Node.js valida JWT y permisos del plan
+3. Devuelve la URL original del proveedor
+4. La APK conecta directamente al origen
+
+### Canales con DVR activado
+1. Cliente solicita `/api/stream/:channelId`
+2. Node.js detecta `dvr_enabled: true`
+3. Inicia descarga de segmentos del origen (Node.js nativo)
+4. **Fuentes HLS (.m3u8)**: descarga segmentos `.ts` directamente
+5. **Fuentes MPEG-TS**: segmenta el stream en archivos `.ts` de 4s
+6. Genera playlist `.m3u8` dinámica con los últimos 5 minutos
+7. Devuelve URL local: `/api/dvr/playlist/:channelId`
+8. La APK reproduce la playlist local (HLS estándar)
+
+### VOD (Películas/Series)
+1. Cliente solicita `/api/vod/stream/:filename` o `/api/series/stream/:filename`
+2. Node.js lee el archivo con `fs.createReadStream`
+3. Soporta Range Headers para seeking sin cargar todo en RAM
+4. La APK puede avanzar/retroceder libremente
 
 ---
 
-## ESTRUCTURA DE ARCHIVOS EN EL SERVIDOR
+## ESTRUCTURA DE ARCHIVOS
 
 ```
-/var/www/streambox/          ← Frontend compilado
-/opt/streambox/server/       ← API Node.js
-  ├── index.js
+/var/www/streambox/              ← Frontend React compilado
+/opt/streambox/server/           ← API Node.js
+  ├── index.js                   ← Servidor principal (todo en uno)
   ├── package.json
   └── database/
-      └── schema.sql
+      └── schema.sql             ← Schema de PostgreSQL
+/data/dvr/                       ← Almacenamiento DVR
+  └── {channelId}/               ← Segmentos por canal
+      ├── seg_000.ts
+      ├── seg_001.ts
+      └── playlist.m3u8
 /etc/nginx/sites-available/
-  └── streambox              ← Config de Nginx
+  └── streambox                  ← Config Nginx
 ```
+
+---
+
+## ACCESO AL SISTEMA
+
+```bash
+# Obtener IP del servidor
+hostname -I
+```
+
+| Recurso | URL |
+|---------|-----|
+| Panel Admin | `http://IP_SERVIDOR/admin` |
+| Login Cliente | `http://IP_SERVIDOR/login` |
+| API Health | `http://IP_SERVIDOR/api/health` |
 
 ---
 
 ## COMANDOS ÚTILES
 
 ```bash
-# Ver logs de la API
+# Estado de la API
+pm2 status
+
+# Logs en tiempo real
 pm2 logs streambox-api
 
 # Reiniciar API
 pm2 restart streambox-api
 
-# Ver logs de Nginx
+# Logs de Nginx
 sudo tail -f /var/log/nginx/error.log
 
-# Verificar PostgreSQL
+# Estado de PostgreSQL
 sudo systemctl status postgresql
 
-# Ver IP del servidor
-hostname -I
+# Ver espacio DVR
+du -sh /data/dvr/
+
+# Limpiar DVR manualmente
+rm -rf /data/dvr/*
 ```
 
 ---
 
 ## SOLUCIÓN DE PROBLEMAS
 
-**API no conecta a PostgreSQL:**
-- Verificar que PostgreSQL esté corriendo: `sudo systemctl status postgresql`
-- Verificar credenciales en index.js
+| Problema | Solución |
+|----------|----------|
+| API no conecta a PostgreSQL | Verificar `sudo systemctl status postgresql` y credenciales en `index.js` |
+| Nginx error 502 | Verificar API: `pm2 status` y `pm2 logs streambox-api` |
+| Streams no cargan | Verificar acceso al origen desde el servidor: `curl -I URL_ORIGEN` |
+| DVR no graba | Verificar que `/data/dvr/` existe y tiene permisos de escritura |
+| Clientes no acceden | Firewall: `sudo ufw allow 80` · Verificar misma red LAN |
+| APK no conecta | Verificar que la IP del servidor está configurada en `build.gradle.kts` |
 
-**Nginx da error 502:**
-- Verificar que la API esté corriendo: `pm2 status`
-- Ver logs: `pm2 logs streambox-api`
+---
 
-**Streams no cargan:**
-- Verificar que la IP origen sea accesible desde el servidor
-- Verificar la config de proxy en streambox.conf
+## DESINSTALACIÓN
 
-**Clientes no pueden acceder:**
-- Verificar que el firewall permita puerto 80: `sudo ufw allow 80`
-- Verificar que estén en la misma red LAN
+```bash
+cd server
+sudo bash uninstall.sh
+```
