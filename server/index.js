@@ -4837,7 +4837,7 @@ const handleApkStreamRequest = async (req, res) => {
       quality: req.query.quality || 'auto',
       availableQualities: ['auto', 'high', 'medium', 'low'],
       dvr: dvrActive,
-      dvrDelay: dvrActive ? (playlistReady ? 500 : 3000) : 0,
+      dvrDelay: 0,
       ads,
       ad: ads.length > 0 ? ads[0] : null,
     });
