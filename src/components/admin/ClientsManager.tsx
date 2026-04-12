@@ -348,19 +348,33 @@ const ClientsManager = () => {
               {/* Expanded Playlist URLs */}
               {expandedPlaylist === c.id && (
                 <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="mt-3 pt-3 border-t border-border/50">
-                  <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center justify-between mb-3 gap-2">
                     <label className="text-xs font-semibold text-foreground flex items-center gap-1">
                       <Link2 className="w-3.5 h-3.5 text-primary" /> Links de Playlist y Conexión
                     </label>
-                    {c.playlist_token ? (
-                      <Button variant="outline" size="sm" onClick={() => regenerateToken(c.id)} className="text-xs gap-1 border-border text-muted-foreground hover:text-destructive" title="Regenerar token (invalida links anteriores)">
-                        <RefreshCw className="w-3 h-3" /> Regenerar Token
-                      </Button>
-                    ) : (
-                      <Button variant="outline" size="sm" onClick={() => regenerateToken(c.id)} className="text-xs gap-1">
-                        <RefreshCw className="w-3 h-3" /> Generar Token
-                      </Button>
-                    )}
+                    <div className="flex items-center gap-2">
+                      {tunnelUrl && (
+                        <Button
+                          variant={useTunnel ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => setUseTunnel(!useTunnel)}
+                          className="text-xs gap-1"
+                          title={useTunnel ? 'Usando URL de Cloudflare' : 'Usando IP directa'}
+                        >
+                          {useTunnel ? <Globe className="w-3 h-3" /> : <Server className="w-3 h-3" />}
+                          {useTunnel ? 'Cloudflare' : 'IP Directa'}
+                        </Button>
+                      )}
+                      {c.playlist_token ? (
+                        <Button variant="outline" size="sm" onClick={() => regenerateToken(c.id)} className="text-xs gap-1 border-border text-muted-foreground hover:text-destructive" title="Regenerar token (invalida links anteriores)">
+                          <RefreshCw className="w-3 h-3" /> Regenerar Token
+                        </Button>
+                      ) : (
+                        <Button variant="outline" size="sm" onClick={() => regenerateToken(c.id)} className="text-xs gap-1">
+                          <RefreshCw className="w-3 h-3" /> Generar Token
+                        </Button>
+                      )}
+                    </div>
                   </div>
 
                   {c.playlist_token ? (
