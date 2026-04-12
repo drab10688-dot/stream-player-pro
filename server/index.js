@@ -5449,7 +5449,7 @@ if (!fs.existsSync(DVR_DIR)) fs.mkdirSync(DVR_DIR, { recursive: true });
 const DVR_SEGMENT_SECONDS = 10;  // Duración de cada segmento fMP4
 const DVR_BUFFER_SECONDS = 300;  // 5 minutos de buffer
 const DVR_HLS_LIST_SIZE = Math.ceil(DVR_BUFFER_SECONDS / DVR_SEGMENT_SECONDS); // ~30 segmentos
-// DVR SIEMPRE ACTIVO: sin idle timeout, FFmpeg corre mientras dvr_enabled esté true
+const DVR_IDLE_TIMEOUT_MS = 120000; // 2 min sin viewers → detener grabación
 const activeDVR = new Map(); // channelId -> { ffmpeg, viewers, lastAccess, recording, ... }
 
 function startDVR(channelId, sourceUrl) {
