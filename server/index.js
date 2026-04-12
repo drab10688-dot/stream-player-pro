@@ -62,7 +62,13 @@ const geoLookup = async (ip) => {
 // Servir logos estáticos
 const LOGOS_DIR = path.join(__dirname, 'uploads', 'logos');
 if (!fs.existsSync(LOGOS_DIR)) fs.mkdirSync(LOGOS_DIR, { recursive: true });
-app.use('/uploads/logos', express.static(LOGOS_DIR));
+app.use('/uploads/logos', express.static(LOGOS_DIR, {
+  setHeaders: (res, filePath) => {
+    const ext = path.extname(filePath).toLowerCase();
+    const mimeMap = { '.jpg':'image/jpeg','.jpeg':'image/jpeg','.png':'image/png','.gif':'image/gif','.webp':'image/webp','.avif':'image/avif','.svg':'image/svg+xml','.bmp':'image/bmp','.heic':'image/heic' };
+    if (mimeMap[ext]) res.setHeader('Content-Type', mimeMap[ext]);
+  }
+}));
 
 // Multer config for logo uploads
 const logoStorage = multer.diskStorage({
@@ -3522,8 +3528,31 @@ const VOD_POSTERS_DIR = path.join(__dirname, 'uploads', 'vod-posters');
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 });
 
-// Serve VOD posters statically
-app.use('/uploads/vod-posters', express.static(VOD_POSTERS_DIR));
+// Serve VOD posters statically with correct MIME types for all image formats
+app.use('/uploads/vod-posters', express.static(VOD_POSTERS_DIR, {
+  setHeaders: (res, filePath) => {
+    const ext = path.extname(filePath).toLowerCase();
+    const mimeMap = {
+      '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+      '.gif': 'image/gif', '.webp': 'image/webp', '.avif': 'image/avif',
+      '.svg': 'image/svg+xml', '.bmp': 'image/bmp', '.ico': 'image/x-icon',
+      '.tiff': 'image/tiff', '.tif': 'image/tiff', '.heic': 'image/heic',
+      '.heif': 'image/heif',
+    };
+    if (mimeMap[ext]) res.setHeader('Content-Type', mimeMap[ext]);
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+  }
+}));
+// Also serve VOD directory posters (series episodes use this path)
+app.use('/uploads/vod', express.static(VOD_DIR, {
+  setHeaders: (res, filePath) => {
+    const ext = path.extname(filePath).toLowerCase();
+    if (['.jpg','.jpeg','.png','.gif','.webp','.avif','.svg','.bmp','.heic','.heif'].includes(ext)) {
+      const mimeMap = { '.jpg':'image/jpeg','.jpeg':'image/jpeg','.png':'image/png','.gif':'image/gif','.webp':'image/webp','.avif':'image/avif','.svg':'image/svg+xml','.bmp':'image/bmp','.heic':'image/heic','.heif':'image/heif' };
+      if (mimeMap[ext]) res.setHeader('Content-Type', mimeMap[ext]);
+    }
+  }
+}));
 
 // Multer for VOD video uploads (up to 10GB)
 const vodStorage = multer.diskStorage({
@@ -3532,7 +3561,8 @@ const vodStorage = multer.diskStorage({
     else cb(null, VOD_DIR);
   },
   filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname) || (file.fieldname === 'poster' ? '.jpg' : '.mp4');
+    // Preserve original extension for all image/video types
+    const ext = path.extname(file.originalname).toLowerCase() || (file.fieldname === 'poster' ? '.jpg' : '.mp4');
     cb(null, `${Date.now()}-${Math.random().toString(36).substring(2, 8)}${ext}`);
   }
 });

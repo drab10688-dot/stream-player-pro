@@ -424,7 +424,22 @@ const SeriesManager = () => {
               <div className="flex items-center justify-between gap-4">
                 <div className="flex items-center gap-3 flex-1 min-w-0">
                   <div className="w-14 h-10 rounded-lg bg-secondary/60 overflow-hidden shrink-0">
-                    {s.poster_url ? <img src={s.poster_url} alt={s.title} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center"><Tv2 className="w-5 h-5 text-muted-foreground" /></div>}
+                    {s.poster_url ? (
+                      <img 
+                        src={s.poster_url} 
+                        alt={s.title} 
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          const target = e.currentTarget;
+                          target.style.display = 'none';
+                          const fallback = target.nextElementSibling as HTMLElement;
+                          if (fallback) fallback.style.display = 'flex';
+                        }}
+                      />
+                    ) : null}
+                    <div className={`w-full h-full items-center justify-center ${s.poster_url ? 'hidden' : 'flex'}`}>
+                      <Tv2 className="w-5 h-5 text-muted-foreground" />
+                    </div>
                   </div>
                   <div className="min-w-0">
                     <p className="font-semibold text-foreground text-sm truncate">{s.title}</p>
