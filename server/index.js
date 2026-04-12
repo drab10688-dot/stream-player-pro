@@ -5383,6 +5383,7 @@ app.post('/api/dvr/stop/:channelId', authApk, async (req, res) => {
 });
 
 // API: Servir playlist HLS generada por FFmpeg (m3u8 con URLs absolutas autenticadas)
+// Compatible con VLC, OTT Player, ExoPlayer, LibVLC (RFC 8216)
 app.get('/api/dvr/playlist/:channelId', authApk, (req, res) => {
   const { channelId } = req.params;
   const dvr = activeDVR.get(channelId);
@@ -5392,15 +5393,24 @@ app.get('/api/dvr/playlist/:channelId', authApk, (req, res) => {
   const playlistPath = path.join(channelDir, 'live.m3u8');
   if (!fs.existsSync(playlistPath)) return res.status(404).json({ error: 'Playlist not ready yet' });
 
-  const token = req.headers.authorization?.replace('Bearer ', '') || req.query.token;
-  const baseUrl = `${req.protocol}://${req.get('host')}/api/dvr/file/${channelId}`;
+  const token = req.headers.authorization?.replace('Bearer ', '') || req.query.token || '';
+  // Usar getRequestBaseUrl para compatibilidad con tunnels/proxies
+  const serverBaseUrl = getRequestBaseUrl(req);
+  const fileBaseUrl = `${serverBaseUrl}/api/dvr/file/${channelId}`;
 
-  // Leer m3u8 y reescribir rutas relativas a URLs absolutas con token
+  // Leer m3u8 generado por FFmpeg y reescribir a URLs absolutas
   let m3u8 = fs.readFileSync(playlistPath, 'utf8');
-  // Reemplazar init.mp4
-  m3u8 = m3u8.replace(/^init\.mp4$/gm, `${baseUrl}/init.mp4?token=${token}`);
-  // Reemplazar seg_XXX.m4s
-  m3u8 = m3u8.replace(/^(seg_\d+\.m4s)$/gm, `${baseUrl}/$1?token=${token}`);
+
+  // Reescribir #EXT-X-MAP:URI="init.mp4" → URL absoluta con token
+  m3u8 = m3u8.replace(
+    /#EXT-X-MAP:URI="init\.mp4"/g,
+    `#EXT-X-MAP:URI="${fileBaseUrl}/init.mp4?token=${encodeURIComponent(token)}"`
+  );
+  // Fallback: init.mp4 como línea sola (por si acaso)
+  m3u8 = m3u8.replace(/^init\.mp4$/gm, `${fileBaseUrl}/init.mp4?token=${encodeURIComponent(token)}`);
+
+  // Reescribir segmentos seg_XXX.m4s → URLs absolutas con token
+  m3u8 = m3u8.replace(/^(seg_\d+\.m4s)$/gm, `${fileBaseUrl}/$1?token=${encodeURIComponent(token)}`);
 
   res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
   res.setHeader('Access-Control-Allow-Origin', '*');
