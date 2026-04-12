@@ -466,12 +466,12 @@ if grep -q "streambox-hls.*tmpfs" /etc/fstab 2>/dev/null; then
   log_info "Entrada tmpfs removida de /etc/fstab"
 fi
 
-# Crear directorios en disco SSD
-mkdir -p "$HLS_DIR" "$HLS_CACHE_DIR"
-chmod 777 "$HLS_DIR" "$HLS_CACHE_DIR"
+# Crear directorio DVR en disco
+mkdir -p "$DVR_DIR"
+chmod 777 "$DVR_DIR"
 
-log_ok "Almacenamiento HLS en disco SSD: $HLS_DIR"
-log_info "Capacidad estimada: ~$((DISK_AVAIL_GB / 500 * 1000)) canales keep-alive (30min caché)"
+log_ok "Almacenamiento DVR en disco: $DVR_DIR"
+log_info "Buffer de 5 minutos por canal con segmentos .ts nativos"
 
 # Crear directorio DVR para buffer de 5 minutos (Node.js nativo)
 DVR_DIR="/data/dvr"
