@@ -142,6 +142,62 @@ const channelListCache = {
   }
 };
 
+// =============================================
+// CACHÉ DE AUTENTICACIÓN XTREAM (evita consultar BD en cada segmento/petición)
+// =============================================
+const authCache = new Map(); // key: "user:pass" → { client, expiresAt }
+const AUTH_CACHE_TTL = 30000; // 30 segundos
+
+function getCachedAuth(username, password) {
+  const key = `${username}:${password}`;
+  const entry = authCache.get(key);
+  if (entry && Date.now() < entry.expiresAt) return entry.client;
+  return null;
+}
+
+function setCachedAuth(username, password, client) {
+  const key = `${username}:${password}`;
+  authCache.set(key, { client, expiresAt: Date.now() + AUTH_CACHE_TTL });
+  // Limpieza periódica
+  if (authCache.size > 500) {
+    const now = Date.now();
+    for (const [k, v] of authCache) {
+      if (now >= v.expiresAt) authCache.delete(k);
+    }
+  }
+}
+
+function invalidateAuthCache(username) {
+  for (const [k] of authCache) {
+    if (k.startsWith(`${username}:`)) authCache.delete(k);
+  }
+}
+
+// =============================================
+// CACHÉ DE PLANES (evita consultar BD por categorías en cada petición)
+// =============================================
+const planCache = new Map(); // key: plan_id → { categories, expiresAt }
+const PLAN_CACHE_TTL = 120000; // 2 minutos
+
+async function getCachedPlanCategories(planId) {
+  if (!planId) return null;
+  const entry = planCache.get(planId);
+  if (entry && Date.now() < entry.expiresAt) return entry.categories;
+  try {
+    const { rows } = await pool.query('SELECT categories FROM plans WHERE id = $1', [planId]);
+    const categories = (rows.length > 0 && rows[0].categories && rows[0].categories.length > 0)
+      ? rows[0].categories : null;
+    planCache.set(planId, { categories, expiresAt: Date.now() + PLAN_CACHE_TTL });
+    return categories;
+  } catch {
+    return null;
+  }
+}
+
+function invalidatePlanCache() {
+  planCache.clear();
+}
+
 // Helper: verificar si un canal DVR está "listo" (init.mp4 + al menos 3 segmentos .m4s)
 function isDvrReady(channelId) {
   const channelDir = path.join(DVR_DIR || path.join(__dirname, 'dvr-cache'), channelId);
@@ -718,6 +774,7 @@ app.put('/api/clients/:id', authAdmin, async (req, res) => {
       'UPDATE clients SET username=$1, password=$2, max_screens=$3, expiry_date=$4, is_active=$5, notes=$6, plan_id=$7, vod_enabled=$8 WHERE id=$9 RETURNING *',
       [username, password, max_screens, expiry_date, is_active, notes, plan_id, vod_enabled, req.params.id]
     );
+    invalidateAuthCache(username);
     res.json(rows[0]);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -3072,6 +3129,7 @@ app.put('/api/plans/:id', authAdmin, async (req, res) => {
       'UPDATE plans SET name=$1, description=$2, categories=$3, price=$4, is_active=$5, sort_order=$6 WHERE id=$7 RETURNING *',
       [name, description, categories, price, is_active, sort_order, req.params.id]
     );
+    invalidatePlanCache();
     res.json(rows[0]);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -3080,6 +3138,7 @@ app.put('/api/plans/:id', authAdmin, async (req, res) => {
 
 app.delete('/api/plans/:id', authAdmin, async (req, res) => {
   await pool.query('DELETE FROM plans WHERE id = $1', [req.params.id]);
+  invalidatePlanCache();
   res.json({ ok: true });
 });
 
@@ -3181,6 +3240,10 @@ app.delete('/api/backups/:id', authAdmin, async (req, res) => {
 
 // Helper: authenticate Xtream client
 const xtreamAuth = async (username, password) => {
+  // Verificar caché primero (evita consulta BD en cada segmento HLS)
+  const cached = getCachedAuth(username, password);
+  if (cached) return cached;
+
   const { rows } = await pool.query(
     'SELECT * FROM clients WHERE username = $1 AND password = $2',
     [username, password]
@@ -3189,6 +3252,9 @@ const xtreamAuth = async (username, password) => {
   const client = rows[0];
   if (!client.is_active) return null;
   if (new Date(client.expiry_date) < new Date()) return null;
+
+  // Guardar en caché para evitar consultas repetidas
+  setCachedAuth(username, password, client);
   return client;
 };
 
@@ -3198,11 +3264,10 @@ const getXtreamChannels = async (client) => {
   const allChannels = await channelListCache.get();
   let channels = allChannels.filter(ch => ch.is_active);
 
-  // Filter by plan if client has one
+  // Filter by plan if client has one (usando caché de planes)
   if (client.plan_id) {
-    const { rows: planRows } = await pool.query('SELECT categories FROM plans WHERE id = $1', [client.plan_id]);
-    if (planRows.length > 0 && planRows[0].categories && planRows[0].categories.length > 0) {
-      const allowedCategories = planRows[0].categories;
+    const allowedCategories = await getCachedPlanCategories(client.plan_id);
+    if (allowedCategories) {
       channels = channels.filter(ch => allowedCategories.includes(ch.category));
     }
   }
@@ -3360,7 +3425,14 @@ app.get('/get.php', async (req, res) => {
     channels.forEach(ch => {
       const logoTag = ch.logo_url ? ` tvg-logo="${ch.logo_url}"` : '';
       m3u += `#EXTINF:-1 tvg-id="${ch.id}" tvg-name="${ch.name}"${logoTag} group-title="${ch.category}",${ch.name}\n`;
-      m3u += `${serverUrl}/live/${username}/${password}/${ch.id}.ts\n`;
+      // Usar extensión correcta según tipo de fuente
+      if (ch.dvr_enabled && isDvrReady(ch.id)) {
+        m3u += `${serverUrl}/live/${username}/${password}/${ch.id}.m3u8\n`;
+      } else {
+        const isHlsSource = /\.m3u8?(\?|$)/i.test(ch.url);
+        const ext = isHlsSource ? 'm3u8' : 'ts';
+        m3u += `${serverUrl}/live/${username}/${password}/${ch.id}.${ext}\n`;
+      }
     });
 
     res.set({
