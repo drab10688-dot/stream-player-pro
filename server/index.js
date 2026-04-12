@@ -1267,20 +1267,36 @@ function startTSSegmenter(channelId, sourceUrl, isKeepAlive = false) {
   function writeSegment() {
     if (entry._bufferBytes === 0) return;
 
+    // Alinear a límites de paquetes TS (188 bytes, sync 0x47)
+    let raw = Buffer.concat(entry._buffer);
+    let syncOffset = -1;
+    for (let i = 0; i < Math.min(raw.length, 376); i++) {
+      if (raw[i] === 0x47 && (i + 188 >= raw.length || raw[i + 188] === 0x47)) {
+        syncOffset = i;
+        break;
+      }
+    }
+    if (syncOffset > 0) raw = raw.slice(syncOffset);
+    const fullPackets = Math.floor(raw.length / 188);
+    const aligned = raw.slice(0, fullPackets * 188);
+    // Guardar sobrante para siguiente segmento
+    const leftover = raw.slice(fullPackets * 188);
+
+    if (aligned.length === 0) return;
+
     const segFilename = `seg_${String(entry.segmentIndex).padStart(5, '0')}.ts`;
     const segPath = path.join(channelDir, segFilename);
-    const data = Buffer.concat(entry._buffer);
 
     try {
-      fs.writeFileSync(segPath, data);
+      fs.writeFileSync(segPath, aligned);
     } catch (err) {
       console.error(`❌ [${channelId}] Error escribiendo segmento:`, err.message);
       return;
     }
 
     entry.segmentIndex++;
-    entry._buffer = [];
-    entry._bufferBytes = 0;
+    entry._buffer = leftover.length > 0 ? [leftover] : [];
+    entry._bufferBytes = leftover.length;
 
     // Cleanup old segments
     const allSegs = fs.readdirSync(channelDir)
