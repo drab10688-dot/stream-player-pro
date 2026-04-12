@@ -2992,17 +2992,12 @@ app.get('/api/playlist/:token', async (req, res) => {
       filteredChannels = channels.filter(ch => client.plan_categories.includes(ch.category));
     }
     
-    // REGLA DE ORO: Si un canal tiene DVR activo, solo incluirlo si está "listo"
-    // (init.mp4 + al menos 3 segmentos .m4s existen en disco)
-    filteredChannels = filteredChannels.filter(ch => {
-      if (!ch.dvr_enabled) return true; // Sin DVR, siempre incluir
-      return isDvrReady(ch.id); // Con DVR, solo si está listo
-    });
-    
     // Determinar base URL para los streams
     const baseUrl = getRequestBaseUrl(req);
     
     // Generar M3U compatible con OTT Player, VLC, TiviMate, IPTV Smarters, Smart IPTV
+    // TODOS los canales activos se incluyen siempre. Si DVR está activo Y listo, usa DVR.
+    // Si DVR está activo pero NO listo, usa stream directo como fallback.
     let m3u = '#EXTM3U\n';
     
     for (const ch of filteredChannels) {
@@ -3012,10 +3007,11 @@ app.get('/api/playlist/:token', async (req, res) => {
 
       m3u += `#EXTINF:-1 tvg-id="${ch.id}" tvg-name="${ch.name}" tvg-logo="${logoUrl}" group-title="${ch.category}",${ch.name}\n`;
 
-      if (ch.dvr_enabled) {
-        // DVR activo: apuntar a la playlist DVR local (fMP4/HLS) con autenticación por credenciales
+      if (ch.dvr_enabled && isDvrReady(ch.id)) {
+        // DVR activo Y listo: usar playlist DVR local (fMP4/HLS)
         m3u += `${baseUrl}/live/${encodeURIComponent(client.username)}/${encodeURIComponent(client.password)}/${ch.id}.m3u8\n`;
       } else {
+        // Sin DVR o DVR no listo: usar stream directo
         const isHlsSource = /\.m3u8?(\?|$)/i.test(ch.url);
         const outputExt = isHlsSource ? 'm3u8' : 'ts';
         m3u += `${baseUrl}/live/${encodeURIComponent(client.username)}/${encodeURIComponent(client.password)}/${ch.id}.${outputExt}\n`;
