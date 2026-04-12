@@ -130,13 +130,25 @@ echo -e "\n${CYAN}═══ FASE 2: CORRECCIÓN ═══${NC}\n"
 
 echo -e "${YELLOW}FIX 0: Verificando FFmpeg real para la API...${NC}"
 if [ -z "$FFMPEG_BIN" ]; then
-  apt update -y >/dev/null 2>&1 || true
-  apt install -y ffmpeg >/dev/null 2>&1 || true
+  APT_LOG="/tmp/omnisync-fix-ffmpeg.log"
+  : > "$APT_LOG"
+  apt update -y >> "$APT_LOG" 2>&1 || true
+  if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    if [ "${ID:-}" = "ubuntu" ]; then
+      DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common >> "$APT_LOG" 2>&1 || true
+      add-apt-repository -y universe >> "$APT_LOG" 2>&1 || true
+      apt update -y >> "$APT_LOG" 2>&1 || true
+    fi
+  fi
+  apt install -y ffmpeg >> "$APT_LOG" 2>&1 || true
   FFMPEG_BIN="$(resolve_ffmpeg_bin || true)"
 fi
 
 if [ -z "$FFMPEG_BIN" ]; then
   echo -e "${RED}❌ FFmpeg no quedó instalado correctamente${NC}"
+  echo "Revisa: /tmp/omnisync-fix-ffmpeg.log"
+  apt-cache policy ffmpeg 2>/dev/null || true
   exit 1
 fi
 
