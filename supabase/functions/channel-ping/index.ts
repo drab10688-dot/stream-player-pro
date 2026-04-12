@@ -122,7 +122,7 @@ Deno.serve(async (req) => {
           return {
             id: ch.id, name: ch.name, category: ch.category, logo_url: ch.logo_url,
             status: "offline", response_time: Date.now() - start, status_code: 0,
-            error: err.message || "Connection failed",
+            error: (err as Error).message || "Connection failed",
             was_auto_disabled: ch.auto_disabled, consecutive_failures: ch.consecutive_failures,
           };
         }
@@ -194,7 +194,7 @@ Deno.serve(async (req) => {
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
-    return new Response(JSON.stringify({ error: error.message }), {
+    return new Response(JSON.stringify({ error: (error as Error).message }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
