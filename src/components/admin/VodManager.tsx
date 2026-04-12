@@ -263,12 +263,21 @@ const VodManager = () => {
                 <div className="flex items-center gap-3 flex-1 min-w-0">
                   <div className="w-16 h-10 rounded-lg bg-secondary/60 overflow-hidden shrink-0">
                     {item.poster_url ? (
-                      <img src={item.poster_url} alt={item.title} className="w-full h-full object-cover" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center">
-                        <Film className="w-5 h-5 text-muted-foreground" />
-                      </div>
-                    )}
+                      <img 
+                        src={item.poster_url} 
+                        alt={item.title} 
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          const target = e.currentTarget;
+                          target.style.display = 'none';
+                          const fallback = target.nextElementSibling as HTMLElement;
+                          if (fallback) fallback.style.display = 'flex';
+                        }}
+                      />
+                    ) : null}
+                    <div className={`w-full h-full items-center justify-center ${item.poster_url ? 'hidden' : 'flex'}`}>
+                      <Film className="w-5 h-5 text-muted-foreground" />
+                    </div>
                   </div>
                   <div className="min-w-0">
                     <p className="font-semibold text-foreground text-sm truncate">{item.title}</p>
