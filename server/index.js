@@ -97,7 +97,15 @@ const pool = new Pool({
   password: 'tu_password_seguro',
 });
 
-const isSnapFfmpegPath = (value) => typeof value === 'string' && value.includes('/snap/bin/ffmpeg');
+const isSnapFfmpegPath = (value) => {
+  if (typeof value !== 'string') return false;
+  const normalized = value.trim();
+  return normalized.includes('/snap/bin/ffmpeg') || normalized.startsWith('/snap/');
+};
+
+function sanitizeExecutablePath(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
 
 const FFMPEG_ENV = {
   ...process.env,
@@ -115,18 +123,36 @@ const FFMPEG_ENV = {
 };
 
 function ffmpegPathExists(p) {
-  if (!p || isSnapFfmpegPath(p)) return false;
-  try { return fs.existsSync(p); } catch { return false; }
+  const resolvedPath = sanitizeExecutablePath(p);
+  if (!resolvedPath || isSnapFfmpegPath(resolvedPath)) return false;
+  try { return fs.existsSync(resolvedPath); } catch { return false; }
 }
 
 function ffmpegPathExecutable(p) {
-  if (!p || isSnapFfmpegPath(p)) return false;
+  const resolvedPath = sanitizeExecutablePath(p);
+  if (!resolvedPath || isSnapFfmpegPath(resolvedPath)) return false;
   try {
-    fs.accessSync(p, fs.constants.X_OK);
+    fs.accessSync(resolvedPath, fs.constants.X_OK);
     return true;
   } catch {
     return false;
   }
+}
+
+function getFfmpegDiagnostics() {
+  const configuredPath = sanitizeExecutablePath(process.env.FFMPEG_PATH);
+  const resolvedPath = sanitizeExecutablePath(resolveNativeFfmpegBinary() || '');
+
+  return {
+    configuredPath,
+    resolvedPath,
+    exists: ffmpegPathExists(resolvedPath),
+    executable: ffmpegPathExecutable(resolvedPath),
+    isSnapBlocked: Boolean(
+      (configuredPath && isSnapFfmpegPath(configuredPath)) ||
+      (resolvedPath && isSnapFfmpegPath(resolvedPath))
+    ),
+  };
 }
 
 function resolveNativeFfmpegBinary() {
@@ -178,8 +204,9 @@ function requireFfmpegBinary(contextLabel) {
     return FFMPEG_BIN;
   }
 
+  const diagnostics = getFfmpegDiagnostics();
   const message = 'FFmpeg no instalado en el sistema operativo';
-  console.error(`❌ ${message} (${contextLabel})`);
+  console.error(`❌ ${message} (${contextLabel})`, diagnostics);
   throw new Error(message);
 }
 
@@ -5600,13 +5627,14 @@ function startDVR(channelId, sourceUrl) {
   const dvr = {
     viewers: 1,
     lastAccess: Date.now(),
-    recording: true,
+    recording: false,
     ffmpeg: null,
     idleTimer: null,
     startedAt: Date.now(),
     restartCount: 0,
     sourceUrl: normalizedUrl,
     preWarmed: false,
+    ffmpegReady: false,
   };
 
   // Limpiar segmentos viejos al iniciar
@@ -5640,16 +5668,29 @@ function startDVR(channelId, sourceUrl) {
   console.log(`📹 [DVR ${channelId}] Iniciando FFmpeg HLS nativo (.ts) con: ${ffmpegBin}`);
   const ffmpeg = spawnFfmpegOrThrow(`DVR ${channelId}`, ffmpegArgs, { cwd: channelDir });
   dvr.ffmpeg = ffmpeg;
+  dvr.recording = true;
 
   ffmpeg.stderr.on('data', (data) => {
     const msg = data.toString().trim();
-    if (/error|failed|Connection refused|404|403|Invalid data|No such file|ENOENT/i.test(msg)) {
+    if (/Opening|Stream mapping|Press \[q\]|Output #0|frame=/i.test(msg)) {
+      dvr.ffmpegReady = true;
+    }
+    if (/error|failed|Connection refused|404|403|Invalid data|No such file|ENOENT|unable to open display|Operation not permitted/i.test(msg)) {
       console.error(`📹 [DVR ${channelId}] ${msg}`);
       logDvrError(channelId, msg, 'ffmpeg_stderr');
     }
   });
 
+  ffmpeg.stdout.on('data', (data) => {
+    const msg = data.toString().trim();
+    if (/frame=|Output #0|Opening/i.test(msg)) {
+      dvr.ffmpegReady = true;
+    }
+  });
+
   ffmpeg.on('close', (code) => {
+    dvr.recording = false;
+    dvr.ffmpegReady = false;
     console.log(`📹 [DVR ${channelId}] FFmpeg terminó (code ${code})`);
     logDvrError(channelId, `FFmpeg exit code ${code}`, 'exit');
 
@@ -5675,6 +5716,8 @@ function startDVR(channelId, sourceUrl) {
   });
 
   ffmpeg.on('error', (err) => {
+    dvr.recording = false;
+    dvr.ffmpegReady = false;
     console.error(`📹 [DVR ${channelId}] Error FFmpeg:`, err.message);
     logDvrError(channelId, `spawn error: ${err.message}`, 'spawn');
   });
@@ -5700,7 +5743,10 @@ app.post('/api/dvr/start/:channelId', authApk, async (req, res) => {
     if (rows.length === 0) return res.status(404).json({ error: 'Canal no encontrado o DVR deshabilitado' });
     const channel = rows[0];
     const dvr = startDVR(channelId, channel.url);
-    res.json({ ok: true, recording: true, segmentDuration: DVR_SEGMENT_SECONDS, bufferSeconds: DVR_BUFFER_SECONDS, format: 'ts' });
+    if (!dvr) {
+      return res.status(500).json({ error: 'No se pudo iniciar DVR: FFmpeg no disponible o URL inválida' });
+    }
+    res.json({ ok: true, recording: dvr.recording, segmentDuration: DVR_SEGMENT_SECONDS, bufferSeconds: DVR_BUFFER_SECONDS, format: 'ts' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -5849,19 +5895,21 @@ app.get('/api/admin/dvr/status', authAdmin, async (req, res) => {
     const errors = dvrErrorLog.get(ch.id) || [];
     const lastError = errors.length > 0 ? errors[errors.length - 1] : null;
     
-    status.push({
+      const hasPlaylist = fs.existsSync(path.join(channelDir, 'live.m3u8'));
+      const isReady = hasPlaylist && isDvrReady(ch.id);
+      status.push({
       channelId: ch.id,
       channelName: ch.name,
       viewers: dvr ? dvr.viewers : 0,
       segments: segCount,
-      recording: dvr ? dvr.recording : false,
+        recording: dvr ? (dvr.recording && !!dvr.ffmpeg && (dvr.ffmpegReady || segCount > 0 || hasPlaylist)) : false,
       restarts: dvr ? (dvr.restartCount || 0) : 0,
       uptime: dvr ? Math.floor((Date.now() - dvr.startedAt) / 1000) : 0,
       sizeMB: Math.round(totalSize / 1024 / 1024 * 100) / 100,
       format: 'ts',
       enabled: true,
-      active: !!dvr,
-      ready: isDvrReady(ch.id),
+        active: !!dvr && (dvr.recording || segCount > 0 || hasPlaylist),
+        ready: isReady,
       lastError: lastError ? lastError.message : null,
       lastErrorAt: lastError ? lastError.timestamp : null,
       errorCount: errors.length,
@@ -5878,17 +5926,19 @@ app.get('/api/admin/dvr/status', authAdmin, async (req, res) => {
         segCount = files.filter(f => f.endsWith('.ts') && f.startsWith('segment')).length;
         files.forEach(f => { try { totalSize += fs.statSync(path.join(channelDir, f)).size; } catch {} });
       } catch {}
+      const hasPlaylist = fs.existsSync(path.join(channelDir, 'live.m3u8'));
       status.push({
         channelId,
         viewers: dvr.viewers,
         segments: segCount,
-        recording: dvr.recording,
+        recording: dvr.recording && !!dvr.ffmpeg && (dvr.ffmpegReady || segCount > 0 || hasPlaylist),
         restarts: dvr.restartCount || 0,
         uptime: Math.floor((Date.now() - dvr.startedAt) / 1000),
         sizeMB: Math.round(totalSize / 1024 / 1024 * 100) / 100,
         format: 'ts',
         enabled: true,
-        active: true,
+        active: dvr.recording || segCount > 0 || hasPlaylist,
+        ready: hasPlaylist && isDvrReady(channelId),
       });
     }
   });
@@ -5898,6 +5948,8 @@ app.get('/api/admin/dvr/status', authAdmin, async (req, res) => {
 
 // API Admin: Diagnóstico DVR detallado
 app.get('/api/admin/dvr/diagnostics', authAdmin, async (req, res) => {
+  const ffmpegDiagnostics = getFfmpegDiagnostics();
+  FFMPEG_BIN = ffmpegDiagnostics.resolvedPath || null;
   const channelId = req.query.channelId;
   
   if (channelId) {
@@ -5909,15 +5961,18 @@ app.get('/api/admin/dvr/diagnostics', authAdmin, async (req, res) => {
     
     return res.json({
       channelId,
-      ffmpegBin: FFMPEG_BIN,
-      ffmpegExists: ffmpegPathExists(FFMPEG_BIN),
+      ffmpegBin: ffmpegDiagnostics.resolvedPath || ffmpegDiagnostics.configuredPath || 'no encontrado',
+      ffmpegExists: ffmpegDiagnostics.exists && ffmpegDiagnostics.executable,
+      ffmpegExecutable: ffmpegDiagnostics.executable,
+      ffmpegConfiguredPath: ffmpegDiagnostics.configuredPath || null,
+      ffmpegSnapBlocked: ffmpegDiagnostics.isSnapBlocked,
       channelDir,
       channelDirExists: fs.existsSync(channelDir),
       hasPlaylist: files.includes('live.m3u8'),
       segments: files.filter(f => f.endsWith('.ts') && f.startsWith('segment')).length,
       allFiles: files,
-      isActive: !!dvr,
-      isRecording: dvr ? dvr.recording : false,
+      isActive: !!dvr && (dvr.recording || files.includes('live.m3u8')),
+      isRecording: dvr ? (dvr.recording && !!dvr.ffmpeg && (dvr.ffmpegReady || files.includes('live.m3u8'))) : false,
       restartCount: dvr ? dvr.restartCount : 0,
       preWarmed: dvr ? dvr.preWarmed : false,
       sourceUrl: dvr ? dvr.sourceUrl : null,
@@ -5939,8 +5994,11 @@ app.get('/api/admin/dvr/diagnostics', authAdmin, async (req, res) => {
   summary.sort((a, b) => b.errorCount - a.errorCount);
   
   res.json({
-    ffmpegBin: FFMPEG_BIN,
-    ffmpegExists: ffmpegPathExists(FFMPEG_BIN),
+    ffmpegBin: ffmpegDiagnostics.resolvedPath || ffmpegDiagnostics.configuredPath || 'no encontrado',
+    ffmpegExists: ffmpegDiagnostics.exists && ffmpegDiagnostics.executable,
+    ffmpegExecutable: ffmpegDiagnostics.executable,
+    ffmpegConfiguredPath: ffmpegDiagnostics.configuredPath || null,
+    ffmpegSnapBlocked: ffmpegDiagnostics.isSnapBlocked,
     dvrDir: DVR_DIR,
     activeCount: activeDVR.size,
     channelsWithErrors: summary.length,
