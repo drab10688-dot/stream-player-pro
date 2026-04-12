@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS channels (
   consecutive_failures INTEGER NOT NULL DEFAULT 0,
   auto_disabled BOOLEAN NOT NULL DEFAULT false,
   last_checked_at TIMESTAMP WITH TIME ZONE,
+  dvr_enabled BOOLEAN NOT NULL DEFAULT false,
   created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
 );
 
