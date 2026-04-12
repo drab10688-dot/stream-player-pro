@@ -25,6 +25,18 @@ fi
 
 SERVER_DIR=$(dirname "$INDEX_JS")
 
+resolve_ffmpeg_bin() {
+  for candidate in "${FFMPEG_PATH:-}" "$(command -v ffmpeg 2>/dev/null)" /usr/bin/ffmpeg /usr/local/bin/ffmpeg /bin/ffmpeg /snap/bin/ffmpeg; do
+    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+FFMPEG_BIN="$(resolve_ffmpeg_bin || true)"
+
 echo -e "\n${CYAN}═══ FASE 1: DIAGNÓSTICO ═══${NC}\n"
 
 # 1. Estado de PM2
@@ -33,7 +45,12 @@ pm2 list 2>/dev/null || echo "PM2 no instalado o no corriendo"
 
 # 2. FFmpeg versión
 echo -e "\n${YELLOW}2. FFmpeg:${NC}"
-ffmpeg -version 2>/dev/null | head -1 || echo "FFmpeg NO instalado"
+if [ -n "$FFMPEG_BIN" ]; then
+  echo "Ruta: $FFMPEG_BIN"
+  "$FFMPEG_BIN" -version 2>/dev/null | head -1
+else
+  echo "FFmpeg NO instalado o fuera de PATH"
+fi
 
 # 3. PostgreSQL
 echo -e "\n${YELLOW}3. PostgreSQL:${NC}"
@@ -82,11 +99,19 @@ done
 
 # 9. Verificar si FFmpeg soporta var_stream_map
 echo -e "\n${YELLOW}9. Soporte var_stream_map:${NC}"
-ffmpeg -h muxer=hls 2>/dev/null | grep -q "var_stream_map" && echo -e "${GREEN}Soportado${NC}" || echo -e "${RED}NO soportado - esto causa crash en canales no-DVR${NC}"
+if [ -n "$FFMPEG_BIN" ] && "$FFMPEG_BIN" -h muxer=hls 2>/dev/null | grep -q "var_stream_map"; then
+  echo -e "${GREEN}Soportado${NC}"
+else
+  echo -e "${RED}NO soportado - esto causa crash en canales no-DVR${NC}"
+fi
 
 # 10. Verificar opciones de reconnect
 echo -e "\n${YELLOW}10. Soporte reconnect_on_http_error:${NC}"
-ffmpeg -help 2>/dev/null | grep -q "reconnect_on_http_error" && echo -e "${GREEN}Soportado${NC}" || echo -e "${YELLOW}NO soportado - puede causar crash en DVR${NC}"
+if [ -n "$FFMPEG_BIN" ] && "$FFMPEG_BIN" -help 2>/dev/null | grep -q "reconnect_on_http_error"; then
+  echo -e "${GREEN}Soportado${NC}"
+else
+  echo -e "${YELLOW}NO soportado - puede causar crash en DVR${NC}"
+fi
 
 echo -e "\n${YELLOW}11. Verificando URL de un canal de ejemplo:${NC}"
 SAMPLE_URL=$(sudo -u postgres psql -d streambox -t -c "SELECT url FROM channels WHERE is_active = true LIMIT 1;" 2>/dev/null | tr -d ' ')
@@ -102,6 +127,20 @@ if [ -n "$SAMPLE_URL" ]; then
 fi
 
 echo -e "\n${CYAN}═══ FASE 2: CORRECCIÓN ═══${NC}\n"
+
+echo -e "${YELLOW}FIX 0: Verificando FFmpeg real para la API...${NC}"
+if [ -z "$FFMPEG_BIN" ]; then
+  apt update -y >/dev/null 2>&1 || true
+  apt install -y ffmpeg >/dev/null 2>&1 || true
+  FFMPEG_BIN="$(resolve_ffmpeg_bin || true)"
+fi
+
+if [ -z "$FFMPEG_BIN" ]; then
+  echo -e "${RED}❌ FFmpeg no quedó instalado correctamente${NC}"
+  exit 1
+fi
+
+echo -e "${GREEN}FFmpeg detectado en: $FFMPEG_BIN${NC}"
 
 # Backup
 echo -e "${YELLOW}Creando backup de index.js...${NC}"
@@ -218,7 +257,7 @@ fi
 # ── FIX 6: Reiniciar PM2 ──
 echo -e "\n${YELLOW}FIX 6: Reiniciando PM2...${NC}"
 cd "$SERVER_DIR"
-pm2 restart streambox-api 2>/dev/null || pm2 start index.js --name streambox-api
+FFMPEG_PATH="$FFMPEG_BIN" PATH="$PATH:/usr/local/bin:/usr/bin:/bin:/snap/bin" pm2 restart streambox-api --update-env 2>/dev/null || FFMPEG_PATH="$FFMPEG_BIN" PATH="$PATH:/usr/local/bin:/usr/bin:/bin:/snap/bin" pm2 start index.js --name streambox-api
 sleep 3
 
 echo -e "\n${CYAN}═══ FASE 3: VERIFICACIÓN ═══${NC}\n"
