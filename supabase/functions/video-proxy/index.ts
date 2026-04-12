@@ -74,10 +74,10 @@ Deno.serve(async (req) => {
     });
   } catch (error) {
     // Don't log abort errors as they're expected for live streams
-    if ((error as Error).name !== "AbortError") {
+    if (error.name !== "AbortError") {
       console.error("Proxy error:", error);
     }
-    return new Response(JSON.stringify({ error: (error as Error).message }), {
+    return new Response(JSON.stringify({ error: error.message }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
