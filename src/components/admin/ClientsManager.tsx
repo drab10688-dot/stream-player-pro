@@ -125,7 +125,7 @@ const ClientsManager = () => {
           toast({ title: 'Cliente creado' });
         }
       }
-      setForm({ username: '', password: '', max_screens: 1, expiry_date: '', notes: '', plan_id: '', vod_enabled: false });
+      setForm({ username: '', password: '', max_screens: 1, expiry_date: '', notes: '', plan_id: '', vod_enabled: false, never_expires: false });
       setShowForm(false);
       setEditingId(null);
       fetchClients();
@@ -135,14 +135,16 @@ const ClientsManager = () => {
   };
 
   const handleEdit = (c: Client) => {
+    const neverExpires = c.expiry_date.startsWith('2099');
     setForm({
       username: c.username,
       password: c.password,
       max_screens: c.max_screens,
-      expiry_date: c.expiry_date.split('T')[0],
+      expiry_date: neverExpires ? '' : c.expiry_date.split('T')[0],
       notes: c.notes || '',
       plan_id: c.plan_id || '',
       vod_enabled: (c as any).vod_enabled || false,
+      never_expires: neverExpires,
     });
     setEditingId(c.id);
     setShowForm(true);
@@ -251,7 +253,7 @@ const ClientsManager = () => {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="font-display font-semibold text-xl text-foreground">Clientes ({clients.length})</h2>
-        <Button onClick={() => { setShowForm(true); setEditingId(null); setForm({ username: '', password: '', max_screens: 1, expiry_date: '', notes: '', plan_id: '', vod_enabled: false }); }} className="gradient-primary text-primary-foreground gap-2">
+        <Button onClick={() => { setShowForm(true); setEditingId(null); setForm({ username: '', password: '', max_screens: 1, expiry_date: '', notes: '', plan_id: '', vod_enabled: false, never_expires: false }); }} className="gradient-primary text-primary-foreground gap-2">
           <Plus className="w-4 h-4" /> Nuevo Cliente
         </Button>
       </div>
