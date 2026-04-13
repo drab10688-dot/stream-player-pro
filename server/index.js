@@ -2745,7 +2745,11 @@ app.get('/api/stats', authAdmin, async (req, res) => {
 app.get('/api/streams/active', authAdmin, async (req, res) => {
   try {
     const streams = [];
+    const seen = new Set();
+
+    // HLS Proxy entries (activeTranscoders)
     for (const [channelId, entry] of activeTranscoders) {
+      seen.add(channelId);
       const { rows } = await pool.query('SELECT name, url FROM channels WHERE id = $1', [channelId]);
       const channelName = rows.length > 0 ? rows[0].name : 'Desconocido';
       const sourceUrl = rows.length > 0 ? rows[0].url : entry.sourceUrl || 'N/A';
@@ -2753,18 +2757,62 @@ app.get('/api/streams/active', authAdmin, async (req, res) => {
       streams.push({
         channel_id: channelId,
         channel_name: channelName,
-        type: entry.type,
+        type: entry.type || 'hls-proxy',
         clients: Math.max(0, entry.clients),
         ready: entry.ready !== undefined ? entry.ready : true,
         keep_alive: entry.keepAlive || false,
         uptime_seconds: Math.floor((Date.now() - entry.lastAccess) / 1000),
         source_url: sourceUrl.substring(0, 60) + (sourceUrl.length > 60 ? '...' : ''),
+        dvr_active: activeDVR.has(channelId),
       });
     }
+
+    // Pipe Proxy entries (activePipes) - TS streams
+    for (const [channelId, pipe] of activePipes) {
+      if (seen.has(channelId)) continue;
+      seen.add(channelId);
+      const { rows } = await pool.query('SELECT name, url FROM channels WHERE id = $1', [channelId]);
+      const channelName = rows.length > 0 ? rows[0].name : 'Desconocido';
+      const sourceUrl = rows.length > 0 ? rows[0].url : 'N/A';
+
+      streams.push({
+        channel_id: channelId,
+        channel_name: channelName,
+        type: 'pipe-proxy',
+        clients: pipe.clients ? pipe.clients.size : 0,
+        ready: true,
+        keep_alive: pipe.keepAlive || false,
+        uptime_seconds: pipe.lastDataAt ? Math.floor((Date.now() - pipe.lastDataAt) / 1000) : 0,
+        source_url: sourceUrl.substring(0, 60) + (sourceUrl.length > 60 ? '...' : ''),
+        dvr_active: activeDVR.has(channelId),
+      });
+    }
+
+    // DVR-only entries (no pipe/transcoder active, e.g. pre-warm)
+    for (const [channelId, dvr] of activeDVR) {
+      if (seen.has(channelId)) continue;
+      seen.add(channelId);
+      const { rows } = await pool.query('SELECT name, url FROM channels WHERE id = $1', [channelId]);
+      const channelName = rows.length > 0 ? rows[0].name : 'Desconocido';
+
+      streams.push({
+        channel_id: channelId,
+        channel_name: channelName,
+        type: 'dvr-only',
+        clients: dvr.viewers || 0,
+        ready: dvr.ready || false,
+        keep_alive: dvr.preWarmed || false,
+        uptime_seconds: dvr.startedAt ? Math.floor((Date.now() - dvr.startedAt) / 1000) : 0,
+        source_url: (dvr.sourceUrl || 'N/A').substring(0, 60),
+        dvr_active: true,
+      });
+    }
+
+    const totalClients = streams.reduce((sum, s) => sum + s.clients, 0);
     
     res.json({
       total_streams: streams.length,
-      total_clients_watching: streams.reduce((sum, s) => sum + s.clients, 0),
+      total_clients_watching: totalClients,
       origin_connections: streams.length,
       streams,
     });
