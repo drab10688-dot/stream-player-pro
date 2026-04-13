@@ -2096,15 +2096,6 @@ app.get('/api/stream-pipe/:channelId', async (req, res) => {
         for (const client of pipe.clients) {
           try { client.write(chunk); } catch { pipe.clients.delete(client); }
         }
-        // DVR tap: forward data to DVR if active for this channel
-        if (activeDVR.has(channelId)) {
-          const dvr = activeDVR.get(channelId);
-          if (dvr && dvr.recording && dvr._pipeTap) {
-            dvr._buffer.push(chunk);
-            dvr._bufferBytes += chunk.length;
-            if (dvr._processData) dvr._processData();
-          }
-        }
       });
 
       sourceRes.on('end', () => {
@@ -2116,38 +2107,6 @@ app.get('/api/stream-pipe/:channelId', async (req, res) => {
           }
           activePipes.delete(channelId);
         }
-        // Notify DVR tap that pipe ended
-        if (activeDVR.has(channelId)) {
-          const dvr = activeDVR.get(channelId);
-          if (dvr && dvr._pipeTap) {
-            dvr._pipeTap = false;
-            console.log(`⚠️ [DVR ${channelId}] Pipe cerró, DVR intentará reconectar`);
-            if (dvr.segmentTimer) { clearInterval(dvr.segmentTimer); dvr.segmentTimer = null; }
-            // Retry: wait for pipe to restart or open own connection
-            const shouldRetry = dvr.viewers > 0 || dvr.preWarmed;
-            if (shouldRetry) {
-              setTimeout(() => {
-                if (activePipes.has(channelId)) {
-                  dvr._pipeTap = true;
-                  dvr._segStartTime = Date.now();
-                  dvr._segAccum = [];
-                  dvr._segAccumBytes = 0;
-                  dvr.segmentTimer = setInterval(() => {
-                    if (dvr._segAccumBytes > 0) {
-                      const elapsed = (Date.now() - dvr._segStartTime) / 1000;
-                      if (elapsed >= DVR_SEGMENT_SECONDS * 2.5 && dvr._processData) dvr._processData();
-                    }
-                  }, DVR_SEGMENT_SECONDS * 1000);
-                  console.log(`✅ [DVR ${channelId}] Re-tapeando pipe proxy`);
-                }
-              }, 5000);
-            }
-          }
-        }
-      });
-
-      sourceRes.on('error', (err) => {
-        console.error(`❌ [${channelId}] Pipe: error origen:`, err.message);
         activePipes.delete(channelId);
       });
     });
