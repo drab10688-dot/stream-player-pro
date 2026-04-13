@@ -545,6 +545,17 @@ const ChannelsManager = () => {
                     </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
+                    {!isLovablePreview() && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => toggleKeepAlive(ch.id, !cache?.transcoder_active)}
+                        className={cache?.transcoder_active ? 'text-primary hover:text-destructive' : 'text-muted-foreground hover:text-primary'}
+                        title={cache?.transcoder_active ? 'Desactivar (volver a bajo demanda)' : 'Activar conexión permanente'}
+                      >
+                        {cache?.transcoder_active ? <Zap className="w-4 h-4" /> : <ZapOff className="w-4 h-4" />}
+                      </Button>
+                    )}
                     <Button variant="ghost" size="icon" onClick={() => handleEdit(ch)} className="text-muted-foreground hover:text-primary">
                       <Edit2 className="w-4 h-4" />
                     </Button>
