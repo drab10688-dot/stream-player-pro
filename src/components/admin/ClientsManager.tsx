@@ -344,7 +344,7 @@ const ClientsManager = () => {
                     <p className="font-semibold text-foreground text-sm">{c.username}</p>
                     <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
                       <span className="flex items-center gap-1"><Monitor className="w-3 h-3" /> {c.max_screens} pantallas</span>
-                      <span>Expira: {format(new Date(c.expiry_date), 'dd/MM/yyyy')}</span>
+                      <span>{isNeverExpires(c.expiry_date) ? '∞ No vence' : `Expira: ${format(new Date(c.expiry_date), 'dd/MM/yyyy')}`}</span>
                       {c.plan_id && plans.find(p => p.id === c.plan_id) && (
                         <Badge variant="secondary" className="text-[10px] py-0 gap-1">
                           <Package className="w-2.5 h-2.5" /> {plans.find(p => p.id === c.plan_id)?.name}
