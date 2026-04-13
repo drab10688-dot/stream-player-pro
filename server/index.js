@@ -2124,6 +2124,15 @@ app.get('/api/stream-pipe/:channelId', async (req, res) => {
         for (const client of pipe.clients) {
           try { client.write(chunk); } catch { pipe.clients.delete(client); }
         }
+        // DVR tap: forward data to DVR if active for this channel
+        if (activeDVR.has(channelId)) {
+          const dvr = activeDVR.get(channelId);
+          if (dvr && dvr.recording && dvr._pipeTap) {
+            dvr._buffer.push(chunk);
+            dvr._bufferBytes += chunk.length;
+            if (dvr._processData) dvr._processData();
+          }
+        }
       });
 
       sourceRes.on('end', () => {
