@@ -91,15 +91,15 @@ const ClientsManager = () => {
   useEffect(() => { fetchClients(); fetchPlans(); fetchTunnelStatus(); }, []);
 
   const handleSave = async () => {
-    if (!form.username.trim() || !form.password.trim() || !form.expiry_date) {
-      toast({ title: 'Error', description: 'Completa usuario, contraseña y fecha', variant: 'destructive' });
+    if (!form.username.trim() || !form.password.trim() || (!form.never_expires && !form.expiry_date)) {
+      toast({ title: 'Error', description: 'Completa usuario, contraseña y fecha (o marca "No vence")', variant: 'destructive' });
       return;
     }
     const payload: any = {
       username: form.username.trim(),
       password: form.password.trim(),
       max_screens: form.max_screens,
-      expiry_date: form.expiry_date,
+      expiry_date: form.never_expires ? '2099-12-31' : form.expiry_date,
       notes: form.notes.trim() || null,
       plan_id: form.plan_id || null,
       vod_enabled: form.vod_enabled,
