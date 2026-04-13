@@ -6360,6 +6360,50 @@ app.put('/api/admin/channels/:id/dvr', authAdmin, async (req, res) => {
   }
 });
 
+// API Admin: Toggle DVR keep_alive (siempre activo vs por demanda)
+app.put('/api/admin/channels/:id/dvr-mode', authAdmin, async (req, res) => {
+  try {
+    const { keep_alive } = req.body;
+    const { rows } = await pool.query(
+      'UPDATE channels SET keep_alive = $1 WHERE id = $2 AND dvr_enabled = true RETURNING id, name, keep_alive',
+      [!!keep_alive, req.params.id]
+    );
+    if (rows.length === 0) return res.status(404).json({ error: 'Canal no encontrado o DVR no habilitado' });
+    
+    const channelId = req.params.id;
+    const dvr = activeDVR.get(channelId);
+    
+    if (keep_alive) {
+      // Cambió a siempre activo → pre-warm si no está activo
+      if (dvr) {
+        dvr.preWarmed = true;
+        if (dvr.idleTimer) { clearTimeout(dvr.idleTimer); dvr.idleTimer = null; }
+      } else {
+        // Iniciar DVR
+        const { rows: chRows } = await pool.query('SELECT url FROM channels WHERE id = $1', [channelId]);
+        if (chRows.length > 0) {
+          const newDvr = startDVR(channelId, chRows[0].url);
+          if (newDvr) { newDvr.viewers = 0; newDvr.preWarmed = true; }
+        }
+      }
+    } else {
+      // Cambió a por demanda → si no hay viewers, apagar
+      if (dvr) {
+        dvr.preWarmed = false;
+        if (dvr.viewers <= 0) {
+          console.log(`📹 [DVR ${channelId}] Cambiado a por demanda, sin viewers → apagando`);
+          stopDVR(channelId);
+        }
+      }
+    }
+    
+    channelListCache.invalidate();
+    res.json({ ...rows[0], mode: keep_alive ? 'always_on' : 'on_demand' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // API Admin: Activar DVR en TODOS los canales
 app.post('/api/admin/dvr/enable-all', authAdmin, async (req, res) => {
   try {
