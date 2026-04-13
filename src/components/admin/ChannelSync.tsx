@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
-import { apiGet, apiPost } from '@/lib/api';
+import { apiPost } from '@/lib/api';
 import { isLovablePreview } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
@@ -11,25 +11,21 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { copyToClipboard } from '@/lib/clipboard';
-import { Upload, Download, Link, Copy, Check, Loader2, ArrowRightLeft, Globe, FileText, Shield, Video, Clock } from 'lucide-react';
+import { Upload, Download, Link, Copy, Check, Loader2, ArrowRightLeft, Globe, FileText, Shield, Clock } from 'lucide-react';
 
 const ChannelSync = () => {
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
 
-  // Export
   const [exportToken, setExportToken] = useState('');
   const [exportCount, setExportCount] = useState(0);
-  const [exportDvrCount, setExportDvrCount] = useState(0);
   const [expiresHours, setExpiresHours] = useState('24');
   const [copied, setCopied] = useState(false);
 
-  // Import via token
   const [importToken, setImportToken] = useState('');
   const [importMode, setImportMode] = useState<'merge' | 'replace'>('merge');
   const [importResult, setImportResult] = useState<any>(null);
 
-  // Pull from remote
   const [remoteUrl, setRemoteUrl] = useState('');
   const [remoteAdminToken, setRemoteAdminToken] = useState('');
   const [pullMode, setPullMode] = useState<'merge' | 'replace'>('merge');
@@ -65,8 +61,7 @@ const ChannelSync = () => {
       }
       setExportToken(result.export_token);
       setExportCount(result.channels_count);
-      setExportDvrCount(result.dvr_channels || 0);
-      toast({ title: '✅ Exportación lista', description: `${result.channels_count} canales (${result.dvr_channels || 0} con DVR). Expira en ${expiresHours}h` });
+      toast({ title: '✅ Exportación lista', description: `${result.channels_count} canales exportados. Expira en ${expiresHours}h` });
     } catch (err: any) {
       toast({ title: 'Error', description: err.message, variant: 'destructive' });
     }
@@ -99,7 +94,7 @@ const ChannelSync = () => {
       setImportResult(result);
       toast({
         title: '✅ Importación completada',
-        description: `${result.imported} importados (${result.dvr_imported || 0} con DVR), ${result.skipped} omitidos`,
+        description: `${result.imported} importados, ${result.skipped} omitidos`,
       });
       setImportToken('');
     } catch (err: any) {
@@ -144,8 +139,8 @@ const ChannelSync = () => {
       <div className="flex items-center gap-3">
         <ArrowRightLeft className="w-6 h-6 text-primary" />
         <div>
-          <h2 className="text-xl font-bold">Sincronización de Canales</h2>
-          <p className="text-sm text-muted-foreground">Comparte canales entre paneles Omnisync con soporte DVR y firma digital</p>
+          <h2 className="text-xl font-bold text-foreground">Sincronización de Canales</h2>
+          <p className="text-sm text-muted-foreground">Comparte canales entre paneles Omnisync con firma digital</p>
         </div>
       </div>
 
@@ -156,35 +151,30 @@ const ChannelSync = () => {
           <TabsTrigger value="pull" className="gap-2"><Globe className="w-4 h-4" /> Conexión</TabsTrigger>
         </TabsList>
 
-        {/* EXPORT */}
         <TabsContent value="export">
           <Card className="glass border-border/30">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2"><FileText className="w-5 h-5" /> Exportar Canales</CardTitle>
-              <CardDescription>Genera un token firmado con todos tus canales (incluye configuración DVR)</CardDescription>
+              <CardTitle className="flex items-center gap-2 text-foreground"><FileText className="w-5 h-5" /> Exportar Canales</CardTitle>
+              <CardDescription>Genera un token firmado con todos tus canales</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="flex items-center gap-3">
-                <div className="flex-1">
-                  <label className="text-sm font-medium mb-1 block flex items-center gap-1">
-                    <Clock className="w-3 h-3" /> Expiración del token
-                  </label>
-                  <Select value={expiresHours} onValueChange={setExpiresHours}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="1">1 hora</SelectItem>
-                      <SelectItem value="6">6 horas</SelectItem>
-                      <SelectItem value="24">24 horas</SelectItem>
-                      <SelectItem value="72">3 días</SelectItem>
-                      <SelectItem value="168">7 días</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block text-foreground flex items-center gap-1">
+                  <Clock className="w-3 h-3" /> Expiración del token
+                </label>
+                <Select value={expiresHours} onValueChange={setExpiresHours}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="1">1 hora</SelectItem>
+                    <SelectItem value="6">6 horas</SelectItem>
+                    <SelectItem value="24">24 horas</SelectItem>
+                    <SelectItem value="72">3 días</SelectItem>
+                    <SelectItem value="168">7 días</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
 
-              <Button onClick={handleExport} disabled={loading} className="gradient-primary">
+              <Button onClick={handleExport} disabled={loading} className="gradient-primary text-primary-foreground">
                 {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Upload className="w-4 h-4 mr-2" />}
                 Generar Token Firmado
               </Button>
@@ -193,11 +183,6 @@ const ChannelSync = () => {
                 <div className="space-y-3">
                   <div className="flex items-center gap-2 flex-wrap">
                     <Badge variant="secondary">{exportCount} canales</Badge>
-                    {exportDvrCount > 0 && (
-                      <Badge variant="default" className="gap-1">
-                        <Video className="w-3 h-3" /> {exportDvrCount} DVR (fMP4)
-                      </Badge>
-                    )}
                     <Badge variant="outline" className="gap-1">
                       <Shield className="w-3 h-3" /> Firmado digitalmente
                     </Badge>
@@ -205,13 +190,9 @@ const ChannelSync = () => {
                       <Clock className="w-3 h-3" /> Expira en {expiresHours}h
                     </Badge>
                   </div>
-                  <Textarea
-                    value={exportToken}
-                    readOnly
-                    className="font-mono text-xs h-32 bg-muted/30"
-                  />
+                  <Textarea value={exportToken} readOnly className="font-mono text-xs h-32 bg-muted/30" />
                   <Button onClick={handleCopyToken} variant="outline" className="gap-2">
-                    {copied ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
+                    {copied ? <Check className="w-4 h-4 text-primary" /> : <Copy className="w-4 h-4" />}
                     {copied ? 'Copiado' : 'Copiar Token'}
                   </Button>
                 </div>
@@ -220,11 +201,10 @@ const ChannelSync = () => {
           </Card>
         </TabsContent>
 
-        {/* IMPORT */}
         <TabsContent value="import">
           <Card className="glass border-border/30">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2"><Download className="w-5 h-5" /> Importar desde Token</CardTitle>
+              <CardTitle className="flex items-center gap-2 text-foreground"><Download className="w-5 h-5" /> Importar desde Token</CardTitle>
               <CardDescription>Pega un token firmado. Se verificará la firma y expiración automáticamente.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -234,91 +214,48 @@ const ChannelSync = () => {
                 onChange={(e) => setImportToken(e.target.value)}
                 className="font-mono text-xs h-32"
               />
-
               <div className="flex gap-2">
-                <Button
-                  variant={importMode === 'merge' ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => setImportMode('merge')}
-                >
+                <Button variant={importMode === 'merge' ? 'default' : 'outline'} size="sm" onClick={() => setImportMode('merge')}>
                   Fusionar (no duplicar)
                 </Button>
-                <Button
-                  variant={importMode === 'replace' ? 'destructive' : 'outline'}
-                  size="sm"
-                  onClick={() => setImportMode('replace')}
-                >
+                <Button variant={importMode === 'replace' ? 'destructive' : 'outline'} size="sm" onClick={() => setImportMode('replace')}>
                   Reemplazar todo
                 </Button>
               </div>
-
-              <Button onClick={handleImport} disabled={loading || !importToken.trim()} className="gradient-primary">
+              <Button onClick={handleImport} disabled={loading || !importToken.trim()} className="gradient-primary text-primary-foreground">
                 {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Download className="w-4 h-4 mr-2" />}
                 Verificar e Importar
               </Button>
-
               {importResult && (
                 <div className="p-3 rounded-md bg-muted/30 text-sm space-y-1">
-                  <p>✅ <strong>{importResult.imported}</strong> canales importados</p>
-                  {importResult.dvr_imported > 0 && (
-                    <p className="flex items-center gap-1">
-                      <Video className="w-3 h-3 text-primary" />
-                      <strong>{importResult.dvr_imported}</strong> con DVR activado (fMP4)
-                    </p>
-                  )}
-                  <p>⏭️ <strong>{importResult.skipped}</strong> omitidos</p>
-                  <p className="text-xs text-muted-foreground">Versión del token: v{importResult.version || 1}</p>
+                  <p className="text-foreground">✅ <strong>{importResult.imported}</strong> canales importados</p>
+                  <p className="text-foreground">⏭️ <strong>{importResult.skipped}</strong> omitidos</p>
                 </div>
               )}
             </CardContent>
           </Card>
         </TabsContent>
 
-        {/* PULL FROM REMOTE */}
         <TabsContent value="pull">
           <Card className="glass border-border/30">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2"><Link className="w-5 h-5" /> Conexión Directa</CardTitle>
-              <CardDescription>Conecta directamente a otro panel Omnisync (VPS) y trae sus canales</CardDescription>
+              <CardTitle className="flex items-center gap-2 text-foreground"><Link className="w-5 h-5" /> Conexión Directa</CardTitle>
+              <CardDescription>Conecta directamente a otro panel Omnisync y trae sus canales</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
-                <label className="text-sm font-medium mb-1 block">URL del Panel Remoto</label>
-                <Input
-                  placeholder="http://IP_DEL_VPS o https://dominio.com"
-                  value={remoteUrl}
-                  onChange={(e) => setRemoteUrl(e.target.value)}
-                />
+                <label className="text-sm font-medium mb-1 block text-foreground">URL del Panel Remoto</label>
+                <Input placeholder="http://IP_DEL_VPS o https://dominio.com" value={remoteUrl} onChange={(e) => setRemoteUrl(e.target.value)} />
               </div>
-
               <div>
-                <label className="text-sm font-medium mb-1 block">Token Admin del Panel Remoto</label>
-                <Input
-                  type="password"
-                  placeholder="JWT del admin del otro panel"
-                  value={remoteAdminToken}
-                  onChange={(e) => setRemoteAdminToken(e.target.value)}
-                />
+                <label className="text-sm font-medium mb-1 block text-foreground">Token Admin del Panel Remoto</label>
+                <Input type="password" placeholder="JWT del admin del otro panel" value={remoteAdminToken} onChange={(e) => setRemoteAdminToken(e.target.value)} />
               </div>
-
               <div className="flex gap-2">
-                <Button
-                  variant={pullMode === 'merge' ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => setPullMode('merge')}
-                >
-                  Fusionar
-                </Button>
-                <Button
-                  variant={pullMode === 'replace' ? 'destructive' : 'outline'}
-                  size="sm"
-                  onClick={() => setPullMode('replace')}
-                >
-                  Reemplazar todo
-                </Button>
+                <Button variant={pullMode === 'merge' ? 'default' : 'outline'} size="sm" onClick={() => setPullMode('merge')}>Fusionar</Button>
+                <Button variant={pullMode === 'replace' ? 'destructive' : 'outline'} size="sm" onClick={() => setPullMode('replace')}>Reemplazar todo</Button>
               </div>
-
-              <Button onClick={handlePull} disabled={loading || !remoteUrl.trim()} className="gradient-primary">
+              <Button onClick={handlePull} disabled={loading || !remoteUrl.trim()} className="gradient-primary text-primary-foreground">
                 {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Globe className="w-4 h-4 mr-2" />}
                 Traer Canales del Panel Remoto
               </Button>
