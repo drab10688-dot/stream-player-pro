@@ -99,7 +99,7 @@ const pool = new Pool({
 
 // =============================================
 // MOTOR DE STREAMING NODE.JS PURO (sin FFmpeg)
-// Segmenta streams TS y gestiona DVR usando solo http/https/fs
+// Segmenta streams TS usando solo http/https/fs - Proxy 1-a-N estricto
 // =============================================
 console.log('🚀 Motor de streaming: Node.js puro (sin FFmpeg)');
 
@@ -129,7 +129,7 @@ const channelListCache = {
   async refresh() {
     try {
       const { rows } = await pool.query(
-        'SELECT id, name, url, category, logo_url, stream_mode, sort_order, dvr_enabled, is_active FROM channels ORDER BY sort_order'
+        'SELECT id, name, url, category, logo_url, stream_mode, sort_order, is_active FROM channels ORDER BY sort_order'
       );
       this.data = rows;
       this.updatedAt = Date.now();
@@ -204,17 +204,6 @@ function invalidatePlanCache() {
   planCache.clear();
 }
 
-// Helper: verificar si un canal DVR está "listo" (al menos 3 segmentos .ts)
-function isDvrReady(channelId) {
-  const channelDir = path.join(DVR_DIR || '/data/dvr', channelId);
-  try {
-    const files = fs.readdirSync(channelDir);
-    const segments = files.filter(f => f.endsWith('.ts') && f.startsWith('segment'));
-    return segments.length >= 3;
-  } catch {
-    return false;
-  }
-}
 
 // Verificar conexión a la base de datos al iniciar
 pool.query('SELECT 1')
@@ -697,7 +686,7 @@ app.put('/api/channels/:id', authAdmin, async (req, res) => {
     }
 
     const { rows } = await pool.query(
-      'UPDATE channels SET name=$1, url=$2, category=$3, sort_order=$4, is_active=$5, keep_alive=false, logo_url=$6 WHERE id=$7 RETURNING *',
+      'UPDATE channels SET name=$1, url=$2, category=$3, sort_order=$4, is_active=$5, logo_url=$6 WHERE id=$7 RETURNING *',
       [name, urlValidation.normalizedUrl, category, sort_order, is_active, logo_url, req.params.id]
     );
 
@@ -710,24 +699,7 @@ app.put('/api/channels/:id', authAdmin, async (req, res) => {
 
 app.delete('/api/channels/:id', authAdmin, async (req, res) => {
   const channelId = req.params.id;
-  // Kill DVR process if active
-  if (activeDVR && activeDVR.has(channelId)) {
-    const dvr = activeDVR.get(channelId);
-    dvr.recording = false;
-    if (dvr.sourceReq) try { dvr.sourceReq.destroy(); } catch {}
-    if (dvr.segmentTimer) clearInterval(dvr.segmentTimer);
-    if (dvr.pollTimer) clearInterval(dvr.pollTimer);
-    activeDVR.delete(channelId);
-    // Clean DVR files
-    const channelDir = path.join(DVR_DIR || '/data/dvr', channelId);
-    try {
-      const files = fs.readdirSync(channelDir);
-      files.forEach(f => { try { fs.unlinkSync(path.join(channelDir, f)); } catch {} });
-      fs.rmdirSync(channelDir);
-    } catch {}
-    console.log(`📹 [DVR ${channelId}] Proceso Node.js detenido por eliminación de canal`);
-  }
-  // Stop any active transcoder
+  // Stop any active transcoder/pipe
   stopHLSKeepAlivePoller(channelId);
   const entry = activeTranscoders.get(channelId);
   if (entry) {
