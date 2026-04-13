@@ -6,8 +6,8 @@ import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Switch } from '@/components/ui/switch';
-import { Plus, Trash2, Edit2, Save, X, Tv, Upload, Link, FileText, Loader2, ImagePlus, Activity, HardDrive, Video, Power, PowerOff } from 'lucide-react';
+
+import { Plus, Trash2, Edit2, Save, X, Tv, Upload, Link, FileText, Loader2, ImagePlus, Activity, HardDrive } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { motion } from 'framer-motion';
 
@@ -19,7 +19,6 @@ interface Channel {
   url: string;
   category: string;
   is_active: boolean;
-  dvr_enabled: boolean;
   sort_order: number;
   logo_url: string | null;
 }
@@ -54,7 +53,6 @@ const ChannelsManager = () => {
   const [cacheStatus, setCacheStatus] = useState<CacheStatus[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [filterRunning, setFilterRunning] = useState(false);
-  const [dvrAllLoading, setDvrAllLoading] = useState(false);
   const logoInputRef = useRef<HTMLInputElement>(null);
   const cacheIntervalRef = useRef<ReturnType<typeof setInterval>>();
 
@@ -211,52 +209,6 @@ const ChannelsManager = () => {
     }
   };
 
-  const enableAllDVR = async () => {
-    if (!confirm(`¿Activar DVR en TODOS los canales activos? FFmpeg se iniciará secuencialmente.`)) return;
-    setDvrAllLoading(true);
-    try {
-      const data = await apiPost('/api/admin/dvr/enable-all', {});
-      toast({ title: '📹 DVR Global Activado', description: data.message });
-      fetchChannels();
-    } catch (err: any) {
-      toast({ title: 'Error', description: err.message, variant: 'destructive' });
-    }
-    setDvrAllLoading(false);
-  };
-
-  const disableAllDVR = async () => {
-    if (!confirm(`¿Detener TODOS los DVR y liberar recursos? Esto desactivará el DVR en todos los canales.`)) return;
-    setDvrAllLoading(true);
-    try {
-      const data = await apiPost('/api/admin/dvr/disable-all', {});
-      toast({ title: '⏹ DVR Global Detenido', description: data.message });
-      fetchChannels();
-    } catch (err: any) {
-      toast({ title: 'Error', description: err.message, variant: 'destructive' });
-    }
-    setDvrAllLoading(false);
-  };
-
-
-
-  const toggleDVR = async (ch: Channel) => {
-    try {
-      if (isLovablePreview()) {
-        toast({ title: 'DVR solo disponible en VPS', variant: 'destructive' });
-        return;
-      }
-      await apiPut(`/api/admin/channels/${ch.id}/dvr`, { dvr_enabled: !ch.dvr_enabled });
-      toast({ 
-        title: !ch.dvr_enabled ? '📹 DVR activado' : 'DVR desactivado',
-        description: !ch.dvr_enabled 
-          ? `${ch.name} se grabará en MP4 cuando alguien lo vea` 
-          : `${ch.name} ya no se grabará`
-      });
-      fetchChannels();
-    } catch (err: any) {
-      toast({ title: 'Error', description: err.message, variant: 'destructive' });
-    }
-  };
 
   const handleM3UImport = async () => {
     if (!m3uContent.trim() && !m3uUrl.trim()) {
@@ -303,31 +255,6 @@ const ChannelsManager = () => {
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h2 className="font-display font-semibold text-xl text-foreground">Canales ({channels.length})</h2>
         <div className="flex gap-2 flex-wrap">
-          {/* DVR Master Switch */}
-          {!isLovablePreview() && (
-            <>
-              <Button
-                onClick={enableAllDVR}
-                disabled={dvrAllLoading}
-                variant="outline"
-                size="sm"
-                className="gap-2 border-primary/30 text-primary hover:bg-primary/10"
-              >
-                {dvrAllLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Power className="w-4 h-4" />}
-                Activar DVR en todos
-              </Button>
-              <Button
-                onClick={disableAllDVR}
-                disabled={dvrAllLoading}
-                variant="outline"
-                size="sm"
-                className="gap-2 border-destructive/30 text-destructive hover:bg-destructive/10"
-              >
-                {dvrAllLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <PowerOff className="w-4 h-4" />}
-                Detener todos los DVR
-              </Button>
-            </>
-          )}
           {/* Filter: show only running */}
           {cacheStatus.some(c => c.transcoder_active) && (
             <Button
@@ -546,16 +473,6 @@ const ChannelsManager = () => {
                     </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
-                    {!isLovablePreview() && (
-                      <div className="flex items-center gap-1.5 mr-1" title={ch.dvr_enabled ? 'DVR: ON - Buffer de seguridad activo' : 'DVR: OFF'}>
-                        <Video className={`w-3.5 h-3.5 ${ch.dvr_enabled ? 'text-red-500' : 'text-muted-foreground/40'}`} />
-                        <Switch 
-                          checked={ch.dvr_enabled} 
-                          onCheckedChange={() => toggleDVR(ch)} 
-                          className="scale-75"
-                        />
-                      </div>
-                    )}
                     <Button variant="ghost" size="icon" onClick={() => handleEdit(ch)} className="text-muted-foreground hover:text-primary">
                       <Edit2 className="w-4 h-4" />
                     </Button>
