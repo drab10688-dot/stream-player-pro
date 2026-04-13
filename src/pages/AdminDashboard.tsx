@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAdminAuth } from '@/contexts/AdminAuthContext';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Tv, Users, Megaphone, Store, LogOut, LayoutDashboard, Bell, Activity, Globe, Radio, Bug, Package, HardDrive, Film, Tv2, Eye, Shield, Wifi, Cpu, Smartphone, ScrollText, Server, ArrowRightLeft, Disc } from 'lucide-react';
+import { Tv, Users, Megaphone, Store, LogOut, LayoutDashboard, Bell, Activity, Globe, Radio, Bug, Package, HardDrive, Film, Tv2, Eye, Shield, Wifi, Cpu, Smartphone, ScrollText, Server, ArrowRightLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import AdminStats from '@/components/admin/AdminStats';
 import ChannelsManager from '@/components/admin/ChannelsManager';
@@ -28,7 +28,7 @@ import omnisyncLogo from '@/assets/omnisync-logo.png';
 import ChangePasswordDialog from '@/components/admin/ChangePasswordDialog';
 import ConnectionsOverview from '@/components/admin/ConnectionsOverview';
 import ChannelSync from '@/components/admin/ChannelSync';
-import DvrMonitor from '@/components/admin/DvrMonitor';
+
 
 const AdminDashboard = () => {
   const navigate = useNavigate();
@@ -146,9 +146,6 @@ const AdminDashboard = () => {
             <TabsTrigger value="sync" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
               <ArrowRightLeft className="w-4 h-4" /> Sincronizar
             </TabsTrigger>
-            <TabsTrigger value="dvr" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
-              <Disc className="w-4 h-4" /> DVR
-            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="dashboard" forceMount className="data-[state=inactive]:hidden"><AdminStats /></TabsContent>
@@ -173,7 +170,7 @@ const AdminDashboard = () => {
           <TabsContent value="activity" forceMount className="data-[state=inactive]:hidden"><ActivityLogs /></TabsContent>
           <TabsContent value="connections" forceMount className="data-[state=inactive]:hidden"><ConnectionsOverview /></TabsContent>
           <TabsContent value="sync" forceMount className="data-[state=inactive]:hidden"><ChannelSync /></TabsContent>
-          <TabsContent value="dvr" forceMount className="data-[state=inactive]:hidden"><DvrMonitor /></TabsContent>
+          
         </Tabs>
       </main>
     </div>

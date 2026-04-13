@@ -11,8 +11,6 @@ interface StreamInfo {
   clients: number;
   ready: boolean;
   uptime_seconds: number;
-  dvr_active?: boolean;
-  keep_alive?: boolean;
 }
 
 interface ConnectionsData {
@@ -125,9 +123,6 @@ const ConnectionsOverview = () => {
                   <div className={`w-3 h-3 rounded-full shrink-0 ${stream.ready ? 'bg-emerald-400 animate-pulse' : 'bg-yellow-400'}`} />
                   <p className="font-semibold text-foreground text-sm truncate">{stream.channel_name}</p>
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground uppercase font-mono shrink-0">{stream.type}</span>
-                  {stream.dvr_active && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/20 text-primary uppercase font-mono shrink-0">DVR</span>
-                  )}
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   <div className="flex items-center gap-1 text-xs text-muted-foreground">
