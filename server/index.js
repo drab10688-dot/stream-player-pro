@@ -1089,6 +1089,48 @@ const HLS_DIR = fs.existsSync('/opt/streambox/hls-cache') ? '/opt/streambox/hls-
 const HLS_CACHE_DIR = fs.existsSync('/opt/streambox/hls-proxy-cache') ? '/opt/streambox/hls-proxy-cache' : '/tmp/streambox-cache';
 const activeTranscoders = new Map(); // channelId -> { ffmpeg, clients, lastAccess, type }
 
+// =============================================
+// HLS Client Tracker: rastrea clientes HLS por actividad de segmentos
+// (los manifiestos HLS son solicitudes instantáneas, no conexiones persistentes)
+// =============================================
+const hlsClientTracker = new Map(); // channelId -> Map<clientKey, lastActivity>
+const HLS_CLIENT_TTL = 30000; // 30s sin solicitar segmentos = desconectado
+
+function trackHLSClient(channelId, req) {
+  const ip = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown';
+  const ua = (req.headers['user-agent'] || '').substring(0, 30);
+  const clientKey = `${ip}_${ua}`;
+  
+  if (!hlsClientTracker.has(channelId)) {
+    hlsClientTracker.set(channelId, new Map());
+  }
+  hlsClientTracker.get(channelId).set(clientKey, Date.now());
+}
+
+function getHLSClientCount(channelId) {
+  const clients = hlsClientTracker.get(channelId);
+  if (!clients) return 0;
+  const now = Date.now();
+  let count = 0;
+  for (const [key, ts] of clients) {
+    if (now - ts < HLS_CLIENT_TTL) count++;
+    else clients.delete(key);
+  }
+  if (clients.size === 0) hlsClientTracker.delete(channelId);
+  return count;
+}
+
+// Limpieza periódica de clientes HLS inactivos
+setInterval(() => {
+  const now = Date.now();
+  for (const [channelId, clients] of hlsClientTracker) {
+    for (const [key, ts] of clients) {
+      if (now - ts > HLS_CLIENT_TTL) clients.delete(key);
+    }
+    if (clients.size === 0) hlsClientTracker.delete(channelId);
+  }
+}, 15000);
+
 // Crear directorios base
 [HLS_DIR, HLS_CACHE_DIR].forEach(dir => {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
