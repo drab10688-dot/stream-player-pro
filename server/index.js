@@ -2124,6 +2124,15 @@ app.get('/api/stream-pipe/:channelId', async (req, res) => {
         for (const client of pipe.clients) {
           try { client.write(chunk); } catch { pipe.clients.delete(client); }
         }
+        // DVR tap: forward data to DVR if active for this channel
+        if (activeDVR.has(channelId)) {
+          const dvr = activeDVR.get(channelId);
+          if (dvr && dvr.recording && dvr._pipeTap) {
+            dvr._buffer.push(chunk);
+            dvr._bufferBytes += chunk.length;
+            if (dvr._processData) dvr._processData();
+          }
+        }
       });
 
       sourceRes.on('end', () => {
@@ -2134,6 +2143,34 @@ app.get('/api/stream-pipe/:channelId', async (req, res) => {
             try { client.end(); } catch {}
           }
           activePipes.delete(channelId);
+        }
+        // Notify DVR tap that pipe ended
+        if (activeDVR.has(channelId)) {
+          const dvr = activeDVR.get(channelId);
+          if (dvr && dvr._pipeTap) {
+            dvr._pipeTap = false;
+            console.log(`⚠️ [DVR ${channelId}] Pipe cerró, DVR intentará reconectar`);
+            if (dvr.segmentTimer) { clearInterval(dvr.segmentTimer); dvr.segmentTimer = null; }
+            // Retry: wait for pipe to restart or open own connection
+            const shouldRetry = dvr.viewers > 0 || dvr.preWarmed;
+            if (shouldRetry) {
+              setTimeout(() => {
+                if (activePipes.has(channelId)) {
+                  dvr._pipeTap = true;
+                  dvr._segStartTime = Date.now();
+                  dvr._segAccum = [];
+                  dvr._segAccumBytes = 0;
+                  dvr.segmentTimer = setInterval(() => {
+                    if (dvr._segAccumBytes > 0) {
+                      const elapsed = (Date.now() - dvr._segStartTime) / 1000;
+                      if (elapsed >= DVR_SEGMENT_SECONDS * 2.5 && dvr._processData) dvr._processData();
+                    }
+                  }, DVR_SEGMENT_SECONDS * 1000);
+                  console.log(`✅ [DVR ${channelId}] Re-tapeando pipe proxy`);
+                }
+              }, 5000);
+            }
+          }
         }
       });
 
@@ -5731,19 +5768,16 @@ function startTSDVR(channelId, sourceUrl, dvr, channelDir) {
   function processData() {
     if (dvr._bufferBytes < 188 * 10) return;
 
-    // Concatenar pending + nuevos chunks
     let raw = Buffer.concat([dvr._tsPending, ...dvr._buffer]);
     dvr._tsPending = Buffer.alloc(0);
     dvr._buffer = [];
     dvr._bufferBytes = 0;
 
-    // Alinear a 188 bytes
     const { aligned, remainder } = alignTSPackets(raw);
     dvr._tsPending = remainder;
 
     if (aligned.length === 0) return;
 
-    // Acumular en buffer de segmento
     if (!dvr._segAccum) dvr._segAccum = [];
     dvr._segAccum.push(aligned);
     if (!dvr._segAccumBytes) dvr._segAccumBytes = 0;
@@ -5751,15 +5785,12 @@ function startTSDVR(channelId, sourceUrl, dvr, channelDir) {
 
     const elapsed = (Date.now() - dvr._segStartTime) / 1000;
 
-    // Solo cortar si ha pasado el tiempo mínimo
     if (elapsed < DVR_SEGMENT_SECONDS) return;
 
     const segData = Buffer.concat(dvr._segAccum);
-    // Buscar PAT en el último 20% para cortar en keyframe
     const searchStart = Math.max(188, Math.floor(segData.length * 0.8));
     const patPos = findPATInBuffer(segData, searchStart);
 
-    // Si no encontramos PAT y no ha pasado 2.5x el tiempo, esperar
     if (patPos < 0 && elapsed < DVR_SEGMENT_SECONDS * 2.5) return;
 
     let segToWrite, leftover;
@@ -5801,7 +5832,7 @@ function startTSDVR(channelId, sourceUrl, dvr, channelDir) {
       dvr.mediaSequence++;
     }
 
-    // Generate m3u8 con duraciones reales
+    // Generate m3u8
     const currentSegs = fs.readdirSync(channelDir)
       .filter(f => f.endsWith('.ts') && f.startsWith('segment'))
       .sort((a, b) => parseInt(a.match(/\d+/)?.[0] || '0') - parseInt(b.match(/\d+/)?.[0] || '0'));
@@ -5833,6 +5864,34 @@ function startTSDVR(channelId, sourceUrl, dvr, channelDir) {
     }
   }
 
+  // Expose processData for pipe tap
+  dvr._processData = processData;
+
+  // Try to tap into existing pipe proxy instead of opening a new connection
+  function tryPipeTap() {
+    if (activePipes.has(channelId)) {
+      dvr._pipeTap = true;
+      dvr._segStartTime = Date.now();
+      dvr._segAccum = [];
+      dvr._segAccumBytes = 0;
+      console.log(`✅ [DVR ${channelId}] Tapeando datos del Pipe Proxy (sin conexión extra al origen)`);
+
+      // Backup timer
+      dvr.segmentTimer = setInterval(() => {
+        if (dvr._segAccumBytes > 0) {
+          const elapsed = (Date.now() - dvr._segStartTime) / 1000;
+          if (elapsed >= DVR_SEGMENT_SECONDS * 2.5) processData();
+        }
+      }, DVR_SEGMENT_SECONDS * 1000);
+      return true;
+    }
+    return false;
+  }
+
+  // If pipe proxy is active, tap into it; otherwise open own connection
+  if (tryPipeTap()) return;
+
+  // Fallback: open own connection (for pre-warm / keep-alive scenarios without active pipe)
   function connect() {
     dvrFetchUrl(sourceUrl, 15000, true).then((sourceRes) => {
       if (sourceRes.statusCode !== 200) {
@@ -5841,7 +5900,8 @@ function startTSDVR(channelId, sourceUrl, dvr, channelDir) {
         return;
       }
 
-      console.log(`✅ [DVR ${channelId}] TS DVR conectado (keyframe-aligned)`);
+      console.log(`✅ [DVR ${channelId}] TS DVR conectado directo (sin pipe disponible)`);
+      dvr._pipeTap = false;
       dvr._segStartTime = Date.now();
       dvr._segAccum = [];
       dvr._segAccumBytes = 0;
@@ -5853,7 +5913,6 @@ function startTSDVR(channelId, sourceUrl, dvr, channelDir) {
         processData();
       });
 
-      // Timer de respaldo
       dvr.segmentTimer = setInterval(() => {
         if (dvr._segAccumBytes > 0) {
           const elapsed = (Date.now() - dvr._segStartTime) / 1000;
@@ -5882,6 +5941,20 @@ function startTSDVR(channelId, sourceUrl, dvr, channelDir) {
     if (dvr.segmentTimer) { clearInterval(dvr.segmentTimer); dvr.segmentTimer = null; }
     processData(); // flush remaining data
 
+    // If we were tapping pipe, try to re-tap
+    if (dvr._pipeTap) {
+      dvr._pipeTap = false;
+      const shouldRetry = dvr.viewers > 0 || dvr.preWarmed;
+      if (shouldRetry) {
+        setTimeout(() => {
+          if (dvr.viewers > 0 || dvr.preWarmed) {
+            if (!tryPipeTap()) connect();
+          }
+        }, 3000);
+      }
+      return;
+    }
+
     const shouldRestart = dvr.viewers > 0 || dvr.preWarmed;
     if (shouldRestart) {
       dvr.restartCount++;
@@ -5889,7 +5962,7 @@ function startTSDVR(channelId, sourceUrl, dvr, channelDir) {
       console.log(`🔄 [DVR ${channelId}] Reconectando en ${delay/1000}s (intento #${dvr.restartCount})`);
       setTimeout(() => {
         if (dvr.viewers > 0 || dvr.preWarmed) {
-          connect();
+          if (!tryPipeTap()) connect();
           if (dvr.restartCount > 3) dvr.restartCount = 0;
         }
       }, delay);
