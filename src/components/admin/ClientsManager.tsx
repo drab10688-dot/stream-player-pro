@@ -180,7 +180,8 @@ const ClientsManager = () => {
     }
   };
 
-  const isExpired = (date: string) => new Date(date) < new Date();
+  const isExpired = (date: string) => !date.startsWith('2099') && new Date(date) < new Date();
+  const isNeverExpires = (date: string) => date.startsWith('2099');
 
   const regenerateToken = async (clientId: string) => {
     try {
