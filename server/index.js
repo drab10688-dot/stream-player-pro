@@ -3037,15 +3037,10 @@ app.get('/api/playlist/:token', async (req, res) => {
 
       m3u += `#EXTINF:-1 tvg-id="${ch.id}" tvg-name="${ch.name}" tvg-logo="${logoUrl}" group-title="${ch.category}",${ch.name}\n`;
 
-      if (ch.dvr_enabled && isDvrReady(ch.id)) {
-        // DVR activo Y listo: usar playlist DVR local (HLS .ts)
-        m3u += `${baseUrl}/live/${encodeURIComponent(client.username)}/${encodeURIComponent(client.password)}/${ch.id}.m3u8\n`;
-      } else {
-        // Sin DVR o DVR no listo: usar stream directo
-        const isHlsSource = /\.m3u8?(\?|$)/i.test(ch.url);
-        const outputExt = isHlsSource ? 'm3u8' : 'ts';
-        m3u += `${baseUrl}/live/${encodeURIComponent(client.username)}/${encodeURIComponent(client.password)}/${ch.id}.${outputExt}\n`;
-      }
+      // Proxy 1-a-N: extensión según tipo de fuente
+      const isHlsSource = /\.m3u8?(\?|$)/i.test(ch.url);
+      const outputExt = isHlsSource ? 'm3u8' : 'ts';
+      m3u += `${baseUrl}/live/${encodeURIComponent(client.username)}/${encodeURIComponent(client.password)}/${ch.id}.${outputExt}\n`;
     }
     
     res.set({
@@ -3398,14 +3393,9 @@ app.get('/get.php', async (req, res) => {
     channels.forEach(ch => {
       const logoTag = ch.logo_url ? ` tvg-logo="${ch.logo_url}"` : '';
       m3u += `#EXTINF:-1 tvg-id="${ch.id}" tvg-name="${ch.name}"${logoTag} group-title="${ch.category}",${ch.name}\n`;
-      // Usar extensión correcta según tipo de fuente
-      if (ch.dvr_enabled && isDvrReady(ch.id)) {
-        m3u += `${serverUrl}/live/${username}/${password}/${ch.id}.m3u8\n`;
-      } else {
-        const isHlsSource = /\.m3u8?(\?|$)/i.test(ch.url);
-        const ext = isHlsSource ? 'm3u8' : 'ts';
-        m3u += `${serverUrl}/live/${username}/${password}/${ch.id}.${ext}\n`;
-      }
+      const isHlsSource = /\.m3u8?(\?|$)/i.test(ch.url);
+      const ext = isHlsSource ? 'm3u8' : 'ts';
+      m3u += `${serverUrl}/live/${username}/${password}/${ch.id}.${ext}\n`;
     });
 
     res.set({
