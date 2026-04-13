@@ -41,7 +41,7 @@ const ClientsManager = () => {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [tunnelUrl, setTunnelUrl] = useState<string | null>(null);
   const [useTunnel, setUseTunnel] = useState(false);
-  const [form, setForm] = useState({ username: '', password: '', max_screens: 1, expiry_date: '', notes: '', plan_id: '', vod_enabled: false });
+  const [form, setForm] = useState({ username: '', password: '', max_screens: 1, expiry_date: '', notes: '', plan_id: '', vod_enabled: false, never_expires: false });
 
   const fetchClients = async () => {
     try {
@@ -91,15 +91,15 @@ const ClientsManager = () => {
   useEffect(() => { fetchClients(); fetchPlans(); fetchTunnelStatus(); }, []);
 
   const handleSave = async () => {
-    if (!form.username.trim() || !form.password.trim() || !form.expiry_date) {
-      toast({ title: 'Error', description: 'Completa usuario, contraseña y fecha', variant: 'destructive' });
+    if (!form.username.trim() || !form.password.trim() || (!form.never_expires && !form.expiry_date)) {
+      toast({ title: 'Error', description: 'Completa usuario, contraseña y fecha (o marca "No vence")', variant: 'destructive' });
       return;
     }
     const payload: any = {
       username: form.username.trim(),
       password: form.password.trim(),
       max_screens: form.max_screens,
-      expiry_date: form.expiry_date,
+      expiry_date: form.never_expires ? '2099-12-31' : form.expiry_date,
       notes: form.notes.trim() || null,
       plan_id: form.plan_id || null,
       vod_enabled: form.vod_enabled,
@@ -125,7 +125,7 @@ const ClientsManager = () => {
           toast({ title: 'Cliente creado' });
         }
       }
-      setForm({ username: '', password: '', max_screens: 1, expiry_date: '', notes: '', plan_id: '', vod_enabled: false });
+      setForm({ username: '', password: '', max_screens: 1, expiry_date: '', notes: '', plan_id: '', vod_enabled: false, never_expires: false });
       setShowForm(false);
       setEditingId(null);
       fetchClients();
@@ -135,14 +135,16 @@ const ClientsManager = () => {
   };
 
   const handleEdit = (c: Client) => {
+    const neverExpires = c.expiry_date.startsWith('2099');
     setForm({
       username: c.username,
       password: c.password,
       max_screens: c.max_screens,
-      expiry_date: c.expiry_date.split('T')[0],
+      expiry_date: neverExpires ? '' : c.expiry_date.split('T')[0],
       notes: c.notes || '',
       plan_id: c.plan_id || '',
       vod_enabled: (c as any).vod_enabled || false,
+      never_expires: neverExpires,
     });
     setEditingId(c.id);
     setShowForm(true);
@@ -178,7 +180,8 @@ const ClientsManager = () => {
     }
   };
 
-  const isExpired = (date: string) => new Date(date) < new Date();
+  const isExpired = (date: string) => !date.startsWith('2099') && new Date(date) < new Date();
+  const isNeverExpires = (date: string) => date.startsWith('2099');
 
   const regenerateToken = async (clientId: string) => {
     try {
@@ -251,7 +254,7 @@ const ClientsManager = () => {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="font-display font-semibold text-xl text-foreground">Clientes ({clients.length})</h2>
-        <Button onClick={() => { setShowForm(true); setEditingId(null); setForm({ username: '', password: '', max_screens: 1, expiry_date: '', notes: '', plan_id: '', vod_enabled: false }); }} className="gradient-primary text-primary-foreground gap-2">
+        <Button onClick={() => { setShowForm(true); setEditingId(null); setForm({ username: '', password: '', max_screens: 1, expiry_date: '', notes: '', plan_id: '', vod_enabled: false, never_expires: false }); }} className="gradient-primary text-primary-foreground gap-2">
           <Plus className="w-4 h-4" /> Nuevo Cliente
         </Button>
       </div>
@@ -265,11 +268,38 @@ const ClientsManager = () => {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">Máx. Pantallas</label>
-              <Input type="number" min={1} max={10} value={form.max_screens} onChange={e => setForm({ ...form, max_screens: parseInt(e.target.value) || 1 })} className="bg-secondary border-border text-foreground" />
+              <Input
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                value={form.max_screens}
+                onChange={e => {
+                  const val = e.target.value.replace(/\D/g, '');
+                  setForm({ ...form, max_screens: val ? Math.min(parseInt(val), 999) : 1 });
+                }}
+                className="bg-secondary border-border text-foreground"
+              />
             </div>
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">Fecha de Expiración</label>
-              <Input type="date" value={form.expiry_date} onChange={e => setForm({ ...form, expiry_date: e.target.value })} className="bg-secondary border-border text-foreground" />
+              <div className="flex items-center gap-2">
+                <Input
+                  type="date"
+                  value={form.expiry_date}
+                  onChange={e => setForm({ ...form, expiry_date: e.target.value })}
+                  className="bg-secondary border-border text-foreground flex-1"
+                  disabled={form.never_expires}
+                />
+                <label className="flex items-center gap-1.5 cursor-pointer shrink-0 bg-secondary border border-border rounded-md px-3 h-10">
+                  <input
+                    type="checkbox"
+                    checked={form.never_expires}
+                    onChange={e => setForm({ ...form, never_expires: e.target.checked, expiry_date: e.target.checked ? '' : form.expiry_date })}
+                    className="w-4 h-4 rounded border-border accent-primary"
+                  />
+                  <span className="text-xs text-foreground whitespace-nowrap">∞ No vence</span>
+                </label>
+              </div>
             </div>
           </div>
           <div>
@@ -314,7 +344,7 @@ const ClientsManager = () => {
                     <p className="font-semibold text-foreground text-sm">{c.username}</p>
                     <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
                       <span className="flex items-center gap-1"><Monitor className="w-3 h-3" /> {c.max_screens} pantallas</span>
-                      <span>Expira: {format(new Date(c.expiry_date), 'dd/MM/yyyy')}</span>
+                      <span>{isNeverExpires(c.expiry_date) ? '∞ No vence' : `Expira: ${format(new Date(c.expiry_date), 'dd/MM/yyyy')}`}</span>
                       {c.plan_id && plans.find(p => p.id === c.plan_id) && (
                         <Badge variant="secondary" className="text-[10px] py-0 gap-1">
                           <Package className="w-2.5 h-2.5" /> {plans.find(p => p.id === c.plan_id)?.name}
