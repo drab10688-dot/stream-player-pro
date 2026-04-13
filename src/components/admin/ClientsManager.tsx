@@ -267,11 +267,38 @@ const ClientsManager = () => {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">Máx. Pantallas</label>
-              <Input type="number" min={1} max={10} value={form.max_screens} onChange={e => setForm({ ...form, max_screens: parseInt(e.target.value) || 1 })} className="bg-secondary border-border text-foreground" />
+              <Input
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                value={form.max_screens}
+                onChange={e => {
+                  const val = e.target.value.replace(/\D/g, '');
+                  setForm({ ...form, max_screens: val ? Math.min(parseInt(val), 999) : 1 });
+                }}
+                className="bg-secondary border-border text-foreground"
+              />
             </div>
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">Fecha de Expiración</label>
-              <Input type="date" value={form.expiry_date} onChange={e => setForm({ ...form, expiry_date: e.target.value })} className="bg-secondary border-border text-foreground" />
+              <div className="flex items-center gap-2">
+                <Input
+                  type="date"
+                  value={form.expiry_date}
+                  onChange={e => setForm({ ...form, expiry_date: e.target.value })}
+                  className="bg-secondary border-border text-foreground flex-1"
+                  disabled={form.never_expires}
+                />
+                <label className="flex items-center gap-1.5 cursor-pointer shrink-0 bg-secondary border border-border rounded-md px-3 h-10">
+                  <input
+                    type="checkbox"
+                    checked={form.never_expires}
+                    onChange={e => setForm({ ...form, never_expires: e.target.checked, expiry_date: e.target.checked ? '' : form.expiry_date })}
+                    className="w-4 h-4 rounded border-border accent-primary"
+                  />
+                  <span className="text-xs text-foreground whitespace-nowrap">∞ No vence</span>
+                </label>
+              </div>
             </div>
           </div>
           <div>
