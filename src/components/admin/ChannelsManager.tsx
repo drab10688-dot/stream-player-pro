@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 
-import { Plus, Trash2, Edit2, Save, X, Tv, Upload, Link, FileText, Loader2, ImagePlus, Activity, HardDrive } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, Tv, Upload, Link, FileText, Loader2, ImagePlus, Activity, HardDrive, Users, Zap, ZapOff } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { motion } from 'framer-motion';
 
@@ -254,18 +254,27 @@ const ChannelsManager = () => {
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h2 className="font-display font-semibold text-xl text-foreground">Canales ({channels.length})</h2>
-        <div className="flex gap-2 flex-wrap">
-          {/* Filter: show only running */}
+        <div className="flex gap-2 flex-wrap items-center">
+          {/* Summary of on-demand connections */}
           {cacheStatus.some(c => c.transcoder_active) && (
-            <Button
-              onClick={() => setFilterRunning(!filterRunning)}
-              variant={filterRunning ? 'default' : 'outline'}
-              className={`gap-2 ${filterRunning ? 'gradient-primary text-primary-foreground' : 'border-border text-foreground'}`}
-              size="sm"
-            >
-              <Activity className="w-4 h-4" />
-              En vivo ({cacheStatus.filter(c => c.transcoder_active).length})
-            </Button>
+            <>
+              <div className="text-xs text-muted-foreground flex items-center gap-1 mr-1">
+                <Zap className="w-3.5 h-3.5 text-primary" />
+                <span className="font-semibold text-primary">{cacheStatus.filter(c => c.transcoder_active).length}</span> bajo demanda
+                <span className="mx-1">·</span>
+                <Users className="w-3.5 h-3.5 text-primary" />
+                <span className="font-semibold text-primary">{cacheStatus.reduce((s, c) => s + c.clients, 0)}</span> clientes
+              </div>
+              <Button
+                onClick={() => setFilterRunning(!filterRunning)}
+                variant={filterRunning ? 'default' : 'outline'}
+                className={`gap-2 ${filterRunning ? 'gradient-primary text-primary-foreground' : 'border-border text-foreground'}`}
+                size="sm"
+              >
+                <Activity className="w-4 h-4" />
+                {filterRunning ? 'Ver todos' : 'Solo activos'}
+              </Button>
+            </>
           )}
           {selectedIds.size > 0 && (
             <Button onClick={handleBatchDelete} variant="destructive" size="sm" className="gap-2">
@@ -449,24 +458,33 @@ const ChannelsManager = () => {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className="font-semibold text-foreground text-sm truncate">{ch.name}</p>
-                        {cache?.transcoder_active && (
+                        {cache?.transcoder_active ? (
                           <div className="flex items-center gap-1">
-                            <Badge variant="outline" className="text-[10px] py-0 px-1.5 border-green-500/30 text-green-500 gap-1">
-                              <Activity className="w-2.5 h-2.5" />
-                              {cache.transcoder_ready ? 'LIVE' : 'Iniciando'}
+                            <Badge variant="outline" className="text-[10px] py-0 px-1.5 border-primary/30 text-primary gap-1">
+                              <Zap className="w-2.5 h-2.5" />
+                              {cache.transcoder_ready ? 'Bajo Demanda' : 'Conectando...'}
                             </Badge>
-                            {cache.cache_segments > 0 && (
-                              <Badge variant="outline" className="text-[10px] py-0 px-1.5 border-blue-500/30 text-blue-500 gap-1">
-                                <HardDrive className="w-2.5 h-2.5" />
-                                {cache.cache_size_mb}MB · {cache.cache_segments} seg
+                            <Badge variant="outline" className="text-[10px] py-0 px-1.5 border-primary/30 text-primary gap-1">
+                              {cache.transcoder_type === 'pipe-proxy' ? 'TS' : 'HLS'}
+                            </Badge>
+                            {cache.clients > 0 && (
+                              <Badge variant="outline" className="text-[10px] py-0 px-1.5 border-accent/50 text-accent-foreground gap-1">
+                                <Users className="w-2.5 h-2.5" />
+                                {cache.clients} viendo
                               </Badge>
                             )}
-                            {cache.clients > 0 && (
-                              <Badge variant="outline" className="text-[10px] py-0 px-1.5 border-purple-500/30 text-purple-500">
-                                {cache.clients} 👤
+                            {cache.cache_segments > 0 && (
+                              <Badge variant="outline" className="text-[10px] py-0 px-1.5 border-muted text-muted-foreground gap-1">
+                                <HardDrive className="w-2.5 h-2.5" />
+                                {cache.cache_size_mb}MB
                               </Badge>
                             )}
                           </div>
+                        ) : (
+                          <Badge variant="outline" className="text-[10px] py-0 px-1.5 border-muted text-muted-foreground gap-1">
+                            <ZapOff className="w-2.5 h-2.5" />
+                            Sin conexión
+                          </Badge>
                         )}
                       </div>
                       <p className="text-xs text-muted-foreground truncate">{ch.category} · {ch.url.substring(0, 50)}{ch.url.length > 50 ? '...' : ''}</p>
