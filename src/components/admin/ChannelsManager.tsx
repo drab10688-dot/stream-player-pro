@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 
-import { Plus, Trash2, Edit2, Save, X, Tv, Upload, Link, FileText, Loader2, ImagePlus, Activity, HardDrive } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, Tv, Upload, Link, FileText, Loader2, ImagePlus, Activity, HardDrive, Users, Zap, ZapOff } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { motion } from 'framer-motion';
 
