@@ -341,9 +341,23 @@ const DvrMonitor = () => {
                           <Disc className="w-3 h-3 animate-pulse" /> REC
                         </Badge>
                       )}
+                      {/* Modo DVR: siempre activo vs por demanda */}
+                      <div 
+                        className="flex items-center gap-1.5 ml-1"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <Timer className="w-3 h-3 text-muted-foreground" />
+                        <span className="text-[10px] text-muted-foreground">{dvr.keepAlive ? 'Siempre' : 'Demanda'}</span>
+                        <Switch
+                          checked={dvr.keepAlive || false}
+                          onCheckedChange={() => toggleKeepAlive(dvr.channelId, dvr.keepAlive || false)}
+                          className="scale-75"
+                        />
+                      </div>
                       {expandedChannel === dvr.channelId 
                         ? <ChevronUp className="w-4 h-4 text-muted-foreground" />
                         : <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                      }
                       }
                     </div>
                   </div>
