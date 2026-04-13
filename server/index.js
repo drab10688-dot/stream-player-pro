@@ -3519,14 +3519,43 @@ app.get('/live/:username/:password/:streamId', async (req, res) => {
       }
       res.on('finish', () => releaseTranscoder(channelId));
     } else {
-      // Fallback: pipe directo
+      // Fallback: usar pipe proxy 1-a-N compartido (NUNCA pipe directo)
       res.setHeader('Content-Type', 'video/mp2t');
-      const httpModule = require(targetUrl.startsWith('https') ? 'https' : 'http');
-      const streamReq = httpModule.get(targetUrl, { timeout: 15000 }, (streamRes) => {
-        streamRes.pipe(res);
-      });
-      streamReq.on('error', () => { if (!res.headersSent) res.status(502).end(); });
-      res.on('close', () => streamReq.destroy());
+      res.setHeader('Transfer-Encoding', 'chunked');
+      res.setHeader('Connection', 'keep-alive');
+      if (res.socket) res.socket.setNoDelay(true);
+
+      let pipe = activePipes.get(channelId);
+      if (!pipe) {
+        pipe = { clients: new Set(), sourceReq: null, keepAlive: false, bufferChunks: [], bufferBytes: 0, lastDataAt: Date.now() };
+        activePipes.set(channelId, pipe);
+
+        const httpModule = require(targetUrl.startsWith('https') ? 'https' : 'http');
+        const sourceReq = httpModule.get(targetUrl, {
+          timeout: 15000,
+          headers: { 'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20', 'Connection': 'keep-alive' },
+        }, (sourceRes) => {
+          if (sourceRes.statusCode >= 300 && sourceRes.statusCode < 400 && sourceRes.headers.location) {
+            const rReq = httpModule.get(sourceRes.headers.location, { timeout: 15000 }, (rRes) => {
+              pipe.sourceReq = rReq;
+              rRes.on('data', (chunk) => { pipe.lastDataAt = Date.now(); pushPipeChunk(pipe, chunk); for (const c of pipe.clients) { try { c.write(chunk); } catch { pipe.clients.delete(c); } } });
+              rRes.on('end', () => { activePipes.delete(channelId); });
+              rRes.on('error', () => { activePipes.delete(channelId); });
+            });
+            rReq.on('error', () => { activePipes.delete(channelId); });
+            return;
+          }
+          sourceRes.on('data', (chunk) => { pipe.lastDataAt = Date.now(); pushPipeChunk(pipe, chunk); for (const c of pipe.clients) { try { c.write(chunk); } catch { pipe.clients.delete(c); } } });
+          sourceRes.on('end', () => { activePipes.delete(channelId); });
+          sourceRes.on('error', () => { activePipes.delete(channelId); });
+        });
+        sourceReq.on('error', () => { activePipes.delete(channelId); });
+        pipe.sourceReq = sourceReq;
+      }
+
+      writeFastStartBuffer(pipe, res);
+      pipe.clients.add(res);
+      res.on('close', () => { pipe.clients.delete(res); if (pipe.clients.size === 0 && !pipe.keepAlive) schedulePipeClose(channelId); });
     }
   } catch (err) {
     console.error('Xtream live error:', err);
