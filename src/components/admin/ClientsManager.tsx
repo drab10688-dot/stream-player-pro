@@ -41,7 +41,7 @@ const ClientsManager = () => {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [tunnelUrl, setTunnelUrl] = useState<string | null>(null);
   const [useTunnel, setUseTunnel] = useState(false);
-  const [form, setForm] = useState({ username: '', password: '', max_screens: 1, expiry_date: '', notes: '', plan_id: '', vod_enabled: false });
+  const [form, setForm] = useState({ username: '', password: '', max_screens: 1, expiry_date: '', notes: '', plan_id: '', vod_enabled: false, never_expires: false });
 
   const fetchClients = async () => {
     try {
