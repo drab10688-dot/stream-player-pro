@@ -11,6 +11,8 @@ interface StreamInfo {
   clients: number;
   ready: boolean;
   uptime_seconds: number;
+  dvr_active?: boolean;
+  keep_alive?: boolean;
 }
 
 interface ConnectionsData {
