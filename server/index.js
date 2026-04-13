@@ -1538,9 +1538,9 @@ function startKeepAliveChannel(channelId, sourceUrl) {
   }
 }
 
-// KEEP ALIVE DESHABILITADO: Todo el tráfico pasa por DVR
+// Keep-alive channels disabled - all traffic is on-demand 1-to-N proxy
 async function initKeepAliveChannels() {
-  console.log('📡 Keep-alive deshabilitado. Usa DVR para estabilidad de canales.');
+  console.log('📡 Proxy 1-a-N bajo demanda activo. Sin keep-alive ni DVR.');
 }
 
 
