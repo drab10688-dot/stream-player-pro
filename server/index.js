@@ -3789,6 +3789,7 @@ app.get('/live/:username/:password/:streamId/:qualityOrSegment', async (req, res
 
     // Segment request: seg.ts?url=ENCODED
     if (qualityOrSegment === 'seg.ts' && req.query.url) {
+      trackHLSClient(channelId, req);
       const segUrl = req.query.url;
       try {
         const segData = await fetchSegment(segUrl);
