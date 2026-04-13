@@ -123,11 +123,31 @@ const DvrMonitor = () => {
     return `${s}s`;
   };
 
+  const [togglingAll, setTogglingAll] = useState(false);
+
   const activeList = dvrList.filter(d => d.active);
   const inactiveList = dvrList.filter(d => !d.active);
   const totalViewers = activeList.reduce((a, d) => a + d.viewers, 0);
   const totalSize = activeList.reduce((a, d) => a + d.sizeMB, 0);
   const channelsWithErrors = dvrList.filter(d => (d.errorCount || 0) > 0).length;
+  const allOnDemand = dvrList.length > 0 && dvrList.every(d => !d.keepAlive);
+  const allKeepAlive = dvrList.length > 0 && dvrList.every(d => d.keepAlive);
+
+  const toggleAllOnDemand = async (setOnDemand: boolean) => {
+    setTogglingAll(true);
+    try {
+      const targets = dvrList.filter(d => setOnDemand ? d.keepAlive : !d.keepAlive);
+      for (const ch of targets) {
+        await apiPut(`/api/admin/channels/${ch.channelId}/dvr-mode`, { keep_alive: !setOnDemand });
+      }
+      toast.success(setOnDemand ? 'Todos los canales en modo Por Demanda' : 'Todos los canales en modo Siempre Activo');
+      fetchData();
+    } catch (err: any) {
+      toast.error('Error: ' + err.message);
+    } finally {
+      setTogglingAll(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
