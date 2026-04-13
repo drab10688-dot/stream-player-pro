@@ -11,7 +11,6 @@ interface StreamInfo {
   clients: number;
   ready: boolean;
   uptime_seconds: number;
-  uptime_seconds: number;
 }
 
 interface ConnectionsData {
