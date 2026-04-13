@@ -2,9 +2,10 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Video, RefreshCw, Users, HardDrive, RotateCcw, Clock, Disc, Power, PowerOff, AlertTriangle, ChevronDown, ChevronUp, Search, CheckCircle, XCircle } from 'lucide-react';
-import { apiGet } from '@/lib/api';
+import { Video, RefreshCw, Users, HardDrive, RotateCcw, Clock, Disc, Power, PowerOff, AlertTriangle, ChevronDown, ChevronUp, Search, CheckCircle, XCircle, Zap, Timer } from 'lucide-react';
+import { apiGet, apiPut } from '@/lib/api';
 import { toast } from 'sonner';
+import { Switch } from '@/components/ui/switch';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface DvrStatus {
@@ -19,6 +20,7 @@ interface DvrStatus {
   format: string;
   enabled?: boolean;
   active?: boolean;
+  keepAlive?: boolean;
   
   ready?: boolean;
   lastError?: string | null;
