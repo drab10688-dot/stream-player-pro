@@ -3593,7 +3593,7 @@ app.get('/live/:username/:password/:streamId', async (req, res) => {
       let pipe = activePipes.get(channelId);
       if (!pipe) {
         // Iniciar nueva conexión al origen
-        pipe = { clients: new Set(), sourceReq: null, keepAlive: false, bufferChunks: [], bufferBytes: 0, lastDataAt: Date.now() };
+        pipe = { clients: new Set(), sourceReq: null, keepAlive: false, bufferChunks: [], bufferBytes: 0, lastDataAt: Date.now(), retryCount: 0 };
         activePipes.set(channelId, pipe);
 
         const httpModule = require(targetUrl.startsWith('https') ? 'https' : 'http');
@@ -3602,7 +3602,6 @@ app.get('/live/:username/:password/:streamId', async (req, res) => {
           headers: { 'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20', 'Connection': 'keep-alive' },
         }, (sourceRes) => {
           if (sourceRes.statusCode >= 300 && sourceRes.statusCode < 400 && sourceRes.headers.location) {
-            // Follow redirect
             const rReq = httpModule.get(sourceRes.headers.location, { timeout: 15000 }, (rRes) => {
               pipe.sourceReq = rReq;
               rRes.on('data', (chunk) => {
@@ -3612,10 +3611,10 @@ app.get('/live/:username/:password/:streamId', async (req, res) => {
                   try { c.write(chunk); } catch { pipe.clients.delete(c); }
                 }
               });
-              rRes.on('end', () => { activePipes.delete(channelId); });
-              rRes.on('error', () => { activePipes.delete(channelId); });
+              rRes.on('end', () => handlePipeDisconnect(channelId, targetUrl));
+              rRes.on('error', () => handlePipeDisconnect(channelId, targetUrl));
             });
-            rReq.on('error', () => { activePipes.delete(channelId); });
+            rReq.on('error', () => handlePipeDisconnect(channelId, targetUrl));
             return;
           }
           sourceRes.on('data', (chunk) => {
@@ -3625,10 +3624,10 @@ app.get('/live/:username/:password/:streamId', async (req, res) => {
               try { c.write(chunk); } catch { pipe.clients.delete(c); }
             }
           });
-          sourceRes.on('end', () => { activePipes.delete(channelId); });
-          sourceRes.on('error', () => { activePipes.delete(channelId); });
+          sourceRes.on('end', () => handlePipeDisconnect(channelId, targetUrl));
+          sourceRes.on('error', () => handlePipeDisconnect(channelId, targetUrl));
         });
-        sourceReq.on('error', () => { activePipes.delete(channelId); });
+        sourceReq.on('error', () => handlePipeDisconnect(channelId, targetUrl));
         pipe.sourceReq = sourceReq;
       }
 
