@@ -123,11 +123,31 @@ const DvrMonitor = () => {
     return `${s}s`;
   };
 
+  const [togglingAll, setTogglingAll] = useState(false);
+
   const activeList = dvrList.filter(d => d.active);
   const inactiveList = dvrList.filter(d => !d.active);
   const totalViewers = activeList.reduce((a, d) => a + d.viewers, 0);
   const totalSize = activeList.reduce((a, d) => a + d.sizeMB, 0);
   const channelsWithErrors = dvrList.filter(d => (d.errorCount || 0) > 0).length;
+  const allOnDemand = dvrList.length > 0 && dvrList.every(d => !d.keepAlive);
+  const allKeepAlive = dvrList.length > 0 && dvrList.every(d => d.keepAlive);
+
+  const toggleAllOnDemand = async (setOnDemand: boolean) => {
+    setTogglingAll(true);
+    try {
+      const targets = dvrList.filter(d => setOnDemand ? d.keepAlive : !d.keepAlive);
+      for (const ch of targets) {
+        await apiPut(`/api/admin/channels/${ch.channelId}/dvr-mode`, { keep_alive: !setOnDemand });
+      }
+      toast.success(setOnDemand ? 'Todos los canales en modo Por Demanda' : 'Todos los canales en modo Siempre Activo');
+      fetchData();
+    } catch (err: any) {
+      toast.error('Error: ' + err.message);
+    } finally {
+      setTogglingAll(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -184,8 +204,30 @@ const DvrMonitor = () => {
         </Card>
       </div>
 
-      {/* Diagnostics button */}
-      <div className="flex justify-end">
+      {/* Action buttons */}
+      <div className="flex justify-between items-center flex-wrap gap-2">
+        <div className="flex gap-2">
+          <Button
+            variant={allOnDemand ? 'default' : 'outline'}
+            size="sm"
+            disabled={togglingAll || dvrList.length === 0}
+            onClick={() => toggleAllOnDemand(!allOnDemand)}
+            className="gap-1"
+          >
+            <Timer className="w-4 h-4" />
+            {togglingAll ? 'Aplicando...' : allOnDemand ? 'Todos Por Demanda ✓' : 'Todos Por Demanda'}
+          </Button>
+          <Button
+            variant={allKeepAlive ? 'default' : 'outline'}
+            size="sm"
+            disabled={togglingAll || dvrList.length === 0}
+            onClick={() => toggleAllOnDemand(false)}
+            className="gap-1"
+          >
+            <Zap className="w-4 h-4" />
+            {allKeepAlive ? 'Todos Siempre Activo ✓' : 'Todos Siempre Activo'}
+          </Button>
+        </div>
         <Button 
           variant="outline" 
           size="sm" 
