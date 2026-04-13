@@ -254,18 +254,27 @@ const ChannelsManager = () => {
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h2 className="font-display font-semibold text-xl text-foreground">Canales ({channels.length})</h2>
-        <div className="flex gap-2 flex-wrap">
-          {/* Filter: show only running */}
+        <div className="flex gap-2 flex-wrap items-center">
+          {/* Summary of on-demand connections */}
           {cacheStatus.some(c => c.transcoder_active) && (
-            <Button
-              onClick={() => setFilterRunning(!filterRunning)}
-              variant={filterRunning ? 'default' : 'outline'}
-              className={`gap-2 ${filterRunning ? 'gradient-primary text-primary-foreground' : 'border-border text-foreground'}`}
-              size="sm"
-            >
-              <Activity className="w-4 h-4" />
-              En vivo ({cacheStatus.filter(c => c.transcoder_active).length})
-            </Button>
+            <>
+              <div className="text-xs text-muted-foreground flex items-center gap-1 mr-1">
+                <Zap className="w-3.5 h-3.5 text-primary" />
+                <span className="font-semibold text-primary">{cacheStatus.filter(c => c.transcoder_active).length}</span> bajo demanda
+                <span className="mx-1">·</span>
+                <Users className="w-3.5 h-3.5 text-primary" />
+                <span className="font-semibold text-primary">{cacheStatus.reduce((s, c) => s + c.clients, 0)}</span> clientes
+              </div>
+              <Button
+                onClick={() => setFilterRunning(!filterRunning)}
+                variant={filterRunning ? 'default' : 'outline'}
+                className={`gap-2 ${filterRunning ? 'gradient-primary text-primary-foreground' : 'border-border text-foreground'}`}
+                size="sm"
+              >
+                <Activity className="w-4 h-4" />
+                {filterRunning ? 'Ver todos' : 'Solo activos'}
+              </Button>
+            </>
           )}
           {selectedIds.size > 0 && (
             <Button onClick={handleBatchDelete} variant="destructive" size="sm" className="gap-2">
