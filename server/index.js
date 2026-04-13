@@ -4864,17 +4864,12 @@ const handleApkStreamRequest = async (req, res) => {
       }));
     } catch { /* sin anuncios */ }
 
-    let dvrDelay = 0;
-    if (localCh.length > 0 && localCh[0].dvr_enabled && dvrActive) {
-      dvrDelay = isDvrReady(channelId) ? 500 : 3500;
-    }
-
     res.json({
       streamUrl,
       quality: req.query.quality || 'auto',
       availableQualities: ['auto', 'high', 'medium', 'low'],
-      dvr: dvrActive,
-      dvrDelay,
+      dvr: false,
+      dvrDelay: 0,
       ads,
       ad: ads.length > 0 ? ads[0] : null,
     });
