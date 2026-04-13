@@ -19,7 +19,6 @@ interface Channel {
   url: string;
   category: string;
   is_active: boolean;
-  dvr_enabled: boolean;
   sort_order: number;
   logo_url: string | null;
 }
@@ -54,7 +53,6 @@ const ChannelsManager = () => {
   const [cacheStatus, setCacheStatus] = useState<CacheStatus[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [filterRunning, setFilterRunning] = useState(false);
-  const [dvrAllLoading, setDvrAllLoading] = useState(false);
   const logoInputRef = useRef<HTMLInputElement>(null);
   const cacheIntervalRef = useRef<ReturnType<typeof setInterval>>();
 
@@ -211,46 +209,6 @@ const ChannelsManager = () => {
     }
   };
 
-  const enableAllDVR = async () => {
-    if (!confirm(`¿Activar DVR en TODOS los canales activos? FFmpeg se iniciará secuencialmente.`)) return;
-    setDvrAllLoading(true);
-    try {
-      const data = await apiPost('/api/admin/dvr/enable-all', {});
-      toast({ title: '📹 DVR Global Activado', description: data.message });
-      fetchChannels();
-    } catch (err: any) {
-      toast({ title: 'Error', description: err.message, variant: 'destructive' });
-    }
-    setDvrAllLoading(false);
-  };
-
-  const disableAllDVR = async () => {
-    if (!confirm(`¿Detener TODOS los DVR y liberar recursos? Esto desactivará el DVR en todos los canales.`)) return;
-    setDvrAllLoading(true);
-    try {
-      const data = await apiPost('/api/admin/dvr/disable-all', {});
-      toast({ title: '⏹ DVR Global Detenido', description: data.message });
-      fetchChannels();
-    } catch (err: any) {
-      toast({ title: 'Error', description: err.message, variant: 'destructive' });
-    }
-    setDvrAllLoading(false);
-  };
-
-
-
-  const toggleDVR = async (ch: Channel) => {
-    try {
-      if (isLovablePreview()) {
-        toast({ title: 'DVR solo disponible en VPS', variant: 'destructive' });
-        return;
-      }
-      await apiPut(`/api/admin/channels/${ch.id}/dvr`, { dvr_enabled: !ch.dvr_enabled });
-      toast({ 
-        title: !ch.dvr_enabled ? '📹 DVR activado' : 'DVR desactivado',
-        description: !ch.dvr_enabled 
-          ? `${ch.name} se grabará en MP4 cuando alguien lo vea` 
-          : `${ch.name} ya no se grabará`
       });
       fetchChannels();
     } catch (err: any) {
