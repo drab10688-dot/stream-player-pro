@@ -1725,7 +1725,9 @@ app.get('/api/channels/cache-status', authAdmin, async (req, res) => {
       // Also check activePipes for TS streams
       const pipe = activePipes.get(ch.id);
       const isActive = !!entry || !!pipe;
-      const clientCount = entry ? (entry.clients || 0) : (pipe ? pipe.clients.size : 0);
+      // Para HLS-proxy, usar el tracker de segmentos (más preciso)
+      const hlsClients = getHLSClientCount(ch.id);
+      const clientCount = entry ? (entry.type === 'hls-proxy' ? hlsClients : Math.max(0, entry.clients)) : (pipe ? pipe.clients.size : hlsClients);
       const pipeType = entry ? (entry.type || 'hls-proxy') : (pipe ? 'pipe-proxy' : null);
       const startTime = entry ? (entry.startTime || entry.lastAccess) : (pipe ? pipe.lastDataAt : null);
 
