@@ -4780,49 +4780,25 @@ const handleApkStreamRequest = async (req, res) => {
 
     // Verificar si es un canal LOCAL (de la BD) → servir via restream
     const { rows: localCh } = await pool.query(
-      'SELECT id, name, url, category, logo_url, stream_mode, dvr_enabled FROM channels WHERE id = $1 AND is_active = true', [channelId]
+      'SELECT id, name, url, category, logo_url, stream_mode FROM channels WHERE id = $1 AND is_active = true', [channelId]
     );
 
     let streamUrl;
     let channelName = null;
     let channelCategory = null;
     let channelLogo = null;
-    let dvrActive = false;
-    
 
     if (localCh.length > 0) {
       const ch = localCh[0];
       const sourceUrl = ch.url;
 
-      // DVR: para la APK siempre devolver la playlist local si el canal tiene DVR.
-      // El endpoint de playlist ya maneja el calentamiento y reintentos sin pantalla blanca.
-      if (ch.dvr_enabled) {
-        const dvr = activeDVR.has(channelId) ? activeDVR.get(channelId) : startDVR(channelId, sourceUrl);
-
-        if (dvr || isDvrReady(channelId)) {
-          const baseUrl = getRequestBaseUrl(req);
-          const token = req.headers.authorization?.replace('Bearer ', '') || '';
-          streamUrl = `${baseUrl}/api/dvr/playlist/${channelId}?token=${encodeURIComponent(token)}`;
-          dvrActive = true;
-        } else {
-          // Fallback DVR no pudo iniciar: usar restream 1-a-N local
-          const baseUrl = getRequestBaseUrl(req);
-          const isTsStream = /\.ts(\?|$)/i.test(sourceUrl) || /\/\d+\.ts(\?|$)/i.test(sourceUrl);
-          if (isTsStream) {
-            streamUrl = `${baseUrl}/api/stream-pipe/${channelId}`;
-          } else {
-            streamUrl = `${baseUrl}/api/restream/${channelId}`;
-          }
-        }
+      // Proxy 1-a-N estricto: NUNCA exponer URL del proveedor
+      const baseUrl = getRequestBaseUrl(req);
+      const isTsStream = /\.ts(\?|$)/i.test(sourceUrl) || /\/\d+\.ts(\?|$)/i.test(sourceUrl);
+      if (isTsStream) {
+        streamUrl = `${baseUrl}/api/stream-pipe/${channelId}`;
       } else {
-        // Sin DVR: siempre usar proxy local 1-a-N (NUNCA exponer URL del proveedor)
-        const baseUrl = getRequestBaseUrl(req);
-        const isTsStream = /\.ts(\?|$)/i.test(sourceUrl) || /\/\d+\.ts(\?|$)/i.test(sourceUrl);
-        if (isTsStream) {
-          streamUrl = `${baseUrl}/api/stream-pipe/${channelId}`;
-        } else {
-          streamUrl = `${baseUrl}/api/restream/${channelId}`;
-        }
+        streamUrl = `${baseUrl}/api/restream/${channelId}`;
       }
 
       channelName = ch.name;
