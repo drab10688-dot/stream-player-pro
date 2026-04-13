@@ -2,9 +2,10 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Video, RefreshCw, Users, HardDrive, RotateCcw, Clock, Disc, Power, PowerOff, AlertTriangle, ChevronDown, ChevronUp, Search, CheckCircle, XCircle } from 'lucide-react';
-import { apiGet } from '@/lib/api';
+import { Video, RefreshCw, Users, HardDrive, RotateCcw, Clock, Disc, Power, PowerOff, AlertTriangle, ChevronDown, ChevronUp, Search, CheckCircle, XCircle, Zap, Timer } from 'lucide-react';
+import { apiGet, apiPut } from '@/lib/api';
 import { toast } from 'sonner';
+import { Switch } from '@/components/ui/switch';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface DvrStatus {
@@ -19,6 +20,7 @@ interface DvrStatus {
   format: string;
   enabled?: boolean;
   active?: boolean;
+  keepAlive?: boolean;
   
   ready?: boolean;
   lastError?: string | null;
@@ -91,6 +93,16 @@ const DvrMonitor = () => {
       const data = await apiGet(`/api/admin/dvr/diagnostics?channelId=${channelId}`);
       setChannelDiag(data);
       setExpandedChannel(channelId);
+    } catch (err: any) {
+      toast.error('Error: ' + err.message);
+    }
+  };
+
+  const toggleKeepAlive = async (channelId: string, currentValue: boolean) => {
+    try {
+      await apiPut(`/api/admin/channels/${channelId}/dvr-mode`, { keep_alive: !currentValue });
+      toast.success(!currentValue ? 'DVR siempre activo' : 'DVR por demanda');
+      fetchData();
     } catch (err: any) {
       toast.error('Error: ' + err.message);
     }
@@ -329,6 +341,19 @@ const DvrMonitor = () => {
                           <Disc className="w-3 h-3 animate-pulse" /> REC
                         </Badge>
                       )}
+                      {/* Modo DVR: siempre activo vs por demanda */}
+                      <div 
+                        className="flex items-center gap-1.5 ml-1"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <Timer className="w-3 h-3 text-muted-foreground" />
+                        <span className="text-[10px] text-muted-foreground">{dvr.keepAlive ? 'Siempre' : 'Demanda'}</span>
+                        <Switch
+                          checked={dvr.keepAlive || false}
+                          onCheckedChange={() => toggleKeepAlive(dvr.channelId, dvr.keepAlive || false)}
+                          className="scale-75"
+                        />
+                      </div>
                       {expandedChannel === dvr.channelId 
                         ? <ChevronUp className="w-4 h-4 text-muted-foreground" />
                         : <ChevronDown className="w-4 h-4 text-muted-foreground" />
@@ -443,9 +468,11 @@ const DvrMonitor = () => {
                           {dvr.channelName || dvr.channelId.slice(0, 8)}
                         </p>
                         <p className="text-xs text-muted-foreground">
-                          {dvr.lastError 
-                            ? <span className="text-destructive">⚠ {dvr.lastError.substring(0, 80)}</span>
-                            : 'Esperando pre-calentamiento...'
+                          {dvr.keepAlive 
+                            ? 'Siempre activo — esperando arranque...'
+                            : dvr.lastError 
+                              ? <span className="text-destructive">⚠ {dvr.lastError.substring(0, 80)}</span>
+                              : 'Por demanda — esperando conexión de cliente...'
                           }
                         </p>
                       </div>
@@ -455,8 +482,18 @@ const DvrMonitor = () => {
                         <Badge variant="destructive" className="text-[10px]">{dvr.errorCount} errores</Badge>
                       )}
                       <Badge variant="outline" className="gap-1 text-xs text-muted-foreground">
-                        <Clock className="w-3 h-3" /> Standby
+                        <Clock className="w-3 h-3" /> {dvr.keepAlive ? 'Siempre' : 'Demanda'}
                       </Badge>
+                      <div 
+                        className="flex items-center gap-1"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <Switch
+                          checked={dvr.keepAlive || false}
+                          onCheckedChange={() => toggleKeepAlive(dvr.channelId, dvr.keepAlive || false)}
+                          className="scale-75"
+                        />
+                      </div>
                       {expandedChannel === dvr.channelId 
                         ? <ChevronUp className="w-4 h-4 text-muted-foreground" />
                         : <ChevronDown className="w-4 h-4 text-muted-foreground" />
