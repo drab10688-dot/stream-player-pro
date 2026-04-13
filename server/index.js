@@ -6063,6 +6063,23 @@ function releaseDVR(channelId) {
   dvr.viewers = Math.max(0, dvr.viewers - 1);
   dvr.lastAccess = Date.now();
   console.log(`📹 [DVR ${channelId}] Viewer liberado (${dvr.viewers} restantes)`);
+
+  // Si es por demanda (no keep_alive/preWarmed) y no quedan viewers, apagar DVR tras 30s
+  if (dvr.viewers <= 0 && !dvr.preWarmed) {
+    if (dvr.idleTimer) clearTimeout(dvr.idleTimer);
+    dvr.idleTimer = setTimeout(() => {
+      const current = activeDVR.get(channelId);
+      if (current && current.viewers <= 0 && !current.preWarmed) {
+        console.log(`📹 [DVR ${channelId}] Sin viewers y modo por demanda → apagando DVR`);
+        stopDVR(channelId);
+        // Limpiar archivos
+        const channelDir = path.join(DVR_DIR, channelId);
+        try {
+          fs.readdirSync(channelDir).forEach(f => { try { fs.unlinkSync(path.join(channelDir, f)); } catch {} });
+        } catch {}
+      }
+    }, 30000);
+  }
 }
 
 // API: Iniciar DVR para un canal
@@ -6198,7 +6215,7 @@ app.get('/api/dvr/segments/:channelId', authApk, (req, res) => {
 app.get('/api/admin/dvr/status', authAdmin, async (req, res) => {
   let dvrChannels = [];
   try {
-    const { rows } = await pool.query('SELECT id, name, dvr_enabled FROM channels WHERE dvr_enabled = true ORDER BY name');
+    const { rows } = await pool.query('SELECT id, name, dvr_enabled, keep_alive FROM channels WHERE dvr_enabled = true ORDER BY name');
     dvrChannels = rows;
   } catch {}
 
@@ -6234,6 +6251,7 @@ app.get('/api/admin/dvr/status', authAdmin, async (req, res) => {
       enabled: true,
       active: !!dvr && (dvr.recording || segCount > 0 || hasPlaylist),
       ready: isReady,
+      keepAlive: ch.keep_alive || false,
       lastError: lastError ? lastError.message : null,
       lastErrorAt: lastError ? lastError.timestamp : null,
       errorCount: errors.length,
@@ -6413,14 +6431,26 @@ console.log('📹 DVR Node.js puro habilitado (sin FFmpeg)');
 // =============================================
 async function autoStartDVR() {
   try {
-    const { rows } = await pool.query('SELECT id, name, url FROM channels WHERE dvr_enabled = true AND is_active = true ORDER BY name');
+    // Solo pre-calentar canales con keep_alive=true (siempre activo)
+    const { rows } = await pool.query('SELECT id, name, url, keep_alive FROM channels WHERE dvr_enabled = true AND is_active = true ORDER BY name');
+    const alwaysOn = rows.filter(r => r.keep_alive);
+    const onDemand = rows.filter(r => !r.keep_alive);
+    
     if (rows.length === 0) {
       console.log('📹 [DVR PRE] No hay canales con DVR habilitado');
       return;
     }
-    console.log(`📹 [DVR PRE] Pre-calentando ${rows.length} canales (Node.js puro, escalonado)...`);
+    
+    console.log(`📹 [DVR PRE] ${alwaysOn.length} siempre activos, ${onDemand.length} por demanda`);
+    
+    if (alwaysOn.length === 0) {
+      console.log('📹 [DVR PRE] Ningún canal en modo "siempre activo", DVR por demanda esperando conexiones');
+      return;
+    }
+    
+    console.log(`📹 [DVR PRE] Pre-calentando ${alwaysOn.length} canales siempre activos...`);
     let started = 0;
-    for (const ch of rows) {
+    for (const ch of alwaysOn) {
       if (!activeDVR.has(ch.id)) {
         try {
           const dvr = startDVR(ch.id, ch.url);
@@ -6436,7 +6466,7 @@ async function autoStartDVR() {
         }
       }
     }
-    console.log(`📹 [DVR PRE] ✅ ${started}/${rows.length} canales pre-calentados`);
+    console.log(`📹 [DVR PRE] ✅ ${started}/${alwaysOn.length} canales pre-calentados`);
   } catch (err) {
     console.error('📹 [DVR PRE] Error general:', err.message);
   }
