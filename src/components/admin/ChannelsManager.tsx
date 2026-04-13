@@ -449,24 +449,33 @@ const ChannelsManager = () => {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className="font-semibold text-foreground text-sm truncate">{ch.name}</p>
-                        {cache?.transcoder_active && (
+                        {cache?.transcoder_active ? (
                           <div className="flex items-center gap-1">
-                            <Badge variant="outline" className="text-[10px] py-0 px-1.5 border-green-500/30 text-green-500 gap-1">
-                              <Activity className="w-2.5 h-2.5" />
-                              {cache.transcoder_ready ? 'LIVE' : 'Iniciando'}
+                            <Badge variant="outline" className="text-[10px] py-0 px-1.5 border-primary/30 text-primary gap-1">
+                              <Zap className="w-2.5 h-2.5" />
+                              {cache.transcoder_ready ? 'Bajo Demanda' : 'Conectando...'}
                             </Badge>
-                            {cache.cache_segments > 0 && (
-                              <Badge variant="outline" className="text-[10px] py-0 px-1.5 border-blue-500/30 text-blue-500 gap-1">
-                                <HardDrive className="w-2.5 h-2.5" />
-                                {cache.cache_size_mb}MB · {cache.cache_segments} seg
+                            <Badge variant="outline" className="text-[10px] py-0 px-1.5 border-primary/30 text-primary gap-1">
+                              {cache.transcoder_type === 'pipe-proxy' ? 'TS' : 'HLS'}
+                            </Badge>
+                            {cache.clients > 0 && (
+                              <Badge variant="outline" className="text-[10px] py-0 px-1.5 border-accent/50 text-accent-foreground gap-1">
+                                <Users className="w-2.5 h-2.5" />
+                                {cache.clients} viendo
                               </Badge>
                             )}
-                            {cache.clients > 0 && (
-                              <Badge variant="outline" className="text-[10px] py-0 px-1.5 border-purple-500/30 text-purple-500">
-                                {cache.clients} 👤
+                            {cache.cache_segments > 0 && (
+                              <Badge variant="outline" className="text-[10px] py-0 px-1.5 border-muted text-muted-foreground gap-1">
+                                <HardDrive className="w-2.5 h-2.5" />
+                                {cache.cache_size_mb}MB
                               </Badge>
                             )}
                           </div>
+                        ) : (
+                          <Badge variant="outline" className="text-[10px] py-0 px-1.5 border-muted text-muted-foreground gap-1">
+                            <ZapOff className="w-2.5 h-2.5" />
+                            Sin conexión
+                          </Badge>
                         )}
                       </div>
                       <p className="text-xs text-muted-foreground truncate">{ch.category} · {ch.url.substring(0, 50)}{ch.url.length > 50 ? '...' : ''}</p>
