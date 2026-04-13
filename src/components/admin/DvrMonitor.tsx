@@ -468,9 +468,11 @@ const DvrMonitor = () => {
                           {dvr.channelName || dvr.channelId.slice(0, 8)}
                         </p>
                         <p className="text-xs text-muted-foreground">
-                          {dvr.lastError 
-                            ? <span className="text-destructive">⚠ {dvr.lastError.substring(0, 80)}</span>
-                            : 'Esperando pre-calentamiento...'
+                          {dvr.keepAlive 
+                            ? 'Siempre activo — esperando arranque...'
+                            : dvr.lastError 
+                              ? <span className="text-destructive">⚠ {dvr.lastError.substring(0, 80)}</span>
+                              : 'Por demanda — esperando conexión de cliente...'
                           }
                         </p>
                       </div>
@@ -480,8 +482,18 @@ const DvrMonitor = () => {
                         <Badge variant="destructive" className="text-[10px]">{dvr.errorCount} errores</Badge>
                       )}
                       <Badge variant="outline" className="gap-1 text-xs text-muted-foreground">
-                        <Clock className="w-3 h-3" /> Standby
+                        <Clock className="w-3 h-3" /> {dvr.keepAlive ? 'Siempre' : 'Demanda'}
                       </Badge>
+                      <div 
+                        className="flex items-center gap-1"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <Switch
+                          checked={dvr.keepAlive || false}
+                          onCheckedChange={() => toggleKeepAlive(dvr.channelId, dvr.keepAlive || false)}
+                          className="scale-75"
+                        />
+                      </div>
                       {expandedChannel === dvr.channelId 
                         ? <ChevronUp className="w-4 h-4 text-muted-foreground" />
                         : <ChevronDown className="w-4 h-4 text-muted-foreground" />
