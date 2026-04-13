@@ -1517,9 +1517,26 @@ function releaseTranscoder(channelId) {
 
   entry.clients--;
   if (entry.clients <= 0) {
+    entry.clients = 0;
     if (entry.keepAlive) {
-      entry.clients = 0;
       console.log(`💚 [${channelId}] Keep-alive activo, ${entry.type} permanece encendido`);
+      return;
+    }
+    // Para HLS-proxy, verificar si hay clientes activos via tracker de segmentos
+    if (entry.type === 'hls-proxy') {
+      setTimeout(() => {
+        const current = activeTranscoders.get(channelId);
+        if (current && current.clients <= 0 && !current.keepAlive) {
+          const hlsClients = getHLSClientCount(channelId);
+          if (hlsClients > 0) {
+            console.log(`📡 [${channelId}] HLS proxy: ${hlsClients} clientes activos via segmentos, manteniendo`);
+            return;
+          }
+          console.log(`🔴 [${channelId}] Sin clientes HLS, deteniendo proxy`);
+          stopHLSKeepAlivePoller(channelId);
+          activeTranscoders.delete(channelId);
+        }
+      }, 45000); // 45s para dar margen a las solicitudes de segmentos HLS
       return;
     }
     setTimeout(() => {
