@@ -5608,6 +5608,9 @@ function startDVR(channelId, sourceUrl) {
     _buffer: [],
     _bufferBytes: 0,
     _tsPending: Buffer.alloc(0), // buffer pendiente para alinear paquetes TS
+    _segAccum: [],
+    _segAccumBytes: 0,
+    _awaitingInitialPat: !isHLS,
     knownSegments: new Set(),
     segmentDurations: [],  // duración real de cada segmento (para HLS)
   };
@@ -5826,10 +5829,24 @@ function startTSDVR(channelId, sourceUrl, dvr, channelDir) {
 
     if (aligned.length === 0) return;
 
+    let cleanAligned = aligned;
+    if (dvr._awaitingInitialPat) {
+      const initialPatPos = findPATInBuffer(aligned, 0);
+      if (initialPatPos < 0) return;
+      cleanAligned = aligned.slice(initialPatPos);
+      dvr._awaitingInitialPat = false;
+      dvr._segStartTime = Date.now();
+      dvr._segAccum = [];
+      dvr._segAccumBytes = 0;
+      console.log(`🎯 [DVR ${channelId}] Inicio alineado al primer PAT para evitar pixelación`);
+    }
+
+    if (cleanAligned.length === 0) return;
+
     if (!dvr._segAccum) dvr._segAccum = [];
-    dvr._segAccum.push(aligned);
+    dvr._segAccum.push(cleanAligned);
     if (!dvr._segAccumBytes) dvr._segAccumBytes = 0;
-    dvr._segAccumBytes += aligned.length;
+    dvr._segAccumBytes += cleanAligned.length;
 
     const elapsed = (Date.now() - dvr._segStartTime) / 1000;
 
@@ -5922,6 +5939,10 @@ function startTSDVR(channelId, sourceUrl, dvr, channelDir) {
       dvr._segStartTime = Date.now();
       dvr._segAccum = [];
       dvr._segAccumBytes = 0;
+      dvr._tsPending = Buffer.alloc(0);
+      dvr._buffer = [];
+      dvr._bufferBytes = 0;
+      dvr._awaitingInitialPat = true;
       console.log(`✅ [DVR ${channelId}] Tapeando datos del Pipe Proxy (sin conexión extra al origen)`);
 
       // Backup timer
@@ -5953,6 +5974,10 @@ function startTSDVR(channelId, sourceUrl, dvr, channelDir) {
       dvr._segStartTime = Date.now();
       dvr._segAccum = [];
       dvr._segAccumBytes = 0;
+      dvr._tsPending = Buffer.alloc(0);
+      dvr._buffer = [];
+      dvr._bufferBytes = 0;
+      dvr._awaitingInitialPat = true;
 
       sourceRes.on('data', (chunk) => {
         dvr.lastAccess = Date.now();
