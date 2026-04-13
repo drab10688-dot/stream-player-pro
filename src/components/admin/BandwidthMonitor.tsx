@@ -14,7 +14,7 @@ interface BandwidthData {
 interface ChannelBandwidth {
   channel_id: string;
   channel_name: string;
-  keep_alive: boolean;
+  
   clients: number;
   rx_mbps: number;
   tx_mbps: number;
@@ -214,11 +214,8 @@ const BandwidthMonitor = () => {
                   .map((ch) => (
                   <div key={ch.channel_id} className="flex items-center justify-between gap-2 p-2.5 rounded-lg bg-muted/30">
                     <div className="flex items-center gap-2 min-w-0 flex-1">
-                      <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${ch.keep_alive ? 'bg-emerald-400' : 'bg-yellow-400'}`} />
+                      <div className={`w-2.5 h-2.5 rounded-full shrink-0 bg-emerald-400`} />
                       <p className="text-sm text-foreground truncate">{ch.channel_name}</p>
-                      {ch.keep_alive && (
-                        <span className="text-[9px] bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded shrink-0">KA</span>
-                      )}
                     </div>
                     <div className="flex items-center gap-3 shrink-0 text-xs">
                       <div className="flex items-center gap-1">
