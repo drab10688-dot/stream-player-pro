@@ -2450,6 +2450,8 @@ app.get('/api/hls-local/:channelId/:qualityOrFile/:filename?', (req, res) => {
 // Proxy de segmentos HLS remotos (para canales que ya son HLS)
 app.get('/api/hls-segment/:channelId', async (req, res) => {
   try {
+    const { channelId } = req.params;
+    trackHLSClient(channelId, req);
     const segmentUrl = req.query.url;
     if (!segmentUrl) return res.status(400).send('Missing url');
     const data = await fetchSegment(segmentUrl);
