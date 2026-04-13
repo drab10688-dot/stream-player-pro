@@ -204,8 +204,30 @@ const DvrMonitor = () => {
         </Card>
       </div>
 
-      {/* Diagnostics button */}
-      <div className="flex justify-end">
+      {/* Action buttons */}
+      <div className="flex justify-between items-center flex-wrap gap-2">
+        <div className="flex gap-2">
+          <Button
+            variant={allOnDemand ? 'default' : 'outline'}
+            size="sm"
+            disabled={togglingAll || dvrList.length === 0}
+            onClick={() => toggleAllOnDemand(!allOnDemand)}
+            className="gap-1"
+          >
+            <Timer className="w-4 h-4" />
+            {togglingAll ? 'Aplicando...' : allOnDemand ? 'Todos Por Demanda ✓' : 'Todos Por Demanda'}
+          </Button>
+          <Button
+            variant={allKeepAlive ? 'default' : 'outline'}
+            size="sm"
+            disabled={togglingAll || dvrList.length === 0}
+            onClick={() => toggleAllOnDemand(false)}
+            className="gap-1"
+          >
+            <Zap className="w-4 h-4" />
+            {allKeepAlive ? 'Todos Siempre Activo ✓' : 'Todos Siempre Activo'}
+          </Button>
+        </div>
         <Button 
           variant="outline" 
           size="sm" 
