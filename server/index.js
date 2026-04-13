@@ -3422,47 +3422,7 @@ app.get('/live/:username/:password/:streamId', async (req, res) => {
     const channel = channels.find(ch => ch.id === channelId);
     if (!channel) return res.status(404).send('Channel not found');
 
-    // DVR: para reproductores externos siempre servir la playlist local
-    // aunque aún esté calentando, para activar el DVR bajo demanda correctamente.
-    if (channel.dvr_enabled) {
-      if (!activeDVR.has(channelId)) {
-        try {
-          const { rows: chRows } = await pool.query('SELECT url FROM channels WHERE id = $1 AND dvr_enabled = true', [channelId]);
-          if (chRows.length > 0) startDVR(channelId, chRows[0].url);
-        } catch (e) {
-          console.error(`DVR auto-start error for ${channelId}:`, e.message);
-        }
-      }
-
-      const dvrToken = jwt.sign(
-        { id: client.id, username: client.username, xtreamUser: username, xtreamPass: password },
-        JWT_SECRET,
-        { expiresIn: '4h' }
-      );
-
-      const baseUrl = getRequestBaseUrl(req);
-      const channelDir = path.join(DVR_DIR || '/data/dvr', channelId);
-      const playlistPath = path.join(channelDir, 'live.m3u8');
-      const encodedToken = encodeURIComponent(dvrToken);
-      const fileBaseUrl = `${baseUrl}/api/dvr/file/${channelId}`;
-
-      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      res.setHeader('Cache-Control', 'no-cache, no-store');
-      res.setHeader('X-Accel-Buffering', 'no');
-
-      if (fs.existsSync(playlistPath)) {
-        let m3u8 = fs.readFileSync(playlistPath, 'utf8');
-        // Reescribir segmentos .ts → URLs absolutas con token
-        m3u8 = m3u8.replace(/^(segment\d+\.ts)$/gm, `${fileBaseUrl}/$1?token=${encodedToken}`);
-        if (!m3u8.includes('EXT-X-VERSION')) {
-          m3u8 = m3u8.replace('#EXTM3U', '#EXTM3U\n#EXT-X-VERSION:3');
-        }
-        return res.send(m3u8);
-      }
-
-      return res.send('#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:6\n#EXT-X-MEDIA-SEQUENCE:0\n');
-    }
+    // Proxy 1-a-N estricto: todo pasa por el servidor
 
     const targetUrl = channel.url;
     const isHLS = /\.m3u8?(\?|$)/i.test(targetUrl);
