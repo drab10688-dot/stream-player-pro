@@ -306,6 +306,30 @@ const ChannelsManager = () => {
               </Button>
             </>
           )}
+          {!isLovablePreview() && (
+            <div className="flex gap-1">
+              <Button
+                onClick={() => handleActivateAll(true)}
+                disabled={activatingAll}
+                variant="outline"
+                size="sm"
+                className="gap-1.5 border-primary/30 text-primary hover:bg-primary/10"
+              >
+                {activatingAll ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
+                Activar todos
+              </Button>
+              <Button
+                onClick={() => handleActivateAll(false)}
+                disabled={activatingAll}
+                variant="outline"
+                size="sm"
+                className="gap-1.5 border-destructive/30 text-destructive hover:bg-destructive/10"
+              >
+                <ZapOff className="w-3.5 h-3.5" />
+                Bajo demanda
+              </Button>
+            </div>
+          )}
           {selectedIds.size > 0 && (
             <Button onClick={handleBatchDelete} variant="destructive" size="sm" className="gap-2">
               <Trash2 className="w-4 h-4" /> Eliminar ({selectedIds.size})
