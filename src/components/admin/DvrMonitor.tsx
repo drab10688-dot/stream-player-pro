@@ -98,6 +98,16 @@ const DvrMonitor = () => {
     }
   };
 
+  const toggleKeepAlive = async (channelId: string, currentValue: boolean) => {
+    try {
+      await apiPut(`/api/admin/channels/${channelId}/dvr-mode`, { keep_alive: !currentValue });
+      toast.success(!currentValue ? 'DVR siempre activo' : 'DVR por demanda');
+      fetchData();
+    } catch (err: any) {
+      toast.error('Error: ' + err.message);
+    }
+  };
+
   useEffect(() => {
     fetchData();
     const interval = setInterval(fetchData, 10000);
