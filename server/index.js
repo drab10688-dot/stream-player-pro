@@ -2879,13 +2879,38 @@ app.get('/api/streams/active', authAdmin, async (req, res) => {
       const channelName = rows.length > 0 ? rows[0].name : 'Desconocido';
       const sourceUrl = rows.length > 0 ? rows[0].url : entry.sourceUrl || 'N/A';
       
+      // Para HLS-proxy, usar el tracker de segmentos (más preciso que entry.clients)
+      const hlsClients = getHLSClientCount(channelId);
+      const clientCount = entry.type === 'hls-proxy' ? hlsClients : Math.max(0, entry.clients);
+      
       streams.push({
         channel_id: channelId,
         channel_name: channelName,
         type: entry.type || 'hls-proxy',
-        clients: Math.max(0, entry.clients),
+        clients: clientCount,
         ready: entry.ready !== undefined ? entry.ready : true,
-        uptime_seconds: Math.floor((Date.now() - entry.lastAccess) / 1000),
+        uptime_seconds: Math.floor((Date.now() - (entry.startTime || entry.lastAccess)) / 1000),
+        source_url: sourceUrl.substring(0, 60) + (sourceUrl.length > 60 ? '...' : ''),
+      });
+    }
+
+    // HLS entries que solo están en hlsClientTracker pero no en activeTranscoders
+    // (puede pasar si el entry fue limpiado pero aún hay actividad de segmentos)
+    for (const [channelId] of hlsClientTracker) {
+      if (seen.has(channelId)) continue;
+      const hlsClients = getHLSClientCount(channelId);
+      if (hlsClients === 0) continue;
+      seen.add(channelId);
+      const { rows } = await pool.query('SELECT name, url FROM channels WHERE id = $1', [channelId]);
+      const channelName = rows.length > 0 ? rows[0].name : 'Desconocido';
+      const sourceUrl = rows.length > 0 ? rows[0].url : 'N/A';
+      streams.push({
+        channel_id: channelId,
+        channel_name: channelName,
+        type: 'hls-proxy',
+        clients: hlsClients,
+        ready: true,
+        uptime_seconds: 0,
         source_url: sourceUrl.substring(0, 60) + (sourceUrl.length > 60 ? '...' : ''),
       });
     }
