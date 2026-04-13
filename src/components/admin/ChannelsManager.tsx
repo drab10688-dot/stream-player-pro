@@ -210,8 +210,36 @@ const ChannelsManager = () => {
     }
   };
 
+  const handleActivateAll = async (activate: boolean) => {
+    if (isLovablePreview()) return;
+    setActivatingAll(true);
+    try {
+      const endpoint = activate ? '/api/channels/activate-all' : '/api/channels/deactivate-all';
+      const data = await apiPost(endpoint, {});
+      toast({
+        title: activate ? `${data.activated} canales activados` : `${data.stopped} canales detenidos`,
+        description: activate
+          ? `${data.already_active} ya estaban activos de ${data.total} totales`
+          : data.note,
+      });
+      fetchCacheStatus();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+    setActivatingAll(false);
+  };
 
-  const handleM3UImport = async () => {
+  const toggleKeepAlive = async (channelId: string, enabled: boolean) => {
+    if (isLovablePreview()) return;
+    try {
+      await apiPost(`/api/channels/${channelId}/keep-alive`, { enabled });
+      toast({ title: enabled ? 'Canal activado permanente' : 'Canal vuelto a bajo demanda' });
+      fetchCacheStatus();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+  };
+
     if (!m3uContent.trim() && !m3uUrl.trim()) {
       toast({ title: 'Error', description: 'Pega el contenido M3U o ingresa una URL', variant: 'destructive' });
       return;
