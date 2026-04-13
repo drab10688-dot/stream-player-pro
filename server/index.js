@@ -1548,7 +1548,7 @@ async function initKeepAliveChannels() {
 app.get('/api/channels/cache-status', authAdmin, async (req, res) => {
   try {
     const { rows } = await pool.query(
-      'SELECT id, name, keep_alive, is_active FROM channels ORDER BY sort_order'
+      'SELECT id, name, is_active FROM channels ORDER BY sort_order'
     );
     const status = rows.map(ch => {
       const entry = activeTranscoders.get(ch.id);
@@ -1580,7 +1580,7 @@ app.get('/api/channels/cache-status', authAdmin, async (req, res) => {
       return {
         id: ch.id,
         name: ch.name,
-        keep_alive: ch.keep_alive,
+        keep_alive: false,
         is_active: ch.is_active,
         transcoder_active: !!entry,
         transcoder_ready: entry?.ready || false,
@@ -2408,7 +2408,7 @@ app.post('/api/channels/diagnose', authAdmin, async (req, res) => {
 app.get('/api/channels/export', authAdmin, async (req, res) => {
   try {
     const { rows: channels } = await pool.query(
-      `SELECT name, url, category, logo_url, is_active, keep_alive, sort_order, stream_mode, dvr_enabled FROM channels ORDER BY sort_order`
+      `SELECT name, url, category, logo_url, is_active, sort_order, stream_mode FROM channels ORDER BY sort_order`
     );
     const exportData = {
       version: 1,
@@ -2451,8 +2451,8 @@ app.post('/api/channels/import-sync', authAdmin, async (req, res) => {
       }
       try {
         await pool.query(
-          `INSERT INTO channels (name, url, category, logo_url, is_active, keep_alive, sort_order, stream_mode, dvr_enabled) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-          [ch.name, ch.url, ch.category || 'General', ch.logo_url || null, ch.is_active !== false, false, ch.sort_order || 0, ch.stream_mode || 'direct', ch.dvr_enabled || false]
+          `INSERT INTO channels (name, url, category, logo_url, is_active, sort_order, stream_mode) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [ch.name, ch.url, ch.category || 'General', ch.logo_url || null, ch.is_active !== false, ch.sort_order || 0, ch.stream_mode || 'direct']
         );
         imported++;
       } catch { skipped++; }
@@ -2495,8 +2495,8 @@ app.post('/api/channels/pull-remote', authAdmin, async (req, res) => {
       }
       try {
         await pool.query(
-          `INSERT INTO channels (name, url, category, logo_url, is_active, keep_alive, sort_order, stream_mode, dvr_enabled) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-          [ch.name, ch.url, ch.category || 'General', ch.logo_url || null, ch.is_active !== false, false, ch.sort_order || 0, ch.stream_mode || 'direct', ch.dvr_enabled || false]
+          `INSERT INTO channels (name, url, category, logo_url, is_active, sort_order, stream_mode) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [ch.name, ch.url, ch.category || 'General', ch.logo_url || null, ch.is_active !== false, ch.sort_order || 0, ch.stream_mode || 'direct']
         );
         imported++;
       } catch { skipped++; }
@@ -2514,7 +2514,7 @@ app.post('/api/channels/pull-remote', authAdmin, async (req, res) => {
 // =============================================
 app.post('/api/channels/import-m3u', authAdmin, async (req, res) => {
   try {
-    const { m3u_content, m3u_url, keep_alive } = req.body;
+    const { m3u_content, m3u_url } = req.body;
     let content = m3u_content;
 
     // Si se proporcionó una URL, descargar el contenido
@@ -2586,8 +2586,8 @@ app.post('/api/channels/import-m3u', authAdmin, async (req, res) => {
     for (const ch of channels) {
       try {
         await pool.query(
-          'INSERT INTO channels (name, url, category, logo_url, sort_order, is_active, keep_alive) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-          [ch.name, ch.url, ch.category, ch.logo_url, ch.sort_order, ch.is_active, keep_alive ? true : false]
+          'INSERT INTO channels (name, url, category, logo_url, sort_order, is_active) VALUES ($1, $2, $3, $4, $5, $6)',
+          [ch.name, ch.url, ch.category, ch.logo_url, ch.sort_order, ch.is_active]
         );
         inserted++;
       } catch (err) {
