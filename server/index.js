@@ -2497,7 +2497,7 @@ app.post('/api/channels/diagnose', authAdmin, async (req, res) => {
 // =============================================
 
 // EXPORTAR: genera token base64 con todos los canales
-app.get('/api/channels/export', authAdmin, async (req, res) => {
+app.post('/api/channels/export', authAdmin, async (req, res) => {
   try {
     const { rows: channels } = await pool.query(
       `SELECT name, url, category, logo_url, is_active, sort_order, stream_mode FROM channels ORDER BY sort_order`
