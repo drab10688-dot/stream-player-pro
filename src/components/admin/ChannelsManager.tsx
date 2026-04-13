@@ -240,6 +240,7 @@ const ChannelsManager = () => {
     }
   };
 
+  const handleM3UImport = async () => {
     if (!m3uContent.trim() && !m3uUrl.trim()) {
       toast({ title: 'Error', description: 'Pega el contenido M3U o ingresa una URL', variant: 'destructive' });
       return;
