@@ -1543,6 +1543,92 @@ async function initKeepAliveChannels() {
   console.log('📡 Proxy 1-a-N bajo demanda activo. Sin keep-alive ni DVR.');
 }
 
+// =============================================
+// API: Activar TODOS los canales (conexión permanente al origen)
+// =============================================
+app.post('/api/channels/activate-all', authAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT id, url FROM channels WHERE is_active = true');
+    let activated = 0;
+    for (const ch of rows) {
+      if (!activeTranscoders.has(ch.id) && !activePipes.has(ch.id)) {
+        startKeepAliveChannel(ch.id, ch.url);
+        activated++;
+      }
+    }
+    res.json({ success: true, activated, total: rows.length, already_active: rows.length - activated });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// API: Desactivar TODOS (cerrar conexiones al origen, volver a bajo demanda)
+app.post('/api/channels/deactivate-all', authAdmin, async (req, res) => {
+  try {
+    let stopped = 0;
+    for (const [channelId, entry] of activeTranscoders) {
+      if (entry.clients <= 0) {
+        stopHLSKeepAlivePoller(channelId);
+        if (entry.type === 'ts-segmenter') {
+          if (entry.segmentTimer) clearInterval(entry.segmentTimer);
+          if (entry.sourceReq) try { entry.sourceReq.destroy(); } catch {}
+        }
+        activeTranscoders.delete(channelId);
+        cleanChannelDir(channelId);
+        stopped++;
+      }
+    }
+    for (const [channelId, pipe] of activePipes) {
+      if (!pipe.clients || pipe.clients.size === 0) {
+        if (pipe.sourceReq) try { pipe.sourceReq.destroy(); } catch {}
+        if (pipe.keepAliveInterval) clearInterval(pipe.keepAliveInterval);
+        activePipes.delete(channelId);
+        stopped++;
+      }
+    }
+    res.json({ success: true, stopped, note: 'Canales con clientes activos permanecen encendidos' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// API: Activar/desactivar un canal individual
+app.post('/api/channels/:id/keep-alive', authAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { enabled } = req.body;
+    if (enabled) {
+      const { rows } = await pool.query('SELECT url FROM channels WHERE id = $1 AND is_active = true', [id]);
+      if (rows.length === 0) return res.status(404).json({ error: 'Canal no encontrado o inactivo' });
+      if (!activeTranscoders.has(id) && !activePipes.has(id)) {
+        startKeepAliveChannel(id, rows[0].url);
+      }
+      res.json({ success: true, status: 'activated' });
+    } else {
+      // Stop if no clients
+      const entry = activeTranscoders.get(id);
+      if (entry && entry.clients <= 0) {
+        stopHLSKeepAlivePoller(id);
+        if (entry.type === 'ts-segmenter') {
+          if (entry.segmentTimer) clearInterval(entry.segmentTimer);
+          if (entry.sourceReq) try { entry.sourceReq.destroy(); } catch {}
+        }
+        activeTranscoders.delete(id);
+        cleanChannelDir(id);
+      }
+      const pipe = activePipes.get(id);
+      if (pipe && (!pipe.clients || pipe.clients.size === 0)) {
+        if (pipe.sourceReq) try { pipe.sourceReq.destroy(); } catch {}
+        if (pipe.keepAliveInterval) clearInterval(pipe.keepAliveInterval);
+        activePipes.delete(id);
+      }
+      res.json({ success: true, status: 'deactivated' });
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 // API: Estado de keep-alive y caché de todos los canales
 app.get('/api/channels/cache-status', authAdmin, async (req, res) => {
