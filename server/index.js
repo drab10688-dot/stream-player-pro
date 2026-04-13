@@ -1577,16 +1577,22 @@ app.get('/api/channels/cache-status', authAdmin, async (req, res) => {
           cacheSize = result.size;
         } catch {}
       }
+      // Also check activePipes for TS streams
+      const pipe = activePipes.get(ch.id);
+      const isActive = !!entry || !!pipe;
+      const clientCount = entry ? (entry.clients || 0) : (pipe ? pipe.clients.size : 0);
+      const pipeType = entry ? (entry.type || 'hls-proxy') : (pipe ? 'pipe-proxy' : null);
+      const startTime = entry ? (entry.startTime || entry.lastAccess) : (pipe ? pipe.lastDataAt : null);
+
       return {
         id: ch.id,
         name: ch.name,
-        keep_alive: false,
         is_active: ch.is_active,
-        transcoder_active: !!entry,
-        transcoder_ready: entry?.ready || false,
-        transcoder_type: entry?.type || null,
-        clients: entry?.clients || 0,
-        uptime_seconds: entry ? Math.round((Date.now() - (entry.startTime || entry.lastAccess)) / 1000) : 0,
+        transcoder_active: isActive,
+        transcoder_ready: entry ? (entry.ready || false) : (pipe ? true : false),
+        transcoder_type: pipeType,
+        clients: clientCount,
+        uptime_seconds: startTime ? Math.round((Date.now() - startTime) / 1000) : 0,
         cache_segments: segmentCount,
         cache_size_mb: Math.round(cacheSize / 1024 / 1024 * 10) / 10,
         adaptive: entry?.adaptive || false,
