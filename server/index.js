@@ -1089,6 +1089,48 @@ const HLS_DIR = fs.existsSync('/opt/streambox/hls-cache') ? '/opt/streambox/hls-
 const HLS_CACHE_DIR = fs.existsSync('/opt/streambox/hls-proxy-cache') ? '/opt/streambox/hls-proxy-cache' : '/tmp/streambox-cache';
 const activeTranscoders = new Map(); // channelId -> { ffmpeg, clients, lastAccess, type }
 
+// =============================================
+// HLS Client Tracker: rastrea clientes HLS por actividad de segmentos
+// (los manifiestos HLS son solicitudes instantáneas, no conexiones persistentes)
+// =============================================
+const hlsClientTracker = new Map(); // channelId -> Map<clientKey, lastActivity>
+const HLS_CLIENT_TTL = 30000; // 30s sin solicitar segmentos = desconectado
+
+function trackHLSClient(channelId, req) {
+  const ip = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown';
+  const ua = (req.headers['user-agent'] || '').substring(0, 30);
+  const clientKey = `${ip}_${ua}`;
+  
+  if (!hlsClientTracker.has(channelId)) {
+    hlsClientTracker.set(channelId, new Map());
+  }
+  hlsClientTracker.get(channelId).set(clientKey, Date.now());
+}
+
+function getHLSClientCount(channelId) {
+  const clients = hlsClientTracker.get(channelId);
+  if (!clients) return 0;
+  const now = Date.now();
+  let count = 0;
+  for (const [key, ts] of clients) {
+    if (now - ts < HLS_CLIENT_TTL) count++;
+    else clients.delete(key);
+  }
+  if (clients.size === 0) hlsClientTracker.delete(channelId);
+  return count;
+}
+
+// Limpieza periódica de clientes HLS inactivos
+setInterval(() => {
+  const now = Date.now();
+  for (const [channelId, clients] of hlsClientTracker) {
+    for (const [key, ts] of clients) {
+      if (now - ts > HLS_CLIENT_TTL) clients.delete(key);
+    }
+    if (clients.size === 0) hlsClientTracker.delete(channelId);
+  }
+}, 15000);
+
 // Crear directorios base
 [HLS_DIR, HLS_CACHE_DIR].forEach(dir => {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -1475,9 +1517,26 @@ function releaseTranscoder(channelId) {
 
   entry.clients--;
   if (entry.clients <= 0) {
+    entry.clients = 0;
     if (entry.keepAlive) {
-      entry.clients = 0;
       console.log(`💚 [${channelId}] Keep-alive activo, ${entry.type} permanece encendido`);
+      return;
+    }
+    // Para HLS-proxy, verificar si hay clientes activos via tracker de segmentos
+    if (entry.type === 'hls-proxy') {
+      setTimeout(() => {
+        const current = activeTranscoders.get(channelId);
+        if (current && current.clients <= 0 && !current.keepAlive) {
+          const hlsClients = getHLSClientCount(channelId);
+          if (hlsClients > 0) {
+            console.log(`📡 [${channelId}] HLS proxy: ${hlsClients} clientes activos via segmentos, manteniendo`);
+            return;
+          }
+          console.log(`🔴 [${channelId}] Sin clientes HLS, deteniendo proxy`);
+          stopHLSKeepAlivePoller(channelId);
+          activeTranscoders.delete(channelId);
+        }
+      }, 45000); // 45s para dar margen a las solicitudes de segmentos HLS
       return;
     }
     setTimeout(() => {
@@ -1665,8 +1724,11 @@ app.get('/api/channels/cache-status', authAdmin, async (req, res) => {
       }
       // Also check activePipes for TS streams
       const pipe = activePipes.get(ch.id);
-      const isActive = !!entry || !!pipe;
-      const clientCount = entry ? (entry.clients || 0) : (pipe ? pipe.clients.size : 0);
+      const hlsActivity = getHLSClientCount(ch.id) > 0;
+      const isActive = !!entry || !!pipe || hlsActivity;
+      // Para HLS-proxy, usar el tracker de segmentos (más preciso)
+      const hlsClients = getHLSClientCount(ch.id);
+      const clientCount = entry ? (entry.type === 'hls-proxy' ? hlsClients : Math.max(0, entry.clients)) : (pipe ? pipe.clients.size : hlsClients);
       const pipeType = entry ? (entry.type || 'hls-proxy') : (pipe ? 'pipe-proxy' : null);
       const startTime = entry ? (entry.startTime || entry.lastAccess) : (pipe ? pipe.lastDataAt : null);
 
@@ -2408,6 +2470,8 @@ app.get('/api/hls-local/:channelId/:qualityOrFile/:filename?', (req, res) => {
 // Proxy de segmentos HLS remotos (para canales que ya son HLS)
 app.get('/api/hls-segment/:channelId', async (req, res) => {
   try {
+    const { channelId } = req.params;
+    trackHLSClient(channelId, req);
     const segmentUrl = req.query.url;
     if (!segmentUrl) return res.status(400).send('Missing url');
     const data = await fetchSegment(segmentUrl);
@@ -2835,13 +2899,38 @@ app.get('/api/streams/active', authAdmin, async (req, res) => {
       const channelName = rows.length > 0 ? rows[0].name : 'Desconocido';
       const sourceUrl = rows.length > 0 ? rows[0].url : entry.sourceUrl || 'N/A';
       
+      // Para HLS-proxy, usar el tracker de segmentos (más preciso que entry.clients)
+      const hlsClients = getHLSClientCount(channelId);
+      const clientCount = entry.type === 'hls-proxy' ? hlsClients : Math.max(0, entry.clients);
+      
       streams.push({
         channel_id: channelId,
         channel_name: channelName,
         type: entry.type || 'hls-proxy',
-        clients: Math.max(0, entry.clients),
+        clients: clientCount,
         ready: entry.ready !== undefined ? entry.ready : true,
-        uptime_seconds: Math.floor((Date.now() - entry.lastAccess) / 1000),
+        uptime_seconds: Math.floor((Date.now() - (entry.startTime || entry.lastAccess)) / 1000),
+        source_url: sourceUrl.substring(0, 60) + (sourceUrl.length > 60 ? '...' : ''),
+      });
+    }
+
+    // HLS entries que solo están en hlsClientTracker pero no en activeTranscoders
+    // (puede pasar si el entry fue limpiado pero aún hay actividad de segmentos)
+    for (const [channelId] of hlsClientTracker) {
+      if (seen.has(channelId)) continue;
+      const hlsClients = getHLSClientCount(channelId);
+      if (hlsClients === 0) continue;
+      seen.add(channelId);
+      const { rows } = await pool.query('SELECT name, url FROM channels WHERE id = $1', [channelId]);
+      const channelName = rows.length > 0 ? rows[0].name : 'Desconocido';
+      const sourceUrl = rows.length > 0 ? rows[0].url : 'N/A';
+      streams.push({
+        channel_id: channelId,
+        channel_name: channelName,
+        type: 'hls-proxy',
+        clients: hlsClients,
+        ready: true,
+        uptime_seconds: 0,
         source_url: sourceUrl.substring(0, 60) + (sourceUrl.length > 60 ? '...' : ''),
       });
     }
@@ -3745,6 +3834,7 @@ app.get('/live/:username/:password/:streamId/:qualityOrSegment', async (req, res
 
     // Segment request: seg.ts?url=ENCODED
     if (qualityOrSegment === 'seg.ts' && req.query.url) {
+      trackHLSClient(channelId, req);
       const segUrl = req.query.url;
       try {
         const segData = await fetchSegment(segUrl);
