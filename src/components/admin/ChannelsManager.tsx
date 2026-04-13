@@ -49,6 +49,7 @@ const ChannelsManager = () => {
   const [importing, setImporting] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
+  const [activatingAll, setActivatingAll] = useState(false);
   
   const [cacheStatus, setCacheStatus] = useState<CacheStatus[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -209,6 +210,35 @@ const ChannelsManager = () => {
     }
   };
 
+  const handleActivateAll = async (activate: boolean) => {
+    if (isLovablePreview()) return;
+    setActivatingAll(true);
+    try {
+      const endpoint = activate ? '/api/channels/activate-all' : '/api/channels/deactivate-all';
+      const data = await apiPost(endpoint, {});
+      toast({
+        title: activate ? `${data.activated} canales activados` : `${data.stopped} canales detenidos`,
+        description: activate
+          ? `${data.already_active} ya estaban activos de ${data.total} totales`
+          : data.note,
+      });
+      fetchCacheStatus();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+    setActivatingAll(false);
+  };
+
+  const toggleKeepAlive = async (channelId: string, enabled: boolean) => {
+    if (isLovablePreview()) return;
+    try {
+      await apiPost(`/api/channels/${channelId}/keep-alive`, { enabled });
+      toast({ title: enabled ? 'Canal activado permanente' : 'Canal vuelto a bajo demanda' });
+      fetchCacheStatus();
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+  };
 
   const handleM3UImport = async () => {
     if (!m3uContent.trim() && !m3uUrl.trim()) {
@@ -275,6 +305,30 @@ const ChannelsManager = () => {
                 {filterRunning ? 'Ver todos' : 'Solo activos'}
               </Button>
             </>
+          )}
+          {!isLovablePreview() && (
+            <div className="flex gap-1">
+              <Button
+                onClick={() => handleActivateAll(true)}
+                disabled={activatingAll}
+                variant="outline"
+                size="sm"
+                className="gap-1.5 border-primary/30 text-primary hover:bg-primary/10"
+              >
+                {activatingAll ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
+                Activar todos
+              </Button>
+              <Button
+                onClick={() => handleActivateAll(false)}
+                disabled={activatingAll}
+                variant="outline"
+                size="sm"
+                className="gap-1.5 border-destructive/30 text-destructive hover:bg-destructive/10"
+              >
+                <ZapOff className="w-3.5 h-3.5" />
+                Bajo demanda
+              </Button>
+            </div>
           )}
           {selectedIds.size > 0 && (
             <Button onClick={handleBatchDelete} variant="destructive" size="sm" className="gap-2">
@@ -491,6 +545,17 @@ const ChannelsManager = () => {
                     </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
+                    {!isLovablePreview() && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => toggleKeepAlive(ch.id, !cache?.transcoder_active)}
+                        className={cache?.transcoder_active ? 'text-primary hover:text-destructive' : 'text-muted-foreground hover:text-primary'}
+                        title={cache?.transcoder_active ? 'Desactivar (volver a bajo demanda)' : 'Activar conexión permanente'}
+                      >
+                        {cache?.transcoder_active ? <Zap className="w-4 h-4" /> : <ZapOff className="w-4 h-4" />}
+                      </Button>
+                    )}
                     <Button variant="ghost" size="icon" onClick={() => handleEdit(ch)} className="text-muted-foreground hover:text-primary">
                       <Edit2 className="w-4 h-4" />
                     </Button>
