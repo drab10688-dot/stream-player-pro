@@ -3732,6 +3732,7 @@ app.get('/live/:username/:password/:streamId', async (req, res) => {
     } else if (isHLS) {
       // HLS → usar restream existente con URLs absolutas autenticadas
       startHLSProxy(channelId, targetUrl);
+      trackHLSClient(channelId, req); // Track desde el manifest
       try {
         const manifest = await getCachedM3U8(channelId, targetUrl);
         const baseUrl = `${req.protocol}://${req.get('host')}`;
@@ -3754,7 +3755,6 @@ app.get('/live/:username/:password/:streamId', async (req, res) => {
         console.error('HLS restream error for OTT:', err.message);
         res.status(502).send('Stream unavailable');
       }
-      res.on('finish', () => releaseTranscoder(channelId));
     } else {
       // Fallback: usar pipe proxy 1-a-N compartido (NUNCA pipe directo)
       res.setHeader('Content-Type', 'video/mp2t');
