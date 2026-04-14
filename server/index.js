@@ -2379,6 +2379,7 @@ app.get('/api/restream/:channelId', async (req, res) => {
     if (isHLS) {
       // Canal ya es HLS → proxy con caché
       startHLSProxy(channelId, targetUrl);
+      trackHLSClient(channelId, req); // Track desde el manifest
       try {
         const manifest = await getCachedM3U8(channelId, targetUrl);
         res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
@@ -2387,8 +2388,6 @@ app.get('/api/restream/:channelId', async (req, res) => {
         console.error('HLS proxy error:', err.message);
         res.status(502).json({ error: 'No se pudo obtener el manifiesto HLS' });
       }
-      // Liberar al terminar respuesta
-      res.on('finish', () => releaseTranscoder(channelId));
     } else {
       // Canal TS → Segmenter Node.js → HLS
       const entry = startTSSegmenter(channelId, targetUrl);
