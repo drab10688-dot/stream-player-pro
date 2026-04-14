@@ -1785,13 +1785,12 @@ setInterval(() => {
 function startHLSProxy(channelId, sourceUrl) {
   if (activeTranscoders.has(channelId)) {
     const existing = activeTranscoders.get(channelId);
-    existing.clients++;
     existing.lastAccess = Date.now();
     return existing;
   }
 
   const entry = {
-    clients: 1,
+    clients: 0, // HLS clients tracked via hlsClientTracker, not this counter
     lastAccess: Date.now(),
     startTime: Date.now(),
     type: 'hls-proxy',
