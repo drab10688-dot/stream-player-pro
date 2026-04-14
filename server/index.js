@@ -1515,28 +1515,14 @@ function releaseTranscoder(channelId) {
   const entry = activeTranscoders.get(channelId);
   if (!entry) return;
 
+  // HLS-proxy entries are cleaned by the periodic hlsProxyCleaner, not here
+  if (entry.type === 'hls-proxy') return;
+
   entry.clients--;
   if (entry.clients <= 0) {
     entry.clients = 0;
     if (entry.keepAlive) {
       console.log(`💚 [${channelId}] Keep-alive activo, ${entry.type} permanece encendido`);
-      return;
-    }
-    // Para HLS-proxy, verificar si hay clientes activos via tracker de segmentos
-    if (entry.type === 'hls-proxy') {
-      setTimeout(() => {
-        const current = activeTranscoders.get(channelId);
-        if (current && current.clients <= 0 && !current.keepAlive) {
-          const hlsClients = getHLSClientCount(channelId);
-          if (hlsClients > 0) {
-            console.log(`📡 [${channelId}] HLS proxy: ${hlsClients} clientes activos via segmentos, manteniendo`);
-            return;
-          }
-          console.log(`🔴 [${channelId}] Sin clientes HLS, deteniendo proxy`);
-          stopHLSKeepAlivePoller(channelId);
-          activeTranscoders.delete(channelId);
-        }
-      }, 45000); // 45s para dar margen a las solicitudes de segmentos HLS
       return;
     }
     setTimeout(() => {
@@ -1554,6 +1540,21 @@ function releaseTranscoder(channelId) {
     }, 30000);
   }
 }
+
+// Limpieza periódica de HLS-proxy entries sin actividad
+setInterval(() => {
+  for (const [channelId, entry] of activeTranscoders) {
+    if (entry.type !== 'hls-proxy') continue;
+    if (entry.keepAlive) continue;
+    const hlsClients = getHLSClientCount(channelId);
+    const idleMs = Date.now() - entry.lastAccess;
+    if (hlsClients === 0 && idleMs > 45000) {
+      console.log(`🔴 [${channelId}] HLS proxy sin actividad por ${Math.round(idleMs/1000)}s, limpiando`);
+      stopHLSKeepAlivePoller(channelId);
+      activeTranscoders.delete(channelId);
+    }
+  }
+}, 15000);
 
 // =============================================
 // KEEP ALIVE: Iniciar canal persistente
