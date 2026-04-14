@@ -1105,6 +1105,11 @@ function trackHLSClient(channelId, req) {
     hlsClientTracker.set(channelId, new Map());
   }
   hlsClientTracker.get(channelId).set(clientKey, Date.now());
+  // Update lastAccess on the transcoder entry to prevent premature cleanup
+  const entry = activeTranscoders.get(channelId);
+  if (entry && entry.type === 'hls-proxy') {
+    entry.lastAccess = Date.now();
+  }
 }
 
 function getHLSClientCount(channelId) {
@@ -1515,28 +1520,14 @@ function releaseTranscoder(channelId) {
   const entry = activeTranscoders.get(channelId);
   if (!entry) return;
 
+  // HLS-proxy entries are cleaned by the periodic hlsProxyCleaner, not here
+  if (entry.type === 'hls-proxy') return;
+
   entry.clients--;
   if (entry.clients <= 0) {
     entry.clients = 0;
     if (entry.keepAlive) {
       console.log(`💚 [${channelId}] Keep-alive activo, ${entry.type} permanece encendido`);
-      return;
-    }
-    // Para HLS-proxy, verificar si hay clientes activos via tracker de segmentos
-    if (entry.type === 'hls-proxy') {
-      setTimeout(() => {
-        const current = activeTranscoders.get(channelId);
-        if (current && current.clients <= 0 && !current.keepAlive) {
-          const hlsClients = getHLSClientCount(channelId);
-          if (hlsClients > 0) {
-            console.log(`📡 [${channelId}] HLS proxy: ${hlsClients} clientes activos via segmentos, manteniendo`);
-            return;
-          }
-          console.log(`🔴 [${channelId}] Sin clientes HLS, deteniendo proxy`);
-          stopHLSKeepAlivePoller(channelId);
-          activeTranscoders.delete(channelId);
-        }
-      }, 45000); // 45s para dar margen a las solicitudes de segmentos HLS
       return;
     }
     setTimeout(() => {
@@ -1554,6 +1545,21 @@ function releaseTranscoder(channelId) {
     }, 30000);
   }
 }
+
+// Limpieza periódica de HLS-proxy entries sin actividad
+setInterval(() => {
+  for (const [channelId, entry] of activeTranscoders) {
+    if (entry.type !== 'hls-proxy') continue;
+    if (entry.keepAlive) continue;
+    const hlsClients = getHLSClientCount(channelId);
+    const idleMs = Date.now() - entry.lastAccess;
+    if (hlsClients === 0 && idleMs > 45000) {
+      console.log(`🔴 [${channelId}] HLS proxy sin actividad por ${Math.round(idleMs/1000)}s, limpiando`);
+      stopHLSKeepAlivePoller(channelId);
+      activeTranscoders.delete(channelId);
+    }
+  }
+}, 15000);
 
 // =============================================
 // KEEP ALIVE: Iniciar canal persistente
@@ -1785,13 +1791,12 @@ setInterval(() => {
 function startHLSProxy(channelId, sourceUrl) {
   if (activeTranscoders.has(channelId)) {
     const existing = activeTranscoders.get(channelId);
-    existing.clients++;
     existing.lastAccess = Date.now();
     return existing;
   }
 
   const entry = {
-    clients: 1,
+    clients: 0, // HLS clients tracked via hlsClientTracker, not this counter
     lastAccess: Date.now(),
     startTime: Date.now(),
     type: 'hls-proxy',
@@ -2379,6 +2384,7 @@ app.get('/api/restream/:channelId', async (req, res) => {
     if (isHLS) {
       // Canal ya es HLS → proxy con caché
       startHLSProxy(channelId, targetUrl);
+      trackHLSClient(channelId, req); // Track desde el manifest
       try {
         const manifest = await getCachedM3U8(channelId, targetUrl);
         res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
@@ -2387,8 +2393,6 @@ app.get('/api/restream/:channelId', async (req, res) => {
         console.error('HLS proxy error:', err.message);
         res.status(502).json({ error: 'No se pudo obtener el manifiesto HLS' });
       }
-      // Liberar al terminar respuesta
-      res.on('finish', () => releaseTranscoder(channelId));
     } else {
       // Canal TS → Segmenter Node.js → HLS
       const entry = startTSSegmenter(channelId, targetUrl);
@@ -3733,6 +3737,7 @@ app.get('/live/:username/:password/:streamId', async (req, res) => {
     } else if (isHLS) {
       // HLS → usar restream existente con URLs absolutas autenticadas
       startHLSProxy(channelId, targetUrl);
+      trackHLSClient(channelId, req); // Track desde el manifest
       try {
         const manifest = await getCachedM3U8(channelId, targetUrl);
         const baseUrl = `${req.protocol}://${req.get('host')}`;
@@ -3755,7 +3760,6 @@ app.get('/live/:username/:password/:streamId', async (req, res) => {
         console.error('HLS restream error for OTT:', err.message);
         res.status(502).send('Stream unavailable');
       }
-      res.on('finish', () => releaseTranscoder(channelId));
     } else {
       // Fallback: usar pipe proxy 1-a-N compartido (NUNCA pipe directo)
       res.setHeader('Content-Type', 'video/mp2t');
