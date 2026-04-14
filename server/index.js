@@ -1105,6 +1105,11 @@ function trackHLSClient(channelId, req) {
     hlsClientTracker.set(channelId, new Map());
   }
   hlsClientTracker.get(channelId).set(clientKey, Date.now());
+  // Update lastAccess on the transcoder entry to prevent premature cleanup
+  const entry = activeTranscoders.get(channelId);
+  if (entry && entry.type === 'hls-proxy') {
+    entry.lastAccess = Date.now();
+  }
 }
 
 function getHLSClientCount(channelId) {
