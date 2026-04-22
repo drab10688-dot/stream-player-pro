@@ -423,32 +423,100 @@ const MulticastSection = () => {
           </SelectContent>
         </Select>
 
-        {selectedSector && (
-          <>
-            <div className="space-y-1 max-h-[420px] overflow-y-auto mt-3">
-              {groups.filter(g => g.is_assigned).map(g => (
-                <label key={g.id} className="flex items-center gap-2 p-2 rounded hover:bg-muted/30 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={sectorChannels.has(g.id)}
-                    onChange={() => toggleSectorChannel(g.id)}
-                    className="w-4 h-4 accent-primary"
-                  />
-                  <code className="text-xs text-primary font-mono w-28 shrink-0">{g.multicast_ip}</code>
-                  <span className="text-xs text-foreground flex-1 truncate">{g.channel_name || 'Sin canal'}</span>
-                </label>
-              ))}
-              {groups.filter(g => g.is_assigned).length === 0 && (
-                <p className="text-xs text-muted-foreground text-center py-8">
-                  Asigna canales a grupos multicast en el panel izquierdo primero
-                </p>
-              )}
-            </div>
-            <Button onClick={saveSectorChannels} className="gradient-primary w-full mt-3">
-              Guardar y aplicar al sistema
-            </Button>
-          </>
-        )}
+        {selectedSector && (() => {
+          const sector = sectors.find(s => s.id === selectedSector);
+          const plan = plans.find(p => p.id === sector?.plan_id);
+          const allowedCats = plan?.categories || [];
+          const planLimited = !!sector?.plan_id;
+          const channelById = new Map(channels.map(c => [c.id, c]));
+          const assignedGroups = groups.filter(g => g.is_assigned);
+          const isAllowedGroup = (g: MulticastGroup) => {
+            if (!planLimited) return true;
+            if (!g.channel_id) return false;
+            const cat = channelById.get(g.channel_id)?.category;
+            return !!cat && allowedCats.includes(cat);
+          };
+          const allowedGroups = assignedGroups.filter(isAllowedGroup);
+          const blockedCount = assignedGroups.length - allowedGroups.length;
+
+          const cleanSelection = () => {
+            const cleaned = new Set<string>();
+            sectorChannels.forEach(id => {
+              const g = assignedGroups.find(x => x.id === id);
+              if (g && isAllowedGroup(g)) cleaned.add(id);
+            });
+            setSectorChannels(cleaned);
+          };
+
+          return (
+            <>
+              <div className="mt-3 glass rounded-lg p-3 space-y-1">
+                {planLimited ? (
+                  <>
+                    <div className="flex items-center gap-2 text-xs flex-wrap">
+                      <Badge variant="outline" className="text-primary border-primary/30">{plan?.name || 'Plan'}</Badge>
+                      <span className="text-muted-foreground">
+                        {sectorChannels.size} / {allowedGroups.length} permitidos seleccionados
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-muted-foreground flex flex-wrap items-center gap-1">
+                      <span>Categorías:</span>
+                      {allowedCats.length
+                        ? allowedCats.map(c => <Badge key={c} variant="secondary" className="text-[10px]">{c}</Badge>)
+                        : <span className="text-destructive">Ninguna (asigna categorías al plan)</span>}
+                    </div>
+                    {blockedCount > 0 && (
+                      <p className="text-[11px] text-yellow-400">
+                        {blockedCount} canal(es) ocultos por restricción del plan.{' '}
+                        <button onClick={cleanSelection} className="underline hover:text-primary">
+                          Limpiar selección no permitida
+                        </button>
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-[11px] text-yellow-400">
+                    Sector sin plan asignado: puede recibir cualquier canal. Asigna un plan al sector para limitar.
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-1 max-h-[380px] overflow-y-auto mt-3">
+                {allowedGroups.map(g => (
+                  <label key={g.id} className="flex items-center gap-2 p-2 rounded hover:bg-muted/30 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={sectorChannels.has(g.id)}
+                      onChange={() => toggleSectorChannel(g.id)}
+                      className="w-4 h-4 accent-primary"
+                    />
+                    <code className="text-xs text-primary font-mono w-28 shrink-0">{g.multicast_ip}</code>
+                    <span className="text-xs text-foreground flex-1 truncate">{g.channel_name || 'Sin canal'}</span>
+                    {g.channel_id && (
+                      <Badge variant="outline" className="text-[10px] shrink-0">
+                        {channelById.get(g.channel_id)?.category || '—'}
+                      </Badge>
+                    )}
+                  </label>
+                ))}
+                {allowedGroups.length === 0 && (
+                  <p className="text-xs text-muted-foreground text-center py-8">
+                    {planLimited
+                      ? 'No hay canales asignados a grupos multicast dentro de las categorías de este plan.'
+                      : 'Asigna canales a grupos multicast en el panel izquierdo primero.'}
+                  </p>
+                )}
+              </div>
+              <Button
+                onClick={saveSectorChannels}
+                className="gradient-primary w-full mt-3"
+                disabled={planLimited && allowedCats.length === 0}
+              >
+                Guardar y aplicar al sistema
+              </Button>
+            </>
+          );
+        })()}
       </div>
     </div>
   );
