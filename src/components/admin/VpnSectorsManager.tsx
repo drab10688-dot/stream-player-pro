@@ -15,6 +15,8 @@ import { Plus, Download, RefreshCw, Trash2, Edit, Network, Radio, Activity, Serv
 // ============================================================
 // Tipos
 // ============================================================
+type DeliveryMode = 'multicast_direct' | 'udpxy_rbldf' | 'udpxy_central';
+
 interface Sector {
   id: string;
   name: string;
@@ -34,6 +36,8 @@ interface Sector {
   bytes_in: number;
   bytes_out: number;
   notes: string | null;
+  delivery_mode: DeliveryMode;
+  udpxy_url: string | null;
 }
 
 interface MulticastGroup {
