@@ -75,7 +75,8 @@ function pickCodecMode(probe) {
 
 // ----------------------------------------------------------
 function buildFfmpegArgs(sourceUrl, multicastIp, port, mode) {
-  const dstUrl = `udp://${multicastIp}:${port}?pkt_size=1316&ttl=4`;
+  // pkt_size 1200 para que (UDP+IP+GRE+L2TP) quepa en MTU 1280 sin fragmentar
+  const dstUrl = `udp://${multicastIp}:${port}?pkt_size=1200&ttl=8`;
   const baseInput = [
     '-hide_banner', '-loglevel', 'warning',
     '-fflags', '+genpts+nobuffer',
