@@ -46,7 +46,8 @@ module.exports = (pool, authAdmin) => {
   router.post('/sectors', authAdmin, async (req, res) => {
     try {
       const { name, description, vpn_username, vpn_password, assigned_ip,
-              gre_local_ip, gre_remote_ip, mikrotik_public_ip, plan_id } = req.body;
+              gre_local_ip, gre_remote_ip, mikrotik_public_ip, plan_id,
+              delivery_mode, udpxy_url } = req.body;
       if (!name || !vpn_username || !vpn_password || !assigned_ip) {
         return res.status(400).json({ error: 'Faltan campos requeridos' });
       }
@@ -54,11 +55,13 @@ module.exports = (pool, authAdmin) => {
       const r = await pool.query(`
         INSERT INTO vpn_sectors
           (name, description, vpn_username, vpn_password, assigned_ip,
-           gre_local_ip, gre_remote_ip, gre_tunnel_name, mikrotik_public_ip, plan_id)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+           gre_local_ip, gre_remote_ip, gre_tunnel_name, mikrotik_public_ip, plan_id,
+           delivery_mode, udpxy_url)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
         RETURNING *
       `, [name, description, vpn_username, vpn_password, assigned_ip,
-          gre_local_ip, gre_remote_ip, greName, mikrotik_public_ip, plan_id]);
+          gre_local_ip, gre_remote_ip, greName, mikrotik_public_ip, plan_id,
+          delivery_mode || 'multicast_direct', udpxy_url || null]);
       // Sincronizar archivos sistema
       await vpnMgr.syncAllFromDB(pool);
       res.json(r.rows[0]);
@@ -69,7 +72,8 @@ module.exports = (pool, authAdmin) => {
     try {
       const { id } = req.params;
       const fields = ['name','description','vpn_username','vpn_password','assigned_ip',
-                      'gre_local_ip','gre_remote_ip','mikrotik_public_ip','plan_id','is_active','notes'];
+                      'gre_local_ip','gre_remote_ip','mikrotik_public_ip','plan_id','is_active','notes',
+                      'delivery_mode','udpxy_url'];
       const updates = [];
       const values = [];
       let i = 1;
@@ -269,6 +273,20 @@ module.exports = (pool, authAdmin) => {
     try {
       const result = await vpnMgr.syncAllFromDB(pool);
       res.json(result);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ----------------------------------------------------------
+  // RESOLVE: dado el req.ip detecta sector y devuelve URLs de canales
+  // según delivery_mode. Usado por la APK al pedir su lista de canales.
+  // No requiere authAdmin: cualquier endpoint público de canales puede
+  // llamar a vpnMgr.resolveChannelUrlsForIp() internamente.
+  // Este endpoint queda como debug/utilidad para el panel.
+  // ----------------------------------------------------------
+  router.get('/resolve/:ip', authAdmin, async (req, res) => {
+    try {
+      const out = await vpnMgr.resolveChannelUrlsForIp(pool, req.params.ip);
+      res.json(out);
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 

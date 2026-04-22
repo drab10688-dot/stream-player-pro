@@ -764,6 +764,7 @@ export type Database = {
         Row: {
           assigned_ip: unknown
           created_at: string
+          delivery_mode: string
           description: string | null
           gre_local_ip: unknown
           gre_remote_ip: unknown
@@ -774,6 +775,7 @@ export type Database = {
           name: string
           notes: string | null
           plan_id: string | null
+          udpxy_url: string | null
           updated_at: string
           vpn_password: string
           vpn_username: string
@@ -781,6 +783,7 @@ export type Database = {
         Insert: {
           assigned_ip: unknown
           created_at?: string
+          delivery_mode?: string
           description?: string | null
           gre_local_ip?: unknown
           gre_remote_ip?: unknown
@@ -791,6 +794,7 @@ export type Database = {
           name: string
           notes?: string | null
           plan_id?: string | null
+          udpxy_url?: string | null
           updated_at?: string
           vpn_password: string
           vpn_username: string
@@ -798,6 +802,7 @@ export type Database = {
         Update: {
           assigned_ip?: unknown
           created_at?: string
+          delivery_mode?: string
           description?: string | null
           gre_local_ip?: unknown
           gre_remote_ip?: unknown
@@ -808,6 +813,7 @@ export type Database = {
           name?: string
           notes?: string | null
           plan_id?: string | null
+          udpxy_url?: string | null
           updated_at?: string
           vpn_password?: string
           vpn_username?: string

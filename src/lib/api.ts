@@ -50,7 +50,7 @@ export const api = async (path: string, options: RequestInit = {}) => {
   return data;
 };
 
-export const apiGet = (path: string) => api(path, { method: 'GET' });
-export const apiPost = (path: string, body: any) => api(path, { method: 'POST', body: JSON.stringify(body) });
-export const apiPut = (path: string, body: any) => api(path, { method: 'PUT', body: JSON.stringify(body) });
-export const apiDelete = (path: string) => api(path, { method: 'DELETE' });
+export const apiGet = <T = any>(path: string): Promise<T> => api(path, { method: 'GET' });
+export const apiPost = <T = any>(path: string, body: any): Promise<T> => api(path, { method: 'POST', body: JSON.stringify(body) });
+export const apiPut = <T = any>(path: string, body: any): Promise<T> => api(path, { method: 'PUT', body: JSON.stringify(body) });
+export const apiDelete = <T = any>(path: string): Promise<T> => api(path, { method: 'DELETE' });
