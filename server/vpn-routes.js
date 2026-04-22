@@ -1,0 +1,205 @@
+// ============================================================
+// Omnisync - Rutas API VPN/Sectores/Multicast
+// Se monta desde index.js:  app.use('/api/vpn', require('./vpn-routes')(pool, authAdmin))
+// ============================================================
+
+const express = require('express');
+const vpnMgr = require('./vpn-manager');
+
+module.exports = (pool, authAdmin) => {
+  const router = express.Router();
+
+  // ----------------------------------------------------------
+  // STATUS GLOBAL
+  // ----------------------------------------------------------
+  router.get('/status', authAdmin, async (req, res) => {
+    try {
+      const status = vpnMgr.getTunnelStatus();
+      res.json(status);
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ----------------------------------------------------------
+  // SECTORES (CRUD)
+  // ----------------------------------------------------------
+  router.get('/sectors', authAdmin, async (req, res) => {
+    try {
+      const r = await pool.query(`
+        SELECT s.*, p.name AS plan_name,
+               (SELECT COUNT(*) FROM sector_channel_map WHERE sector_id = s.id AND is_active) AS channels_count,
+               t.status AS tunnel_status, t.connected_since, t.bytes_in, t.bytes_out
+        FROM vpn_sectors s
+        LEFT JOIN plans p ON p.id = s.plan_id
+        LEFT JOIN vpn_tunnel_status t ON t.sector_id = s.id
+        ORDER BY s.created_at DESC
+      `);
+      res.json(r.rows);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  router.post('/sectors', authAdmin, async (req, res) => {
+    try {
+      const { name, description, vpn_username, vpn_password, assigned_ip,
+              gre_local_ip, gre_remote_ip, mikrotik_public_ip, plan_id } = req.body;
+      if (!name || !vpn_username || !vpn_password || !assigned_ip) {
+        return res.status(400).json({ error: 'Faltan campos requeridos' });
+      }
+      const greName = `gre-${vpn_username.replace(/[^a-z0-9]/gi, '').slice(0,10)}`;
+      const r = await pool.query(`
+        INSERT INTO vpn_sectors
+          (name, description, vpn_username, vpn_password, assigned_ip,
+           gre_local_ip, gre_remote_ip, gre_tunnel_name, mikrotik_public_ip, plan_id)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+        RETURNING *
+      `, [name, description, vpn_username, vpn_password, assigned_ip,
+          gre_local_ip, gre_remote_ip, greName, mikrotik_public_ip, plan_id]);
+      // Sincronizar archivos sistema
+      await vpnMgr.syncAllFromDB(pool);
+      res.json(r.rows[0]);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  router.put('/sectors/:id', authAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const fields = ['name','description','vpn_username','vpn_password','assigned_ip',
+                      'gre_local_ip','gre_remote_ip','mikrotik_public_ip','plan_id','is_active','notes'];
+      const updates = [];
+      const values = [];
+      let i = 1;
+      fields.forEach(f => {
+        if (req.body[f] !== undefined) {
+          updates.push(`${f} = $${i++}`);
+          values.push(req.body[f]);
+        }
+      });
+      if (!updates.length) return res.status(400).json({ error: 'Sin cambios' });
+      values.push(id);
+      const r = await pool.query(
+        `UPDATE vpn_sectors SET ${updates.join(',')}, updated_at = now() WHERE id = $${i} RETURNING *`,
+        values
+      );
+      await vpnMgr.syncAllFromDB(pool);
+      res.json(r.rows[0]);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  router.delete('/sectors/:id', authAdmin, async (req, res) => {
+    try {
+      const r = await pool.query(`DELETE FROM vpn_sectors WHERE id = $1 RETURNING gre_tunnel_name`, [req.params.id]);
+      if (r.rows[0]?.gre_tunnel_name) vpnMgr.deleteGreTunnel(r.rows[0].gre_tunnel_name);
+      await vpnMgr.syncAllFromDB(pool);
+      res.json({ ok: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ----------------------------------------------------------
+  // GENERADOR CONFIG MIKROTIK (.rsc descargable)
+  // ----------------------------------------------------------
+  router.get('/sectors/:id/mikrotik-config', authAdmin, async (req, res) => {
+    try {
+      const sectorRes = await pool.query(`SELECT * FROM vpn_sectors WHERE id = $1`, [req.params.id]);
+      if (!sectorRes.rows[0]) return res.status(404).json({ error: 'Sector no encontrado' });
+      const sector = sectorRes.rows[0];
+
+      const channelsRes = await pool.query(`
+        SELECT mg.multicast_ip, mg.port, c.name AS channel_name
+        FROM sector_channel_map scm
+        JOIN multicast_groups mg ON mg.id = scm.multicast_group_id
+        LEFT JOIN channels c ON c.id = mg.channel_id
+        WHERE scm.sector_id = $1 AND scm.is_active = true
+        ORDER BY mg.multicast_ip
+      `, [req.params.id]);
+
+      const config = vpnMgr.generateMikrotikConfig(
+        sector,
+        channelsRes.rows,
+        vpnMgr.getPublicIP(),
+        vpnMgr.getPSK()
+      );
+
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.setHeader('Content-Disposition',
+        `attachment; filename="omnisync-${sector.name.replace(/[^a-z0-9]/gi,'-')}.rsc"`);
+      res.send(config);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ----------------------------------------------------------
+  // GRUPOS MULTICAST
+  // ----------------------------------------------------------
+  router.get('/multicast', authAdmin, async (req, res) => {
+    try {
+      const r = await pool.query(`
+        SELECT mg.*, c.name AS channel_name, c.category AS channel_category,
+               (SELECT COUNT(*) FROM sector_channel_map WHERE multicast_group_id = mg.id AND is_active) AS sectors_count
+        FROM multicast_groups mg
+        LEFT JOIN channels c ON c.id = mg.channel_id
+        ORDER BY mg.multicast_ip
+      `);
+      res.json(r.rows);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  router.post('/multicast/assign', authAdmin, async (req, res) => {
+    try {
+      const { multicast_group_id, channel_id } = req.body;
+      const r = await pool.query(`
+        UPDATE multicast_groups
+        SET channel_id = $1, is_assigned = ($1 IS NOT NULL)
+        WHERE id = $2 RETURNING *
+      `, [channel_id || null, multicast_group_id]);
+      res.json(r.rows[0]);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ----------------------------------------------------------
+  // MAPEO sector ↔ canal multicast
+  // ----------------------------------------------------------
+  router.get('/sectors/:id/channels', authAdmin, async (req, res) => {
+    try {
+      const r = await pool.query(`
+        SELECT scm.*, mg.multicast_ip, mg.port, c.name AS channel_name, c.category
+        FROM sector_channel_map scm
+        JOIN multicast_groups mg ON mg.id = scm.multicast_group_id
+        LEFT JOIN channels c ON c.id = mg.channel_id
+        WHERE scm.sector_id = $1
+        ORDER BY mg.multicast_ip
+      `, [req.params.id]);
+      res.json(r.rows);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  router.post('/sectors/:id/channels', authAdmin, async (req, res) => {
+    try {
+      const { multicast_group_ids } = req.body; // array de IDs
+      if (!Array.isArray(multicast_group_ids)) {
+        return res.status(400).json({ error: 'multicast_group_ids debe ser array' });
+      }
+      // Reemplazo total
+      await pool.query(`DELETE FROM sector_channel_map WHERE sector_id = $1`, [req.params.id]);
+      for (const mgId of multicast_group_ids) {
+        await pool.query(`
+          INSERT INTO sector_channel_map (sector_id, multicast_group_id, is_active)
+          VALUES ($1, $2, true) ON CONFLICT DO NOTHING
+        `, [req.params.id, mgId]);
+      }
+      await vpnMgr.syncAllFromDB(pool);
+      res.json({ ok: true, count: multicast_group_ids.length });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ----------------------------------------------------------
+  // RESYNC manual (re-escribe todos los archivos de sistema)
+  // ----------------------------------------------------------
+  router.post('/resync', authAdmin, async (req, res) => {
+    try {
+      const result = await vpnMgr.syncAllFromDB(pool);
+      res.json(result);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  return router;
+};

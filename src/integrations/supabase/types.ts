@@ -304,6 +304,44 @@ export type Database = {
           },
         ]
       }
+      multicast_groups: {
+        Row: {
+          bitrate_kbps: number | null
+          channel_id: string | null
+          created_at: string
+          id: string
+          is_assigned: boolean
+          multicast_ip: unknown
+          port: number
+        }
+        Insert: {
+          bitrate_kbps?: number | null
+          channel_id?: string | null
+          created_at?: string
+          id?: string
+          is_assigned?: boolean
+          multicast_ip: unknown
+          port?: number
+        }
+        Update: {
+          bitrate_kbps?: number | null
+          channel_id?: string | null
+          created_at?: string
+          id?: string
+          is_assigned?: boolean
+          multicast_ip?: unknown
+          port?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "multicast_groups_channel_id_fkey"
+            columns: ["channel_id"]
+            isOneToOne: false
+            referencedRelation: "channels"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       plans: {
         Row: {
           categories: string[]
@@ -384,6 +422,45 @@ export type Database = {
           username?: string
         }
         Relationships: []
+      }
+      sector_channel_map: {
+        Row: {
+          created_at: string
+          id: string
+          is_active: boolean
+          multicast_group_id: string
+          sector_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          multicast_group_id: string
+          sector_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          multicast_group_id?: string
+          sector_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sector_channel_map_multicast_group_id_fkey"
+            columns: ["multicast_group_id"]
+            isOneToOne: false
+            referencedRelation: "multicast_groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sector_channel_map_sector_id_fkey"
+            columns: ["sector_id"]
+            isOneToOne: false
+            referencedRelation: "vpn_sectors"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       system_backups: {
         Row: {
@@ -613,6 +690,112 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      vpn_sectors: {
+        Row: {
+          assigned_ip: unknown
+          created_at: string
+          description: string | null
+          gre_local_ip: unknown
+          gre_remote_ip: unknown
+          gre_tunnel_name: string | null
+          id: string
+          is_active: boolean
+          mikrotik_public_ip: unknown
+          name: string
+          notes: string | null
+          plan_id: string | null
+          updated_at: string
+          vpn_password: string
+          vpn_username: string
+        }
+        Insert: {
+          assigned_ip: unknown
+          created_at?: string
+          description?: string | null
+          gre_local_ip?: unknown
+          gre_remote_ip?: unknown
+          gre_tunnel_name?: string | null
+          id?: string
+          is_active?: boolean
+          mikrotik_public_ip?: unknown
+          name: string
+          notes?: string | null
+          plan_id?: string | null
+          updated_at?: string
+          vpn_password: string
+          vpn_username: string
+        }
+        Update: {
+          assigned_ip?: unknown
+          created_at?: string
+          description?: string | null
+          gre_local_ip?: unknown
+          gre_remote_ip?: unknown
+          gre_tunnel_name?: string | null
+          id?: string
+          is_active?: boolean
+          mikrotik_public_ip?: unknown
+          name?: string
+          notes?: string | null
+          plan_id?: string | null
+          updated_at?: string
+          vpn_password?: string
+          vpn_username?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vpn_sectors_plan_id_fkey"
+            columns: ["plan_id"]
+            isOneToOne: false
+            referencedRelation: "plans"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      vpn_tunnel_status: {
+        Row: {
+          bytes_in: number | null
+          bytes_out: number | null
+          connected_since: string | null
+          error_message: string | null
+          id: string
+          last_check: string
+          remote_ip: unknown
+          sector_id: string
+          status: string
+        }
+        Insert: {
+          bytes_in?: number | null
+          bytes_out?: number | null
+          connected_since?: string | null
+          error_message?: string | null
+          id?: string
+          last_check?: string
+          remote_ip?: unknown
+          sector_id: string
+          status?: string
+        }
+        Update: {
+          bytes_in?: number | null
+          bytes_out?: number | null
+          connected_since?: string | null
+          error_message?: string | null
+          id?: string
+          last_check?: string
+          remote_ip?: unknown
+          sector_id?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vpn_tunnel_status_sector_id_fkey"
+            columns: ["sector_id"]
+            isOneToOne: true
+            referencedRelation: "vpn_sectors"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {
