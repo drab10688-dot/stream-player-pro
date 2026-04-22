@@ -304,6 +304,75 @@ export type Database = {
           },
         ]
       }
+      multicast_encoders: {
+        Row: {
+          active_sectors: number | null
+          auto_started: boolean | null
+          bitrate_kbps: number | null
+          channel_id: string
+          codec_mode: string | null
+          cpu_percent: number | null
+          id: string
+          last_error: string | null
+          last_heartbeat: string | null
+          multicast_group_id: string
+          pid: number | null
+          source_codec_audio: string | null
+          source_codec_video: string | null
+          started_at: string | null
+          status: string
+        }
+        Insert: {
+          active_sectors?: number | null
+          auto_started?: boolean | null
+          bitrate_kbps?: number | null
+          channel_id: string
+          codec_mode?: string | null
+          cpu_percent?: number | null
+          id?: string
+          last_error?: string | null
+          last_heartbeat?: string | null
+          multicast_group_id: string
+          pid?: number | null
+          source_codec_audio?: string | null
+          source_codec_video?: string | null
+          started_at?: string | null
+          status?: string
+        }
+        Update: {
+          active_sectors?: number | null
+          auto_started?: boolean | null
+          bitrate_kbps?: number | null
+          channel_id?: string
+          codec_mode?: string | null
+          cpu_percent?: number | null
+          id?: string
+          last_error?: string | null
+          last_heartbeat?: string | null
+          multicast_group_id?: string
+          pid?: number | null
+          source_codec_audio?: string | null
+          source_codec_video?: string | null
+          started_at?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "multicast_encoders_channel_id_fkey"
+            columns: ["channel_id"]
+            isOneToOne: true
+            referencedRelation: "channels"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "multicast_encoders_multicast_group_id_fkey"
+            columns: ["multicast_group_id"]
+            isOneToOne: false
+            referencedRelation: "multicast_groups"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       multicast_groups: {
         Row: {
           bitrate_kbps: number | null
