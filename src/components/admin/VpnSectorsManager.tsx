@@ -69,17 +69,58 @@ interface VpnStatus {
 const VpnSectorsManager = () => {
   const { toast } = useToast();
   const [tab, setTab] = useState('sectors');
+  const [multicastEnabled, setMulticastEnabled] = useState(true);
+  const [loadingSetting, setLoadingSetting] = useState(false);
+
+  useEffect(() => {
+    apiGet<{ multicast_enabled: boolean }>('/api/vpn/settings')
+      .then(r => setMulticastEnabled(r.multicast_enabled))
+      .catch(() => { /* silencioso si backend viejo */ });
+  }, []);
+
+  const toggleMulticast = async (next: boolean) => {
+    setLoadingSetting(true);
+    try {
+      await apiPut('/api/vpn/settings', { multicast_enabled: next });
+      setMulticastEnabled(next);
+      toast({
+        title: next ? '✅ Multicast activado' : '⏸️ Multicast desactivado',
+        description: next
+          ? 'Los clientes en sectores VPN recibirán URLs udp://@... o http://udpxy/...'
+          : 'Todos los clientes volverán a usar HLS via /api/restream (modo seguro).',
+      });
+    } catch (e: any) {
+      toast({ title: 'Error', description: e.message, variant: 'destructive' });
+    } finally {
+      setLoadingSetting(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="glass rounded-xl p-6">
-        <div className="flex items-center gap-3 mb-2">
-          <div className="w-12 h-12 rounded-xl bg-primary/15 flex items-center justify-center">
-            <Network className="w-6 h-6 text-primary" />
+        <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-xl bg-primary/15 flex items-center justify-center">
+              <Network className="w-6 h-6 text-primary" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-foreground">VPN Sectores · Multicast</h2>
+              <p className="text-xs text-muted-foreground">L2TP/IPsec + GRE para distribución multicast a MikroTik remotos</p>
+            </div>
           </div>
-          <div>
-            <h2 className="text-lg font-bold text-foreground">VPN Sectores · Multicast</h2>
-            <p className="text-xs text-muted-foreground">L2TP/IPsec + GRE para distribución multicast a MikroTik remotos</p>
+          <div className="flex items-center gap-3 px-4 py-2 rounded-lg glass-strong border border-border/30">
+            <div className="text-right">
+              <div className="text-xs font-semibold text-foreground">Entrega Multicast/UDP</div>
+              <div className="text-[10px] text-muted-foreground">
+                {multicastEnabled ? 'Activo · sectores reciben udp://...' : 'Desactivado · todo va por HLS'}
+              </div>
+            </div>
+            <Switch
+              checked={multicastEnabled}
+              onCheckedChange={toggleMulticast}
+              disabled={loadingSetting}
+            />
           </div>
         </div>
       </motion.div>

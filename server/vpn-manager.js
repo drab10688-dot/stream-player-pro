@@ -283,6 +283,16 @@ async function resolveChannelUrlsForIp(pool, clientIp) {
     return { sector: null, urls: {} };
   }
 
+  // Toggle global: si multicast_enabled = false, no sustituir nada
+  try {
+    const tRes = await pool.query(
+      `SELECT value FROM system_settings WHERE key = 'multicast_enabled' LIMIT 1`
+    );
+    if (tRes.rows[0]?.value?.enabled === false) {
+      return { sector: null, urls: {}, disabled: true };
+    }
+  } catch { /* tabla puede no existir aún */ }
+
   const sRes = await pool.query(
     `SELECT id, name, delivery_mode, udpxy_url, gre_remote_ip, assigned_ip
        FROM vpn_sectors
