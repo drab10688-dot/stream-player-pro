@@ -952,13 +952,29 @@ app.post('/api/client/login', async (req, res) => {
       pool.query('SELECT id, title, message, image_url FROM ads WHERE is_active = true')
     ]);
 
-    // RESTREAMING: Todo pasa por HLS unificado
-    // YouTube mantiene su URL original (iframe), todo lo demás es HLS via restream
+    // VPN/Multicast: si el cliente viene desde un sector VPN configurado,
+    // sustituimos la URL HTTPS por udp://@... o http://udpxy/... según delivery_mode.
+    let sectorUrls = {};
+    let sectorInfo = null;
+    try {
+      const { resolveChannelUrlsForIp } = require('./vpn-manager');
+      const clientIP = getClientIP(req);
+      const resolved = await resolveChannelUrlsForIp(pool, clientIP);
+      sectorUrls = resolved.urls || {};
+      sectorInfo = resolved.sector || null;
+    } catch (e) {
+      console.warn('[client/login] resolveChannelUrlsForIp falló:', e.message);
+    }
+
+    // RESTREAMING: Por defecto todo pasa por HLS unificado.
+    // YouTube mantiene su URL original. Si hay URL de sector (multicast/udpxy), gana.
     const safeChannels = channelsRes.rows.map(ch => {
       const isYouTube = /youtube\.com|youtu\.be/.test(ch.url);
+      const sectorUrl = sectorUrls[ch.id];
       return {
         ...ch,
-        url: isYouTube ? ch.url : `/api/restream/${ch.id}`,
+        url: sectorUrl || (isYouTube ? ch.url : `/api/restream/${ch.id}`),
+        delivery: sectorUrl ? (sectorInfo?.delivery_mode || 'sector') : 'restream',
       };
     });
 
@@ -971,6 +987,7 @@ app.post('/api/client/login', async (req, res) => {
       channels: safeChannels,
       ads: adsRes.rows,
       stream_base_url: streamBaseUrl,
+      sector: sectorInfo, // null si no pertenece a sector VPN
     });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });
