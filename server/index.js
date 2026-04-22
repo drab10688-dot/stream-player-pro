@@ -5608,6 +5608,17 @@ app.get('/api/reseller/plans', authReseller, async (req, res) => {
   }
 });
 
+// =============================================
+// MÓDULO VPN L2TP/IPsec + MULTICAST
+// =============================================
+try {
+  const vpnRoutes = require('./vpn-routes');
+  app.use('/api/vpn', vpnRoutes(pool, authAdmin));
+  console.log('🔐 Módulo VPN L2TP/IPsec cargado en /api/vpn');
+} catch (e) {
+  console.error('⚠️  Error cargando módulo VPN:', e.message);
+}
+
 //
 // INICIAR SERVIDOR
 // =============================================
