@@ -329,19 +329,22 @@ const MulticastSection = () => {
   const [groups, setGroups] = useState<MulticastGroup[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [sectors, setSectors] = useState<Sector[]>([]);
+  const [plans, setPlans] = useState<Plan[]>([]);
   const [selectedSector, setSelectedSector] = useState<string>('');
   const [sectorChannels, setSectorChannels] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
     try {
-      const [g, c, s] = await Promise.all([
+      const [g, c, s, p] = await Promise.all([
         apiGet('/api/vpn/multicast'),
         apiGet('/api/channels'),
         apiGet('/api/vpn/sectors'),
+        apiGet('/api/plans'),
       ]);
       setGroups(g);
       setChannels(c);
       setSectors(s);
+      setPlans(p);
     } catch (e: any) {
       toast({ title: 'Error', description: e.message, variant: 'destructive' });
     }
