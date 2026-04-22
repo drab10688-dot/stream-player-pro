@@ -188,10 +188,13 @@ module.exports = (pool, authAdmin) => {
 
   router.post('/sectors/:id/channels', authAdmin, async (req, res) => {
     try {
+      const sectorId = req.params.id;
       const { multicast_group_ids } = req.body; // array de IDs
       if (!Array.isArray(multicast_group_ids)) {
         return res.status(400).json({ error: 'multicast_group_ids debe ser array' });
       }
+      // Filtrar valores no-uuid / vacíos para evitar errores de tipo
+      const ids = multicast_group_ids.filter(x => typeof x === 'string' && x.length === 36);
 
       // ---- Validación por plan: el sector solo puede recibir canales cuyas
       //      categorías estén incluidas en plan.categories.
@@ -199,11 +202,11 @@ module.exports = (pool, authAdmin) => {
         `SELECT s.id, s.plan_id, p.name AS plan_name, p.categories
            FROM vpn_sectors s
            LEFT JOIN plans p ON p.id = s.plan_id
-          WHERE s.id = $1`, [req.params.id]);
+          WHERE s.id = $1::uuid`, [sectorId]);
       if (!sectorRes.rows[0]) return res.status(404).json({ error: 'Sector no encontrado' });
       const sector = sectorRes.rows[0];
 
-      if (multicast_group_ids.length && sector.plan_id) {
+      if (ids.length && sector.plan_id) {
         const allowed = Array.isArray(sector.categories) ? sector.categories : [];
         if (!allowed.length) {
           return res.status(400).json({
@@ -215,7 +218,7 @@ module.exports = (pool, authAdmin) => {
             FROM multicast_groups mg
             LEFT JOIN channels c ON c.id = mg.channel_id
            WHERE mg.id = ANY($1::uuid[])
-        `, [multicast_group_ids]);
+        `, [ids]);
 
         const blocked = chk.rows.filter(r => !r.category || !allowed.includes(r.category));
         if (blocked.length) {
@@ -226,19 +229,22 @@ module.exports = (pool, authAdmin) => {
         }
       }
 
-      // Reemplazo total
-      await pool.query(`DELETE FROM sector_channel_map WHERE sector_id = $1`, [req.params.id]);
-      for (const mgId of multicast_group_ids) {
+      // Reemplazo total (cast explícito a uuid para evitar "could not determine data type")
+      await pool.query(`DELETE FROM sector_channel_map WHERE sector_id = $1::uuid`, [sectorId]);
+      for (const mgId of ids) {
         await pool.query(`
           INSERT INTO sector_channel_map (sector_id, multicast_group_id, is_active)
-          VALUES ($1, $2, true) ON CONFLICT DO NOTHING
-        `, [req.params.id, mgId]);
+          VALUES ($1::uuid, $2::uuid, true) ON CONFLICT DO NOTHING
+        `, [sectorId, mgId]);
       }
       await vpnMgr.syncAllFromDB(pool);
       // Auto-arranque encoders FFmpeg para los canales recién asignados
       try { await encoder.syncEncodersFromDB(pool); } catch (e) { console.error('encoder sync:', e.message); }
-      res.json({ ok: true, count: multicast_group_ids.length });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+      res.json({ ok: true, count: ids.length });
+    } catch (e) {
+      console.error('POST /sectors/:id/channels error:', e);
+      res.status(500).json({ error: e.message });
+    }
   });
 
   // ----------------------------------------------------------
