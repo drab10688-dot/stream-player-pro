@@ -160,11 +160,21 @@ module.exports = (pool, authAdmin) => {
   router.post('/multicast/assign', authAdmin, async (req, res) => {
     try {
       const { multicast_group_id, channel_id } = req.body;
+      const groupId = typeof multicast_group_id === 'string' && multicast_group_id.length === 36 ? multicast_group_id : null;
+      const channelId = typeof channel_id === 'string' && channel_id.length === 36 ? channel_id : null;
+
+      if (!groupId) {
+        return res.status(400).json({ error: 'multicast_group_id inválido' });
+      }
+
       const r = await pool.query(`
         UPDATE multicast_groups
-        SET channel_id = $1, is_assigned = ($1 IS NOT NULL)
-        WHERE id = $2 RETURNING *
-      `, [channel_id || null, multicast_group_id]);
+        SET channel_id = $1::uuid,
+            is_assigned = ($1::uuid IS NOT NULL)
+        WHERE id = $2::uuid
+        RETURNING *
+      `, [channelId, groupId]);
+
       res.json(r.rows[0]);
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
