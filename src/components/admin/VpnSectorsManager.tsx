@@ -114,11 +114,13 @@ const SectorsSection = () => {
     name: '', description: '', vpn_username: '', vpn_password: '',
     assigned_ip: '', gre_local_ip: '172.16.50.1', gre_remote_ip: '',
     mikrotik_public_ip: '', plan_id: '',
+    delivery_mode: 'multicast_direct' as DeliveryMode,
+    udpxy_url: '',
   });
 
   const load = useCallback(async () => {
     try {
-      const [s, p] = await Promise.all([apiGet('/api/vpn/sectors'), apiGet('/api/plans')]);
+      const [s, p] = await Promise.all([apiGet<Sector[]>('/api/vpn/sectors'), apiGet<Plan[]>('/api/plans')]);
       setSectors(s);
       setPlans(p);
     } catch (e: any) {
@@ -141,6 +143,7 @@ const SectorsSection = () => {
       name: '', description: '', vpn_username: '', vpn_password: '',
       assigned_ip: suggested, gre_local_ip: '172.16.50.1',
       gre_remote_ip: '', mikrotik_public_ip: '', plan_id: '',
+      delivery_mode: 'multicast_direct', udpxy_url: '',
     });
     setOpen(true);
   };
@@ -155,6 +158,8 @@ const SectorsSection = () => {
       gre_remote_ip: s.gre_remote_ip || '',
       mikrotik_public_ip: s.mikrotik_public_ip || '',
       plan_id: s.plan_id || '',
+      delivery_mode: s.delivery_mode || 'multicast_direct',
+      udpxy_url: s.udpxy_url || '',
     });
     setOpen(true);
   };
