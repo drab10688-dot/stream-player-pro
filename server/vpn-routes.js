@@ -178,6 +178,40 @@ module.exports = (pool, authAdmin) => {
       if (!Array.isArray(multicast_group_ids)) {
         return res.status(400).json({ error: 'multicast_group_ids debe ser array' });
       }
+
+      // ---- Validación por plan: el sector solo puede recibir canales cuyas
+      //      categorías estén incluidas en plan.categories.
+      const sectorRes = await pool.query(
+        `SELECT s.id, s.plan_id, p.name AS plan_name, p.categories
+           FROM vpn_sectors s
+           LEFT JOIN plans p ON p.id = s.plan_id
+          WHERE s.id = $1`, [req.params.id]);
+      if (!sectorRes.rows[0]) return res.status(404).json({ error: 'Sector no encontrado' });
+      const sector = sectorRes.rows[0];
+
+      if (multicast_group_ids.length && sector.plan_id) {
+        const allowed = Array.isArray(sector.categories) ? sector.categories : [];
+        if (!allowed.length) {
+          return res.status(400).json({
+            error: `El plan "${sector.plan_name}" no tiene categorías asignadas. No se pueden asignar canales.`
+          });
+        }
+        const chk = await pool.query(`
+          SELECT mg.id, c.name AS channel_name, c.category
+            FROM multicast_groups mg
+            LEFT JOIN channels c ON c.id = mg.channel_id
+           WHERE mg.id = ANY($1::uuid[])
+        `, [multicast_group_ids]);
+
+        const blocked = chk.rows.filter(r => !r.category || !allowed.includes(r.category));
+        if (blocked.length) {
+          const names = blocked.slice(0, 5).map(b => `${b.channel_name || '(sin canal)'} [${b.category || 'N/A'}]`).join(', ');
+          return res.status(400).json({
+            error: `${blocked.length} canal(es) no permitidos por el plan "${sector.plan_name}" (categorías: ${allowed.join(', ')}). Bloqueados: ${names}${blocked.length > 5 ? '…' : ''}`
+          });
+        }
+      }
+
       // Reemplazo total
       await pool.query(`DELETE FROM sector_channel_map WHERE sector_id = $1`, [req.params.id]);
       for (const mgId of multicast_group_ids) {
