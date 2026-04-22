@@ -987,6 +987,7 @@ app.post('/api/client/login', async (req, res) => {
       channels: safeChannels,
       ads: adsRes.rows,
       stream_base_url: streamBaseUrl,
+      sector: sectorInfo, // null si no pertenece a sector VPN
     });
   } catch (err) {
     res.status(500).json({ error: 'Error del servidor' });
