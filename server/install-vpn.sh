@@ -225,6 +225,33 @@ systemctl restart smcroute 2>/dev/null || true
 ok "Servicios activos"
 
 # ----------------------------------------------------------
+# 9.5) Crear tablas VPN en la base de datos PostgreSQL local
+# ----------------------------------------------------------
+log "Creando tablas VPN en la base de datos..."
+SCHEMA_FILE="$(dirname "$(readlink -f "$0")")/database/vpn-schema.sql"
+DB_PASS_FILE="/etc/omnisync-db-pass"
+
+if [ -f "$SCHEMA_FILE" ]; then
+  if [ -f "$DB_PASS_FILE" ]; then
+    DB_PASS=$(cat "$DB_PASS_FILE")
+    if PGPASSWORD="$DB_PASS" psql -h localhost -U streambox_user -d streambox_db -f "$SCHEMA_FILE" >/dev/null 2>&1; then
+      ok "Tablas VPN creadas/actualizadas en streambox_db"
+    else
+      warn "No se pudo conectar como streambox_user. Intentando como postgres..."
+      sudo -u postgres psql -d streambox_db -f "$SCHEMA_FILE" >/dev/null 2>&1 \
+        && ok "Tablas VPN creadas (vía postgres)" \
+        || err "Falló creación de tablas. Ejecuta manualmente: psql -d streambox_db -f $SCHEMA_FILE"
+    fi
+  else
+    sudo -u postgres psql -d streambox_db -f "$SCHEMA_FILE" >/dev/null 2>&1 \
+      && ok "Tablas VPN creadas (vía postgres)" \
+      || warn "No pude crear tablas. Ejecuta: sudo -u postgres psql -d streambox_db -f $SCHEMA_FILE"
+  fi
+else
+  warn "vpn-schema.sql no encontrado en $SCHEMA_FILE"
+fi
+
+# ----------------------------------------------------------
 # 10) Resumen final
 # ----------------------------------------------------------
 echo ""
