@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Plus, Download, RefreshCw, Trash2, Edit, Network, Radio, Activity, Server, Key, Copy, CheckCircle2, XCircle } from 'lucide-react';
+import { Plus, Download, RefreshCw, Trash2, Edit, Network, Radio, Activity, Server, Key, Copy, CheckCircle2, XCircle, Cpu, Play, Square, AlertCircle } from 'lucide-react';
 
 // ============================================================
 // Tipos
@@ -84,11 +84,13 @@ const VpnSectorsManager = () => {
         <TabsList className="glass-strong border border-border/30 p-1">
           <TabsTrigger value="sectors" className="gap-2"><Server className="w-4 h-4" /> Sectores</TabsTrigger>
           <TabsTrigger value="multicast" className="gap-2"><Radio className="w-4 h-4" /> Canales Multicast</TabsTrigger>
+          <TabsTrigger value="encoders" className="gap-2"><Cpu className="w-4 h-4" /> Encoders FFmpeg</TabsTrigger>
           <TabsTrigger value="monitor" className="gap-2"><Activity className="w-4 h-4" /> Monitor</TabsTrigger>
         </TabsList>
 
         <TabsContent value="sectors" className="mt-4"><SectorsSection /></TabsContent>
         <TabsContent value="multicast" className="mt-4"><MulticastSection /></TabsContent>
+        <TabsContent value="encoders" className="mt-4"><EncodersSection /></TabsContent>
         <TabsContent value="monitor" className="mt-4"><MonitorSection /></TabsContent>
       </Tabs>
     </div>
