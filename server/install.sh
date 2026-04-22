@@ -895,6 +895,29 @@ if command -v ufw &> /dev/null; then
 fi
 
 # =============================================
+# PASO FINAL: Instalar módulo VPN L2TP/IPsec + Multicast
+# Idempotente: solo se ejecuta si no está ya instalado
+# =============================================
+log_step "🔐 [9/9] Configurando módulo VPN L2TP/IPsec + Multicast..."
+
+if [ -f /etc/omnisync-vpn-psk ] && systemctl is-active --quiet xl2tpd 2>/dev/null; then
+  log_ok "VPN ya instalada (PSK existe + xl2tpd activo). Saltando."
+else
+  if [ -f "${SCRIPT_DIR}/install-vpn.sh" ]; then
+    log_info "Ejecutando install-vpn.sh (instala strongSwan, xl2tpd, smcroute)..."
+    if bash "${SCRIPT_DIR}/install-vpn.sh"; then
+      log_ok "Módulo VPN instalado correctamente"
+      log_info "PSK guardada en: /etc/omnisync-vpn-psk"
+    else
+      log_warn "install-vpn.sh terminó con errores. Revisa logs arriba."
+      log_info "Reintenta manualmente: sudo bash ${SCRIPT_DIR}/install-vpn.sh"
+    fi
+  else
+    log_warn "install-vpn.sh no encontrado. Sectores VPN no estarán disponibles."
+  fi
+fi
+
+# =============================================
 # RESULTADO FINAL
 # =============================================
 echo ""
