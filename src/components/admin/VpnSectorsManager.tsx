@@ -47,7 +47,7 @@ interface MulticastGroup {
 }
 
 interface Channel { id: string; name: string; category: string; }
-interface Plan { id: string; name: string; }
+interface Plan { id: string; name: string; categories?: string[]; }
 
 interface VpnStatus {
   ipsec_running: boolean;
