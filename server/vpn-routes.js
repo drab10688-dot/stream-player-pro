@@ -290,5 +290,28 @@ module.exports = (pool, authAdmin) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
+  // ----------------------------------------------------------
+  // SETTINGS GLOBALES (toggle multicast)
+  // ----------------------------------------------------------
+  router.get('/settings', authAdmin, async (req, res) => {
+    try {
+      const r = await pool.query(`SELECT key, value FROM system_settings WHERE key = 'multicast_enabled'`);
+      const enabled = r.rows[0]?.value?.enabled !== false;
+      res.json({ multicast_enabled: enabled });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  router.put('/settings', authAdmin, async (req, res) => {
+    try {
+      const enabled = !!req.body.multicast_enabled;
+      await pool.query(`
+        INSERT INTO system_settings (key, value, updated_at)
+        VALUES ('multicast_enabled', $1::jsonb, now())
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
+      `, [JSON.stringify({ enabled })]);
+      res.json({ multicast_enabled: enabled });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
   return router;
 };
