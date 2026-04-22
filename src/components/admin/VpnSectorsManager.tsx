@@ -276,6 +276,32 @@ const SectorsSection = () => {
                   </Select>
                 </div>
                 <div className="col-span-2">
+                  <Label>Modo de entrega de video</Label>
+                  <Select value={form.delivery_mode} onValueChange={v => setForm({ ...form, delivery_mode: v as DeliveryMode })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="multicast_direct">📡 Multicast directo al TV Box (recomendado · ahorra aire WISP)</SelectItem>
+                      <SelectItem value="udpxy_rbldf">🏠 udpxy en RB LDF del cliente (HTTP local)</SelectItem>
+                      <SelectItem value="udpxy_central">🗼 udpxy en MikroTik central (HTTP por aire)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    {form.delivery_mode === 'multicast_direct' && 'APK reproducirá udp://@239.x.x.x:1234. Requiere router cliente en bridge + IGMP en RB LDF.'}
+                    {form.delivery_mode === 'udpxy_rbldf' && 'APK pedirá http://{udpxy_url}/udp/239.x.x.x:1234 al RB LDF. Requiere container en RB LDF.'}
+                    {form.delivery_mode === 'udpxy_central' && 'APK pedirá HTTP al MikroTik central. Saturará aire WISP con N streams por cliente.'}
+                  </p>
+                </div>
+                {form.delivery_mode !== 'multicast_direct' && (
+                  <div className="col-span-2">
+                    <Label>URL base udpxy</Label>
+                    <Input
+                      value={form.udpxy_url}
+                      onChange={e => setForm({ ...form, udpxy_url: e.target.value })}
+                      placeholder={form.delivery_mode === 'udpxy_rbldf' ? 'http://192.168.1.1:4022' : 'http://10.99.99.2:4022'}
+                    />
+                  </div>
+                )}
+                <div className="col-span-2">
                   <Label>Descripción</Label>
                   <Input value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} />
                 </div>
@@ -293,7 +319,7 @@ const SectorsSection = () => {
               <Server className="w-5 h-5 text-primary" />
             </div>
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-1">
+              <div className="flex items-center gap-2 mb-1 flex-wrap">
                 <span className="font-semibold text-foreground truncate">{s.name}</span>
                 <Badge variant={s.is_active ? 'default' : 'secondary'} className="text-[10px]">
                   {s.is_active ? 'Activo' : 'Inactivo'}
@@ -302,6 +328,11 @@ const SectorsSection = () => {
                   <Badge variant="outline" className="text-emerald-400 border-emerald-400/30 text-[10px]">Conectado</Badge>
                 )}
                 {s.plan_name && <Badge variant="outline" className="text-[10px]">{s.plan_name}</Badge>}
+                <Badge variant="outline" className="text-[10px] border-primary/30 text-primary">
+                  {s.delivery_mode === 'multicast_direct' && '📡 Multicast directo'}
+                  {s.delivery_mode === 'udpxy_rbldf' && '🏠 udpxy RB LDF'}
+                  {s.delivery_mode === 'udpxy_central' && '🗼 udpxy central'}
+                </Badge>
               </div>
               <div className="text-xs text-muted-foreground flex flex-wrap gap-x-4 gap-y-1">
                 <span>👤 {s.vpn_username}</span>
