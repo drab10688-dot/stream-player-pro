@@ -4,7 +4,8 @@ Updated: now
 # Project Memory
 
 ## Core
-- 100% Native Node.js streaming. NO FFmpeg, NO DVR ever. Do not re-add.
+- 100% Native Node.js streaming para APK/VOD/HLS. NO FFmpeg para esos flujos. NO DVR.
+- EXCEPCIÓN: FFmpeg permitido SOLO para encoder multicast (HTTP→UDP) on-demand vía `multicast-encoder.js`.
 - Strict 1-to-N proxy strategy: maintain exactly one connection to origin per active channel.
 - Web UI restricted to Admin/Resellers (`/` redirects to `/admin`). No client web player.
 - Design: Turquoise/Cyan (#00C9A7), Purple, Outfit font, glassmorphism, light bg.
@@ -15,6 +16,8 @@ Updated: now
 - VPN L2TP/IPsec + GRE multicast: VPN net 172.16.50.0/24, multicast 239.10.0.0/24, PSK auth. Requires `install-vpn.sh` on VPS.
 
 ## Memories
+- [VPN L2TP+Multicast](mem://arquitectura/vpn-l2tp-ipsec-multicast-sectores) — strongSwan+xl2tpd+smcroute+GRE para sectores MikroTik
+- [Encoder multicast FFmpeg](mem://arquitectura/encoder-multicast-ffmpeg-on-demand) — HTTP→UDP on-demand, auto copy/transcode, auto-stop 60s
 - [Port mappings](mem://arquitectura/mapping-puertos-apk) — Nginx 25461 -> 3001 for APK, 80/443 for Admin
 - [System paths](mem://gestion/rutas-sistema-vps) — Backend in /opt/streambox/server, frontend in /var/www/streambox
 - [APK ads logic](mem://funcionalidades/logica-rotacion-anuncios-apk) — 32x32px overlay, 30s rotation, `imageUrl` and `type`
