@@ -105,17 +105,41 @@ function rewriteSmcrouteConf(routes) {
 // ----------------------------------------------------------
 // GRE tunnels: crear/eliminar
 // ----------------------------------------------------------
+function stripCIDR(ip) {
+  return String(ip || '').split('/')[0].trim();
+}
+
+function getGreLocalIP(greRemoteIP) {
+  const octets = stripCIDR(greRemoteIP).split('.').map(Number);
+  if (octets.length !== 4 || octets.some(n => Number.isNaN(n) || n < 0 || n > 255)) {
+    return null;
+  }
+  const host = octets[3];
+  if (host < 1) return null;
+  octets[3] = host - 1;
+  return octets.join('.');
+}
+
 function createGreTunnel(name, localIP, remoteIP, sectorIP) {
+  const tunnelLocalIP = stripCIDR(localIP);
+  const tunnelRemoteIP = stripCIDR(remoteIP);
+  const grePeerIP = stripCIDR(sectorIP);
+  const greLocalIP = getGreLocalIP(grePeerIP);
+
+  if (!greLocalIP) {
+    return { ok: false, error: `GRE remote IP inválida: ${sectorIP}` };
+  }
+
   if (!isLinux) {
-    console.log(`[VPN] (mock) GRE tunnel ${name}: ${localIP} -> ${remoteIP}`);
+    console.log(`[VPN] (mock) GRE tunnel ${name}: ${tunnelLocalIP} -> ${tunnelRemoteIP}, ${greLocalIP}/30 peer ${grePeerIP}`);
     return { ok: true, mock: true };
   }
   // Borrar si existe
   safeExec(`sudo ip tunnel del ${name} 2>/dev/null`);
-  const r1 = safeExec(`sudo ip tunnel add ${name} mode gre local ${localIP} remote ${remoteIP} ttl 64`);
+  const r1 = safeExec(`sudo ip tunnel add ${name} mode gre local ${tunnelLocalIP} remote ${tunnelRemoteIP} ttl 64`);
   if (!r1.ok) return r1;
   safeExec(`sudo ip link set ${name} up multicast on`);
-  safeExec(`sudo ip addr add ${sectorIP}/30 dev ${name}`);
+  safeExec(`sudo ip addr add ${greLocalIP}/30 dev ${name}`);
   return { ok: true };
 }
 
