@@ -267,6 +267,68 @@ async function syncAllFromDB(pool) {
   };
 }
 
+// ----------------------------------------------------------
+// RESOLVE: dado el IP del cliente (req.ip), detecta a qué sector
+// pertenece y devuelve un mapa { channel_id -> stream_url } según
+// el delivery_mode del sector. Si no pertenece a ningún sector
+// activo, devuelve { sector: null, urls: {} } y el caller debe
+// usar las URLs HTTPS del VPS por defecto.
+// ----------------------------------------------------------
+async function resolveChannelUrlsForIp(pool, clientIp) {
+  // Normaliza IPv6-mapped (::ffff:172.16.50.x)
+  const ip = (clientIp || '').replace(/^::ffff:/, '');
+
+  // Solo IPs del rango VPN entran al lookup
+  if (!ip.startsWith('172.16.50.')) {
+    return { sector: null, urls: {} };
+  }
+
+  const sRes = await pool.query(
+    `SELECT id, name, delivery_mode, udpxy_url, gre_remote_ip, assigned_ip
+       FROM vpn_sectors
+      WHERE assigned_ip = $1 AND is_active = true
+      LIMIT 1`,
+    [ip]
+  );
+  if (!sRes.rows[0]) return { sector: null, urls: {} };
+  const sector = sRes.rows[0];
+
+  // Canales asignados a este sector via multicast_groups
+  const cRes = await pool.query(
+    `SELECT mg.channel_id, mg.multicast_ip::text AS multicast_ip, mg.port
+       FROM sector_channel_map scm
+       JOIN multicast_groups mg ON mg.id = scm.multicast_group_id
+      WHERE scm.sector_id = $1 AND scm.is_active = true AND mg.channel_id IS NOT NULL`,
+    [sector.id]
+  );
+
+  const urls = {};
+  for (const row of cRes.rows) {
+    let url;
+    switch (sector.delivery_mode) {
+      case 'multicast_direct':
+        // LibVLC nativo: udp://@239.x.x.x:1234
+        url = `udp://@${row.multicast_ip}:${row.port}`;
+        break;
+      case 'udpxy_rbldf':
+      case 'udpxy_central': {
+        const base = (sector.udpxy_url || '').replace(/\/+$/, '');
+        if (!base) continue; // sin URL configurada -> deja fallback
+        url = `${base}/udp/${row.multicast_ip}:${row.port}`;
+        break;
+      }
+      default:
+        continue;
+    }
+    urls[row.channel_id] = url;
+  }
+
+  return {
+    sector: { id: sector.id, name: sector.name, delivery_mode: sector.delivery_mode },
+    urls,
+  };
+}
+
 module.exports = {
   rewriteChapSecrets,
   rewriteSmcrouteConf,
@@ -275,6 +337,7 @@ module.exports = {
   getTunnelStatus,
   generateMikrotikConfig,
   syncAllFromDB,
+  resolveChannelUrlsForIp,
   getPSK,
   getPublicIP,
 };
