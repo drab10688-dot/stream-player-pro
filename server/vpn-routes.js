@@ -276,5 +276,19 @@ module.exports = (pool, authAdmin) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
+  // ----------------------------------------------------------
+  // RESOLVE: dado el req.ip detecta sector y devuelve URLs de canales
+  // según delivery_mode. Usado por la APK al pedir su lista de canales.
+  // No requiere authAdmin: cualquier endpoint público de canales puede
+  // llamar a vpnMgr.resolveChannelUrlsForIp() internamente.
+  // Este endpoint queda como debug/utilidad para el panel.
+  // ----------------------------------------------------------
+  router.get('/resolve/:ip', authAdmin, async (req, res) => {
+    try {
+      const out = await vpnMgr.resolveChannelUrlsForIp(pool, req.params.ip);
+      res.json(out);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
   return router;
 };
