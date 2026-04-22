@@ -43,6 +43,9 @@ module.exports = (pool, authAdmin) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
+  // Helper: convierte "" o undefined a null (para campos inet/uuid opcionales)
+  const nz = (v) => (v === '' || v === undefined ? null : v);
+
   router.post('/sectors', authAdmin, async (req, res) => {
     try {
       const { name, description, vpn_username, vpn_password, assigned_ip,
@@ -59,9 +62,9 @@ module.exports = (pool, authAdmin) => {
            delivery_mode, udpxy_url)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
         RETURNING *
-      `, [name, description, vpn_username, vpn_password, assigned_ip,
-          gre_local_ip, gre_remote_ip, greName, mikrotik_public_ip, plan_id,
-          delivery_mode || 'multicast_direct', udpxy_url || null]);
+      `, [name, nz(description), vpn_username, vpn_password, assigned_ip,
+          nz(gre_local_ip), nz(gre_remote_ip), greName, nz(mikrotik_public_ip), nz(plan_id),
+          delivery_mode || 'multicast_direct', nz(udpxy_url)]);
       // Sincronizar archivos sistema
       await vpnMgr.syncAllFromDB(pool);
       res.json(r.rows[0]);
@@ -74,13 +77,16 @@ module.exports = (pool, authAdmin) => {
       const fields = ['name','description','vpn_username','vpn_password','assigned_ip',
                       'gre_local_ip','gre_remote_ip','mikrotik_public_ip','plan_id','is_active','notes',
                       'delivery_mode','udpxy_url'];
+      // Campos que NO admiten string vacío (inet/uuid)
+      const nullableFields = new Set(['description','gre_local_ip','gre_remote_ip',
+                                       'mikrotik_public_ip','plan_id','notes','udpxy_url']);
       const updates = [];
       const values = [];
       let i = 1;
       fields.forEach(f => {
         if (req.body[f] !== undefined) {
           updates.push(`${f} = $${i++}`);
-          values.push(req.body[f]);
+          values.push(nullableFields.has(f) ? nz(req.body[f]) : req.body[f]);
         }
       });
       if (!updates.length) return res.status(400).json({ error: 'Sin cambios' });
