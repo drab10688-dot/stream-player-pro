@@ -5,9 +5,13 @@
 
 const express = require('express');
 const vpnMgr = require('./vpn-manager');
+const encoder = require('./multicast-encoder');
 
 module.exports = (pool, authAdmin) => {
   const router = express.Router();
+
+  // Arranca el loop de mantenimiento de encoders al cargar el módulo
+  encoder.startMaintenanceLoop(pool);
 
   // ----------------------------------------------------------
   // STATUS GLOBAL
@@ -221,7 +225,40 @@ module.exports = (pool, authAdmin) => {
         `, [req.params.id, mgId]);
       }
       await vpnMgr.syncAllFromDB(pool);
+      // Auto-arranque encoders FFmpeg para los canales recién asignados
+      try { await encoder.syncEncodersFromDB(pool); } catch (e) { console.error('encoder sync:', e.message); }
       res.json({ ok: true, count: multicast_group_ids.length });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ----------------------------------------------------------
+  // ENCODERS FFmpeg (HTTP→UDP multicast on-demand)
+  // ----------------------------------------------------------
+  router.get('/encoders', authAdmin, async (req, res) => {
+    try {
+      const list = await encoder.listEncoders(pool);
+      res.json({ ffmpeg_installed: encoder.ffmpegInstalled(), encoders: list });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  router.post('/encoders/:channelId/start', authAdmin, async (req, res) => {
+    try {
+      const r = await encoder.startEncoder(pool, req.params.channelId);
+      res.json(r);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  router.post('/encoders/:channelId/stop', authAdmin, async (req, res) => {
+    try {
+      const r = await encoder.stopEncoder(pool, req.params.channelId);
+      res.json(r);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  router.post('/encoders/sync', authAdmin, async (req, res) => {
+    try {
+      const r = await encoder.syncEncodersFromDB(pool);
+      res.json(r);
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
