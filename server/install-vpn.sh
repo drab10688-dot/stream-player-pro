@@ -60,8 +60,17 @@ apt-get install -y -qq \
   xl2tpd ppp \
   smcroute \
   iproute2 iptables-persistent netfilter-persistent \
+  ffmpeg \
   curl openssl
-ok "Paquetes instalados"
+ok "Paquetes instalados (incluido FFmpeg para encoder multicast)"
+
+# Verificar FFmpeg
+if ! command -v ffmpeg >/dev/null 2>&1; then
+  err "FFmpeg no se instaló correctamente. El encoder multicast no funcionará."
+else
+  FFMPEG_VER=$(ffmpeg -version 2>/dev/null | head -1)
+  ok "FFmpeg OK: $FFMPEG_VER"
+fi
 
 # ----------------------------------------------------------
 # 3) Sysctl: IP forwarding + multicast forwarding

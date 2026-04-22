@@ -1,0 +1,319 @@
+// ============================================================
+// Omnisync - Multicast Encoder Manager
+// Convierte HTTP/HLS/TS unicast → UDP multicast usando FFmpeg
+// On-demand: arranca cuando un sector lo pide, para si nadie lo usa
+// ============================================================
+//
+// Estrategia de codecs:
+//   1. ffprobe rápido al origen (timeout 5s)
+//   2. Si video=h264 y audio=aac → "copy" (CPU mínima ~1-2%)
+//   3. Si no → transcode a h264+aac (CPU ~15-25% por canal SD)
+//
+// Auto-shutdown: si encoder no tiene sectores activos por IDLE_TIMEOUT_MS, se detiene.
+// ============================================================
+
+const { spawn, execSync } = require('child_process');
+const fs = require('fs');
+
+const IDLE_TIMEOUT_MS = 60_000;          // 60s sin sectores activos → stop
+const HEARTBEAT_INTERVAL_MS = 5_000;     // cada 5s actualiza stats
+const PROVIDER_UA = 'VLC/3.0.20 LibVLC/3.0.20';
+const FFMPEG_BIN = process.env.FFMPEG_PATH || '/usr/bin/ffmpeg';
+const FFPROBE_BIN = process.env.FFPROBE_PATH || '/usr/bin/ffprobe';
+
+// Estado en memoria de encoders activos
+// key = channel_id, value = { proc, multicastIp, port, codec, startedAt, idleSince, lastBytes, lastTs }
+const encoders = new Map();
+
+// ----------------------------------------------------------
+function ffmpegInstalled() {
+  try { execSync(`${FFMPEG_BIN} -version`, { stdio: 'ignore' }); return true; }
+  catch { return false; }
+}
+
+function ffprobeCodecs(url) {
+  if (!fs.existsSync(FFPROBE_BIN) && !commandExists(FFPROBE_BIN)) return null;
+  try {
+    const out = execSync(
+      `${FFPROBE_BIN} -v error -timeout 5000000 -user_agent "${PROVIDER_UA}" ` +
+      `-show_entries stream=codec_type,codec_name -of default=nw=1 "${url}"`,
+      { timeout: 8000, encoding: 'utf8' }
+    );
+    const result = { video: null, audio: null };
+    let currentType = null;
+    out.split('\n').forEach(line => {
+      const [k, v] = line.split('=');
+      if (k === 'codec_type') currentType = v;
+      else if (k === 'codec_name' && currentType) {
+        if (currentType === 'video' && !result.video) result.video = v;
+        if (currentType === 'audio' && !result.audio) result.audio = v;
+      }
+    });
+    return result;
+  } catch (e) {
+    return null;
+  }
+}
+
+function commandExists(cmd) {
+  try { execSync(`command -v ${cmd}`, { stdio: 'ignore' }); return true; }
+  catch { return false; }
+}
+
+// ----------------------------------------------------------
+// Decide modo: copy si h264+aac, sino transcode
+function pickCodecMode(probe) {
+  if (!probe) return { mode: 'copy', video: null, audio: null }; // intentar copy y fallback
+  const videoOk = probe.video === 'h264';
+  const audioOk = probe.audio === 'aac';
+  return {
+    mode: (videoOk && audioOk) ? 'copy' : 'transcode',
+    video: probe.video,
+    audio: probe.audio,
+  };
+}
+
+// ----------------------------------------------------------
+function buildFfmpegArgs(sourceUrl, multicastIp, port, mode) {
+  const dstUrl = `udp://${multicastIp}:${port}?pkt_size=1316&ttl=4`;
+  const baseInput = [
+    '-hide_banner', '-loglevel', 'warning',
+    '-fflags', '+genpts+nobuffer',
+    '-user_agent', PROVIDER_UA,
+    '-rw_timeout', '10000000',          // 10s timeout lectura
+    '-reconnect', '1',
+    '-reconnect_streamed', '1',
+    '-reconnect_delay_max', '5',
+    '-i', sourceUrl,
+  ];
+  const output = (mode === 'copy')
+    ? [
+        '-c', 'copy',
+        '-bsf:v', 'h264_mp4toannexb',    // útil si origen es HLS con MP4
+        '-f', 'mpegts',
+        '-mpegts_flags', '+resend_headers',
+        dstUrl,
+      ]
+    : [
+        '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency',
+        '-b:v', '2500k', '-maxrate', '2800k', '-bufsize', '5000k',
+        '-g', '50', '-keyint_min', '50',
+        '-c:a', 'aac', '-b:a', '128k', '-ac', '2',
+        '-f', 'mpegts',
+        '-mpegts_flags', '+resend_headers',
+        dstUrl,
+      ];
+  return [...baseInput, ...output];
+}
+
+// ----------------------------------------------------------
+// Arranca encoder para un canal. Si ya está corriendo, refresca idleSince.
+async function startEncoder(pool, channelId) {
+  if (!ffmpegInstalled()) {
+    throw new Error('FFmpeg no está instalado en el VPS. Ejecuta install-vpn.sh.');
+  }
+
+  // Si ya está activo: solo resetear idleSince
+  if (encoders.has(channelId)) {
+    const e = encoders.get(channelId);
+    e.idleSince = null;
+    return { ok: true, alreadyRunning: true, mode: e.codec.mode };
+  }
+
+  // Buscar canal y grupo multicast asignado
+  const r = await pool.query(`
+    SELECT c.id AS channel_id, c.name, c.url,
+           mg.id AS mg_id, mg.multicast_ip, mg.port
+      FROM channels c
+      JOIN multicast_groups mg ON mg.channel_id = c.id
+     WHERE c.id = $1 AND mg.is_assigned = true
+     LIMIT 1
+  `, [channelId]);
+  if (!r.rows[0]) throw new Error('Canal no asignado a ningún grupo multicast');
+
+  const { name, url, mg_id, multicast_ip, port } = r.rows[0];
+
+  // Detectar codecs
+  const probe = ffprobeCodecs(url);
+  const codec = pickCodecMode(probe);
+
+  console.log(`[encoder] Iniciando ${name} → ${multicast_ip}:${port} (${codec.mode}, v=${codec.video}, a=${codec.audio})`);
+
+  const args = buildFfmpegArgs(url, multicast_ip, port, codec.mode);
+  const proc = spawn(FFMPEG_BIN, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+
+  let lastError = '';
+  proc.stderr.on('data', (chunk) => {
+    const s = chunk.toString();
+    if (s.includes('error') || s.includes('Error') || s.includes('fail')) {
+      lastError = s.split('\n').slice(-3).join(' ').slice(-300);
+    }
+  });
+
+  proc.on('exit', async (code, signal) => {
+    console.log(`[encoder] ${name} exit code=${code} sig=${signal}`);
+    encoders.delete(channelId);
+    try {
+      await pool.query(
+        `UPDATE multicast_encoders SET status='stopped', pid=NULL, last_error=$1
+           WHERE channel_id=$2`,
+        [code === 0 ? null : (lastError || `exit ${code}`), channelId]
+      );
+    } catch {}
+  });
+
+  encoders.set(channelId, {
+    proc,
+    pid: proc.pid,
+    channelId,
+    name,
+    multicastGroupId: mg_id,
+    multicastIp: multicast_ip,
+    port,
+    codec,
+    startedAt: new Date(),
+    idleSince: null,
+    lastError: '',
+  });
+
+  // Persistir estado
+  await pool.query(`
+    INSERT INTO multicast_encoders (channel_id, multicast_group_id, pid, status, codec_mode,
+                                    source_codec_video, source_codec_audio, started_at, auto_started)
+    VALUES ($1, $2, $3, 'running', $4, $5, $6, now(), true)
+    ON CONFLICT (channel_id) DO UPDATE
+       SET pid = EXCLUDED.pid,
+           status = 'running',
+           codec_mode = EXCLUDED.codec_mode,
+           source_codec_video = EXCLUDED.source_codec_video,
+           source_codec_audio = EXCLUDED.source_codec_audio,
+           started_at = now(),
+           last_error = NULL,
+           multicast_group_id = EXCLUDED.multicast_group_id
+  `, [channelId, mg_id, proc.pid, codec.mode, codec.video, codec.audio]);
+
+  return { ok: true, mode: codec.mode, multicast: `${multicast_ip}:${port}` };
+}
+
+// ----------------------------------------------------------
+async function stopEncoder(pool, channelId) {
+  const e = encoders.get(channelId);
+  if (!e) return { ok: true, wasRunning: false };
+  try {
+    e.proc.kill('SIGTERM');
+    setTimeout(() => { try { e.proc.kill('SIGKILL'); } catch {} }, 3000);
+  } catch {}
+  encoders.delete(channelId);
+  await pool.query(
+    `UPDATE multicast_encoders SET status='stopped', pid=NULL WHERE channel_id=$1`,
+    [channelId]
+  );
+  return { ok: true, wasRunning: true };
+}
+
+// ----------------------------------------------------------
+// Lista todos los encoders (en memoria + BD)
+async function listEncoders(pool) {
+  const r = await pool.query(`
+    SELECT me.*, c.name AS channel_name, c.category, mg.multicast_ip, mg.port,
+           (SELECT COUNT(*) FROM sector_channel_map scm
+              WHERE scm.multicast_group_id = me.multicast_group_id AND scm.is_active) AS sectors_using
+      FROM multicast_encoders me
+      JOIN channels c ON c.id = me.channel_id
+      LEFT JOIN multicast_groups mg ON mg.id = me.multicast_group_id
+     ORDER BY me.started_at DESC NULLS LAST
+  `);
+  // Enriquecer con estado runtime
+  return r.rows.map(row => {
+    const live = encoders.get(row.channel_id);
+    return {
+      ...row,
+      runtime_alive: !!live,
+      runtime_pid: live?.pid || null,
+      idle_seconds: live?.idleSince ? Math.floor((Date.now() - live.idleSince) / 1000) : null,
+    };
+  });
+}
+
+// ----------------------------------------------------------
+// Sincroniza encoders con BD: arranca los que tienen sectores activos, detiene los huérfanos
+async function syncEncodersFromDB(pool) {
+  // Canales que DEBERÍAN estar activos (al menos un sector los recibe)
+  const needed = await pool.query(`
+    SELECT DISTINCT mg.channel_id
+      FROM sector_channel_map scm
+      JOIN multicast_groups mg ON mg.id = scm.multicast_group_id
+      JOIN vpn_sectors vs ON vs.id = scm.sector_id
+     WHERE scm.is_active = true AND vs.is_active = true AND mg.channel_id IS NOT NULL
+  `);
+  const neededSet = new Set(needed.rows.map(r => r.channel_id));
+
+  // Arrancar los que faltan
+  const started = [];
+  for (const channelId of neededSet) {
+    if (!encoders.has(channelId)) {
+      try {
+        await startEncoder(pool, channelId);
+        started.push(channelId);
+      } catch (e) {
+        console.error(`[encoder] No se pudo arrancar ${channelId}: ${e.message}`);
+      }
+    }
+  }
+
+  // Marcar idle a los que ya no tienen sectores (no parar inmediatamente, dejar IDLE_TIMEOUT)
+  const stopped = [];
+  for (const [channelId, e] of encoders.entries()) {
+    if (!neededSet.has(channelId) && !e.idleSince) {
+      e.idleSince = Date.now();
+    } else if (neededSet.has(channelId)) {
+      e.idleSince = null;
+    }
+  }
+
+  return { started: started.length, total_active: encoders.size };
+}
+
+// ----------------------------------------------------------
+// Loop de mantenimiento: chequea idle, actualiza heartbeats
+function startMaintenanceLoop(pool) {
+  setInterval(async () => {
+    const now = Date.now();
+    for (const [channelId, e] of encoders.entries()) {
+      // Auto-stop por idle
+      if (e.idleSince && (now - e.idleSince) > IDLE_TIMEOUT_MS) {
+        console.log(`[encoder] Auto-stop ${e.name} (idle ${Math.floor((now - e.idleSince)/1000)}s)`);
+        await stopEncoder(pool, channelId).catch(() => {});
+        continue;
+      }
+      // Heartbeat
+      try {
+        await pool.query(
+          `UPDATE multicast_encoders SET last_heartbeat = now() WHERE channel_id = $1`,
+          [channelId]
+        );
+      } catch {}
+    }
+  }, HEARTBEAT_INTERVAL_MS);
+}
+
+// ----------------------------------------------------------
+function shutdownAll() {
+  for (const [id, e] of encoders.entries()) {
+    try { e.proc.kill('SIGTERM'); } catch {}
+  }
+  encoders.clear();
+}
+
+process.on('SIGTERM', shutdownAll);
+process.on('SIGINT', shutdownAll);
+
+module.exports = {
+  startEncoder,
+  stopEncoder,
+  listEncoders,
+  syncEncodersFromDB,
+  startMaintenanceLoop,
+  ffmpegInstalled,
+  shutdownAll,
+};

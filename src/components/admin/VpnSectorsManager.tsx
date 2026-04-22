@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Plus, Download, RefreshCw, Trash2, Edit, Network, Radio, Activity, Server, Key, Copy, CheckCircle2, XCircle } from 'lucide-react';
+import { Plus, Download, RefreshCw, Trash2, Edit, Network, Radio, Activity, Server, Key, Copy, CheckCircle2, XCircle, Cpu, Play, Square, AlertCircle } from 'lucide-react';
 
 // ============================================================
 // Tipos
@@ -84,11 +84,13 @@ const VpnSectorsManager = () => {
         <TabsList className="glass-strong border border-border/30 p-1">
           <TabsTrigger value="sectors" className="gap-2"><Server className="w-4 h-4" /> Sectores</TabsTrigger>
           <TabsTrigger value="multicast" className="gap-2"><Radio className="w-4 h-4" /> Canales Multicast</TabsTrigger>
+          <TabsTrigger value="encoders" className="gap-2"><Cpu className="w-4 h-4" /> Encoders FFmpeg</TabsTrigger>
           <TabsTrigger value="monitor" className="gap-2"><Activity className="w-4 h-4" /> Monitor</TabsTrigger>
         </TabsList>
 
         <TabsContent value="sectors" className="mt-4"><SectorsSection /></TabsContent>
         <TabsContent value="multicast" className="mt-4"><MulticastSection /></TabsContent>
+        <TabsContent value="encoders" className="mt-4"><EncodersSection /></TabsContent>
         <TabsContent value="monitor" className="mt-4"><MonitorSection /></TabsContent>
       </Tabs>
     </div>
@@ -635,6 +637,199 @@ const MonitorSection = () => {
                 <code className="text-primary">{t.interface}</code>
                 <span className="text-muted-foreground">→</span>
                 <code className="text-foreground">{t.ip}</code>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ============================================================
+// SECCIÓN 4: ENCODERS FFMPEG (HTTP→UDP multicast on-demand)
+// ============================================================
+interface EncoderRow {
+  id: string;
+  channel_id: string;
+  channel_name: string;
+  category: string;
+  multicast_ip: string | null;
+  port: number | null;
+  pid: number | null;
+  status: string;
+  codec_mode: string;
+  source_codec_video: string | null;
+  source_codec_audio: string | null;
+  cpu_percent: number;
+  bitrate_kbps: number;
+  started_at: string | null;
+  last_heartbeat: string | null;
+  last_error: string | null;
+  sectors_using: number;
+  runtime_alive: boolean;
+  idle_seconds: number | null;
+}
+
+const EncodersSection = () => {
+  const { toast } = useToast();
+  const [encoders, setEncoders] = useState<EncoderRow[]>([]);
+  const [ffmpegInstalled, setFfmpegInstalled] = useState(true);
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const r = await apiGet<{ ffmpeg_installed: boolean; encoders: EncoderRow[] }>('/api/vpn/encoders');
+      setFfmpegInstalled(r.ffmpeg_installed);
+      setEncoders(r.encoders || []);
+    } catch (e: any) {
+      toast({ title: 'Error', description: e.message, variant: 'destructive' });
+    }
+  }, [toast]);
+
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 5000);
+    return () => clearInterval(t);
+  }, [load]);
+
+  const startOne = async (channelId: string) => {
+    setLoading(true);
+    try {
+      await apiPost(`/api/vpn/encoders/${channelId}/start`, {});
+      toast({ title: 'Encoder iniciado' });
+      await load();
+    } catch (e: any) {
+      toast({ title: 'Error', description: e.message, variant: 'destructive' });
+    } finally { setLoading(false); }
+  };
+
+  const stopOne = async (channelId: string) => {
+    setLoading(true);
+    try {
+      await apiPost(`/api/vpn/encoders/${channelId}/stop`, {});
+      toast({ title: 'Encoder detenido' });
+      await load();
+    } catch (e: any) {
+      toast({ title: 'Error', description: e.message, variant: 'destructive' });
+    } finally { setLoading(false); }
+  };
+
+  const syncAll = async () => {
+    setLoading(true);
+    try {
+      const r = await apiPost<{ started: number; total_active: number }>('/api/vpn/encoders/sync', {});
+      toast({ title: `Sync OK`, description: `Iniciados: ${r.started} · Activos: ${r.total_active}` });
+      await load();
+    } catch (e: any) {
+      toast({ title: 'Error', description: e.message, variant: 'destructive' });
+    } finally { setLoading(false); }
+  };
+
+  const running = encoders.filter(e => e.runtime_alive).length;
+  const idle = encoders.filter(e => e.runtime_alive && e.idle_seconds !== null).length;
+
+  return (
+    <div className="space-y-4">
+      {!ffmpegInstalled && (
+        <div className="glass rounded-xl p-4 border border-destructive/40 bg-destructive/5 flex gap-3">
+          <AlertCircle className="w-5 h-5 text-destructive shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-semibold text-destructive">FFmpeg no instalado</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              Ejecuta <code className="bg-muted px-1.5 py-0.5 rounded">sudo bash server/install-vpn.sh</code> en el VPS para instalar FFmpeg y habilitar el encoder multicast.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Header + stats */}
+      <div className="glass rounded-xl p-4">
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <Cpu className="w-5 h-5 text-primary" />
+              <span className="font-semibold text-foreground">Encoders FFmpeg</span>
+            </div>
+            <Badge variant="outline" className="gap-1">
+              <CheckCircle2 className="w-3 h-3 text-primary" /> {running} activos
+            </Badge>
+            {idle > 0 && (
+              <Badge variant="outline" className="gap-1 text-muted-foreground">
+                {idle} idle (auto-stop pronto)
+              </Badge>
+            )}
+            <Badge variant="outline">{encoders.length} total</Badge>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={load}>
+              <RefreshCw className="w-4 h-4 mr-1" /> Refrescar
+            </Button>
+            <Button size="sm" onClick={syncAll} disabled={loading}>
+              <RefreshCw className="w-4 h-4 mr-1" /> Sincronizar con sectores
+            </Button>
+          </div>
+        </div>
+        <p className="text-xs text-muted-foreground mt-3">
+          Los encoders convierten HTTP/HLS/TS unicast → UDP multicast en tiempo real. Se inician automáticamente cuando un sector recibe un canal y se detienen 60s después de quedar sin uso.
+          Modo <strong>copy</strong> = sin transcoding (CPU mínima, requiere H.264+AAC). Modo <strong>transcode</strong> = recodifica a H.264+AAC (~15-25% CPU/canal).
+        </p>
+      </div>
+
+      {/* Lista de encoders */}
+      <div className="glass rounded-xl p-4">
+        {encoders.length === 0 ? (
+          <div className="text-center py-12 text-muted-foreground">
+            <Cpu className="w-12 h-12 mx-auto mb-3 opacity-30" />
+            <p className="text-sm">No hay encoders activos.</p>
+            <p className="text-xs mt-1">Asigna canales multicast a sectores en la pestaña "Canales Multicast" para que se inicien automáticamente.</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {encoders.map(e => (
+              <div key={e.id} className="flex items-center gap-3 p-3 rounded-lg border border-border/40 hover:bg-muted/30 transition">
+                <div className={`w-2 h-2 rounded-full shrink-0 ${
+                  e.runtime_alive && !e.idle_seconds ? 'bg-primary animate-pulse' :
+                  e.runtime_alive && e.idle_seconds ? 'bg-yellow-500' :
+                  e.status === 'error' ? 'bg-destructive' : 'bg-muted-foreground/30'
+                }`} />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-medium text-sm truncate text-foreground">{e.channel_name}</span>
+                    <Badge variant="outline" className="text-[10px] py-0 px-1.5">{e.category}</Badge>
+                    {e.multicast_ip && (
+                      <code className="text-[10px] bg-muted px-1.5 py-0.5 rounded text-muted-foreground">
+                        udp://{e.multicast_ip}:{e.port}
+                      </code>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3 mt-1 text-[11px] text-muted-foreground flex-wrap">
+                    <span className={e.codec_mode === 'copy' ? 'text-primary' : 'text-yellow-600 dark:text-yellow-500'}>
+                      {e.codec_mode === 'copy' ? '⚡ copy' : '🔄 transcode'}
+                    </span>
+                    {e.source_codec_video && <span>v: {e.source_codec_video}</span>}
+                    {e.source_codec_audio && <span>a: {e.source_codec_audio}</span>}
+                    {e.pid && <span>PID: {e.pid}</span>}
+                    <span>Sectores: {e.sectors_using}</span>
+                    {e.idle_seconds !== null && e.idle_seconds > 0 && (
+                      <span className="text-yellow-600 dark:text-yellow-500">idle {e.idle_seconds}s</span>
+                    )}
+                    {e.last_error && (
+                      <span className="text-destructive truncate max-w-[300px]" title={e.last_error}>{e.last_error}</span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  {e.runtime_alive ? (
+                    <Button size="sm" variant="outline" onClick={() => stopOne(e.channel_id)} disabled={loading}>
+                      <Square className="w-3.5 h-3.5 mr-1" /> Stop
+                    </Button>
+                  ) : (
+                    <Button size="sm" variant="outline" onClick={() => startOne(e.channel_id)} disabled={loading || !ffmpegInstalled}>
+                      <Play className="w-3.5 h-3.5 mr-1" /> Start
+                    </Button>
+                  )}
+                </div>
               </div>
             ))}
           </div>
