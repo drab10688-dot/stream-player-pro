@@ -69,6 +69,18 @@ if [ -f "$DB_PASS_FILE" ] && [ -f "$SCRIPT_DIR/.env" ]; then
   sed -i "s|^DB_PASSWORD=.*|DB_PASSWORD=${DB_PASS}|" "$SCRIPT_DIR/.env" 2>/dev/null || true
 fi
 
+# 4.5) Aplicar schema VPN (idempotente, crea tablas nuevas si faltan)
+VPN_SCHEMA="$SCRIPT_DIR/database/vpn-schema.sql"
+if [ -f "$VPN_SCHEMA" ] && [ -f "$DB_PASS_FILE" ]; then
+  log "🗄️  Aplicando schema VPN (idempotente)..."
+  DB_PASS=$(cat "$DB_PASS_FILE")
+  if PGPASSWORD="$DB_PASS" psql -h localhost -U streambox_user -d streambox_db -f "$VPN_SCHEMA" >/dev/null 2>&1; then
+    ok "Schema VPN aplicado"
+  else
+    warn "No se pudo aplicar vpn-schema.sql automáticamente"
+  fi
+fi
+
 # 5) Restart PM2
 log "♻️  Reiniciando streambox-api..."
 pm2 restart streambox-api > /dev/null 2>&1 || pm2 start "$SCRIPT_DIR/index.js" --name streambox-api
