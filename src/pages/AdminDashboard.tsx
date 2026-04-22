@@ -28,6 +28,7 @@ import omnisyncLogo from '@/assets/omnisync-logo.png';
 import ChangePasswordDialog from '@/components/admin/ChangePasswordDialog';
 import ConnectionsOverview from '@/components/admin/ConnectionsOverview';
 import ChannelSync from '@/components/admin/ChannelSync';
+import VpnSectorsManager from '@/components/admin/VpnSectorsManager';
 
 
 const AdminDashboard = () => {
@@ -146,6 +147,9 @@ const AdminDashboard = () => {
             <TabsTrigger value="sync" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
               <ArrowRightLeft className="w-4 h-4" /> Sincronizar
             </TabsTrigger>
+            <TabsTrigger value="vpn" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
+              <Network className="w-4 h-4" /> VPN/Multicast
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="dashboard" forceMount className="data-[state=inactive]:hidden"><AdminStats /></TabsContent>
@@ -170,6 +174,7 @@ const AdminDashboard = () => {
           <TabsContent value="activity" forceMount className="data-[state=inactive]:hidden"><ActivityLogs /></TabsContent>
           <TabsContent value="connections" forceMount className="data-[state=inactive]:hidden"><ConnectionsOverview /></TabsContent>
           <TabsContent value="sync" forceMount className="data-[state=inactive]:hidden"><ChannelSync /></TabsContent>
+          <TabsContent value="vpn" forceMount className="data-[state=inactive]:hidden"><VpnSectorsManager /></TabsContent>
           
         </Tabs>
       </main>
