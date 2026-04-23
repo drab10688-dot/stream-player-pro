@@ -72,8 +72,10 @@ function pickCodecMode(probe) {
     // Probe falló → transcode garantiza compatibilidad
     return { mode: 'transcode', video: probe?.video || null, audio: probe?.audio || null };
   }
-  const videoOk = probe.video === 'h264';
-  const audioOk = probe.audio === 'aac' || probe.audio === 'mp2' || probe.audio === 'ac3';
+  // Video válido para copy: h264, hevc, mpeg2video (todos soportados por mpegts)
+  const videoOk = ['h264', 'hevc', 'mpeg2video'].includes(probe.video);
+  // Audio válido para copy: aac, mp2, mp3, ac3
+  const audioOk = ['aac', 'mp2', 'mp3', 'ac3'].includes(probe.audio);
   return {
     mode: (videoOk && audioOk) ? 'copy' : 'transcode',
     video: probe.video,
