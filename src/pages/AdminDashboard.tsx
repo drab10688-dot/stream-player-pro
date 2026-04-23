@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAdminAuth } from '@/contexts/AdminAuthContext';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Tv, Users, Megaphone, Store, LogOut, LayoutDashboard, Bell, Activity, Globe, Radio, Bug, Package, HardDrive, Film, Tv2, Eye, Shield, Wifi, Cpu, Smartphone, ScrollText, Server, ArrowRightLeft, Network } from 'lucide-react';
+import { Tv, Users, Megaphone, Store, LogOut, LayoutDashboard, Bell, Activity, Globe, Radio, Bug, Package, HardDrive, Film, Tv2, Eye, Shield, Wifi, Cpu, Smartphone, ScrollText, Server, ArrowRightLeft, Network, KeyRound } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import AdminStats from '@/components/admin/AdminStats';
 import ChannelsManager from '@/components/admin/ChannelsManager';
@@ -29,6 +29,7 @@ import ChangePasswordDialog from '@/components/admin/ChangePasswordDialog';
 import ConnectionsOverview from '@/components/admin/ConnectionsOverview';
 import ChannelSync from '@/components/admin/ChannelSync';
 import VpnSectorsManager from '@/components/admin/VpnSectorsManager';
+import DeviceCodesManager from '@/components/admin/DeviceCodesManager';
 
 
 const AdminDashboard = () => {
@@ -150,6 +151,9 @@ const AdminDashboard = () => {
             <TabsTrigger value="vpn" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
               <Network className="w-4 h-4" /> VPN/Multicast
             </TabsTrigger>
+            <TabsTrigger value="device-codes" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
+              <KeyRound className="w-4 h-4" /> Códigos APK
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="dashboard" forceMount className="data-[state=inactive]:hidden"><AdminStats /></TabsContent>
@@ -175,6 +179,7 @@ const AdminDashboard = () => {
           <TabsContent value="connections" forceMount className="data-[state=inactive]:hidden"><ConnectionsOverview /></TabsContent>
           <TabsContent value="sync" forceMount className="data-[state=inactive]:hidden"><ChannelSync /></TabsContent>
           <TabsContent value="vpn" forceMount className="data-[state=inactive]:hidden"><VpnSectorsManager /></TabsContent>
+          <TabsContent value="device-codes" forceMount className="data-[state=inactive]:hidden"><DeviceCodesManager /></TabsContent>
           
         </Tabs>
       </main>
