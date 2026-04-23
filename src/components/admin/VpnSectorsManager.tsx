@@ -840,6 +840,10 @@ interface EncoderRow {
   sectors_using: number;
   runtime_alive: boolean;
   idle_seconds: number | null;
+  mode: 'always_on' | 'on_demand';
+  idle_timeout_seconds: number;
+  last_viewer_at: string | null;
+  current_viewers: number;
 }
 
 const EncodersSection = () => {
