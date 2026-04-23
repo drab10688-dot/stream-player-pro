@@ -68,6 +68,7 @@
     "sonner": "^2.0.7",
     "tailwind-merge": "^2.6.0",
     "tailwindcss-animate": "^1.0.7",
+    "ts-interface-checker": "^0.1.13",
     "vaul": "^0.9.9",
     "video.js": "^8.23.7",
     "vite-plugin-pwa": "^1.2.0",
