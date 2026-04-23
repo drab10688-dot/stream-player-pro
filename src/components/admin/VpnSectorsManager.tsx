@@ -840,6 +840,10 @@ interface EncoderRow {
   sectors_using: number;
   runtime_alive: boolean;
   idle_seconds: number | null;
+  mode: 'always_on' | 'on_demand';
+  idle_timeout_seconds: number;
+  last_viewer_at: string | null;
+  current_viewers: number;
 }
 
 const EncodersSection = () => {
@@ -886,6 +890,20 @@ const EncodersSection = () => {
     } finally { setLoading(false); }
   };
 
+  const setMode = async (channelId: string, mode: 'always_on' | 'on_demand', idleSec?: number) => {
+    setLoading(true);
+    try {
+      await apiPut(`/api/vpn/encoders/${channelId}/config`, {
+        mode,
+        ...(idleSec !== undefined ? { idle_timeout_seconds: idleSec } : {}),
+      });
+      toast({ title: 'Configuración guardada', description: mode === 'on_demand' ? 'Bajo demanda activado' : 'Siempre activo' });
+      await load();
+    } catch (e: any) {
+      toast({ title: 'Error', description: e.message, variant: 'destructive' });
+    } finally { setLoading(false); }
+  };
+
   const syncAll = async () => {
     setLoading(true);
     try {
@@ -899,6 +917,7 @@ const EncodersSection = () => {
 
   const running = encoders.filter(e => e.runtime_alive).length;
   const idle = encoders.filter(e => e.runtime_alive && e.idle_seconds !== null).length;
+  const onDemandCount = encoders.filter(e => e.mode === 'on_demand').length;
 
   return (
     <div className="space-y-4">
@@ -917,7 +936,7 @@ const EncodersSection = () => {
       {/* Header + stats */}
       <div className="glass rounded-xl p-4">
         <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 flex-wrap">
             <div className="flex items-center gap-2">
               <Cpu className="w-5 h-5 text-primary" />
               <span className="font-semibold text-foreground">Encoders FFmpeg</span>
@@ -927,7 +946,12 @@ const EncodersSection = () => {
             </Badge>
             {idle > 0 && (
               <Badge variant="outline" className="gap-1 text-muted-foreground">
-                {idle} idle (auto-stop pronto)
+                {idle} idle
+              </Badge>
+            )}
+            {onDemandCount > 0 && (
+              <Badge variant="outline" className="gap-1 text-primary">
+                {onDemandCount} bajo demanda
               </Badge>
             )}
             <Badge variant="outline">{encoders.length} total</Badge>
@@ -942,8 +966,10 @@ const EncodersSection = () => {
           </div>
         </div>
         <p className="text-xs text-muted-foreground mt-3">
-          Los encoders convierten HTTP/HLS/TS unicast → UDP multicast en tiempo real. Se inician automáticamente cuando un sector recibe un canal y se detienen 60s después de quedar sin uso.
-          Modo <strong>copy</strong> = sin transcoding (CPU mínima, requiere H.264+AAC). Modo <strong>transcode</strong> = recodifica a H.264+AAC (~15-25% CPU/canal).
+          Los encoders convierten HTTP/HLS/TS unicast → UDP multicast en tiempo real.
+          <strong> Siempre activo</strong> = corre mientras haya sectores asignados (latencia 0 al cambiar canal).
+          <strong> Bajo demanda</strong> = arranca solo cuando un cliente está mirando, se apaga tras X minutos sin viewers (ahorra CPU).
+          Modo <strong>copy</strong> = sin transcoding (CPU mínima). Modo <strong>transcode</strong> = recodifica a H.264+AAC (~15-25% CPU/canal).
         </p>
       </div>
 
@@ -982,6 +1008,9 @@ const EncodersSection = () => {
                     {e.source_codec_audio && <span>a: {e.source_codec_audio}</span>}
                     {e.pid && <span>PID: {e.pid}</span>}
                     <span>Sectores: {e.sectors_using}</span>
+                    <span className={e.current_viewers > 0 ? 'text-primary font-medium' : ''}>
+                      👁 {e.current_viewers || 0} viewers
+                    </span>
                     {e.idle_seconds !== null && e.idle_seconds > 0 && (
                       <span className="text-yellow-600 dark:text-yellow-500">idle {e.idle_seconds}s</span>
                     )}
@@ -990,7 +1019,36 @@ const EncodersSection = () => {
                     )}
                   </div>
                 </div>
-                <div className="flex items-center gap-1 shrink-0">
+                <div className="flex items-center gap-2 shrink-0">
+                  {/* Toggle on-demand */}
+                  <div className="flex items-center gap-1.5 px-2 py-1 rounded border border-border/40">
+                    <Switch
+                      checked={e.mode === 'on_demand'}
+                      onCheckedChange={(v) => setMode(e.channel_id, v ? 'on_demand' : 'always_on')}
+                      disabled={loading}
+                    />
+                    <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+                      {e.mode === 'on_demand' ? 'Bajo demanda' : 'Siempre activo'}
+                    </span>
+                  </div>
+                  {/* Selector de timeout solo si on_demand */}
+                  {e.mode === 'on_demand' && (
+                    <Select
+                      value={String(e.idle_timeout_seconds || 300)}
+                      onValueChange={(v) => setMode(e.channel_id, 'on_demand', parseInt(v, 10))}
+                    >
+                      <SelectTrigger className="h-8 w-[110px] text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="60">1 min</SelectItem>
+                        <SelectItem value="180">3 min</SelectItem>
+                        <SelectItem value="300">5 min</SelectItem>
+                        <SelectItem value="600">10 min</SelectItem>
+                        <SelectItem value="1800">30 min</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  )}
                   {e.runtime_alive ? (
                     <Button size="sm" variant="outline" onClick={() => stopOne(e.channel_id)} disabled={loading}>
                       <Square className="w-3.5 h-3.5 mr-1" /> Stop
