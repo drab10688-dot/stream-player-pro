@@ -890,6 +890,20 @@ const EncodersSection = () => {
     } finally { setLoading(false); }
   };
 
+  const setMode = async (channelId: string, mode: 'always_on' | 'on_demand', idleSec?: number) => {
+    setLoading(true);
+    try {
+      await apiPut(`/api/vpn/encoders/${channelId}/config`, {
+        mode,
+        ...(idleSec !== undefined ? { idle_timeout_seconds: idleSec } : {}),
+      });
+      toast({ title: 'Configuración guardada', description: mode === 'on_demand' ? 'Bajo demanda activado' : 'Siempre activo' });
+      await load();
+    } catch (e: any) {
+      toast({ title: 'Error', description: e.message, variant: 'destructive' });
+    } finally { setLoading(false); }
+  };
+
   const syncAll = async () => {
     setLoading(true);
     try {
@@ -903,6 +917,7 @@ const EncodersSection = () => {
 
   const running = encoders.filter(e => e.runtime_alive).length;
   const idle = encoders.filter(e => e.runtime_alive && e.idle_seconds !== null).length;
+  const onDemandCount = encoders.filter(e => e.mode === 'on_demand').length;
 
   return (
     <div className="space-y-4">
