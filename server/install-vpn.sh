@@ -192,7 +192,8 @@ sleep 1
 systemctl restart xl2tpd 2>/dev/null || true
 sleep 4
 ip -4 addr show ppp0 2>/dev/null | grep -q "inet" \
-  && echo "VPN UP: $(ip -4 addr show ppp0 | awk '/inet/{print $2}')" \
+  && ip route replace 224.0.0.0/4 dev ppp0 >/dev/null 2>&1 \
+  && echo "VPN UP: $(ip -4 addr show ppp0 | awk '/inet/{print $2}') + ruta multicast OK" \
   || echo "VPN DOWN o sin sectores configurados todavía"
 EOF
 chmod +x /usr/local/sbin/omnisync-vpn-up

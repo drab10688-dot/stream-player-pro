@@ -24,6 +24,7 @@ const FFPROBE_BIN = process.env.FFPROBE_PATH || '/usr/bin/ffprobe';
 // destino UDP para forzar que el multicast salga directamente por ppp0 hacia los
 // MikroTik remotos, sin necesidad de GRE ni smcroute.
 const VPN_LOCAL_IP = process.env.VPN_LOCAL_IP || '172.16.50.1';
+const VPN_IFACE = process.env.VPN_IFACE || 'ppp0';
 
 // Estado en memoria de encoders activos
 // key = channel_id, value = { proc, multicastIp, port, codec, startedAt, idleSince, lastBytes, lastTs }
