@@ -283,7 +283,10 @@ async function listEncoders(pool) {
   const r = await pool.query(`
     SELECT me.*, c.name AS channel_name, c.category, mg.multicast_ip, mg.port,
            (SELECT COUNT(*) FROM sector_channel_map scm
-              WHERE scm.multicast_group_id = me.multicast_group_id AND scm.is_active) AS sectors_using
+              WHERE scm.multicast_group_id = me.multicast_group_id AND scm.is_active) AS sectors_using,
+           (SELECT COUNT(*) FROM active_connections ac
+              WHERE ac.watching_channel_id = me.channel_id
+                AND ac.last_heartbeat > now() - INTERVAL '5 minutes') AS current_viewers
       FROM multicast_encoders me
       JOIN channels c ON c.id = me.channel_id
       LEFT JOIN multicast_groups mg ON mg.id = me.multicast_group_id
