@@ -49,37 +49,39 @@ module.exports = (pool, authAdmin) => {
   router.post('/sectors', authAdmin, async (req, res) => {
     try {
       const { name, description, vpn_username, vpn_password, assigned_ip,
-              gre_local_ip, gre_remote_ip, mikrotik_public_ip, plan_id,
-              delivery_mode, udpxy_url } = req.body;
+              mikrotik_public_ip, plan_id, delivery_mode, udpxy_url } = req.body;
       if (!name || !vpn_username || !vpn_password || !assigned_ip) {
-        return res.status(400).json({ error: 'Faltan campos requeridos' });
+        return res.status(400).json({
+          error: 'Faltan campos requeridos: name, vpn_username, vpn_password, assigned_ip',
+          received: { name: !!name, vpn_username: !!vpn_username, vpn_password: !!vpn_password, assigned_ip: !!assigned_ip }
+        });
       }
-      const greName = `gre-${vpn_username.replace(/[^a-z0-9]/gi, '').slice(0,10)}`;
       const r = await pool.query(`
         INSERT INTO vpn_sectors
           (name, description, vpn_username, vpn_password, assigned_ip,
-           gre_local_ip, gre_remote_ip, gre_tunnel_name, mikrotik_public_ip, plan_id,
-           delivery_mode, udpxy_url)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+           mikrotik_public_ip, plan_id, delivery_mode, udpxy_url)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
         RETURNING *
       `, [name, nz(description), vpn_username, vpn_password, assigned_ip,
-          nz(gre_local_ip), nz(gre_remote_ip), greName, nz(mikrotik_public_ip), nz(plan_id),
+          nz(mikrotik_public_ip), nz(plan_id),
           delivery_mode || 'multicast_direct', nz(udpxy_url)]);
-      // Sincronizar archivos sistema
-      await vpnMgr.syncAllFromDB(pool);
+      // Sincronizar archivos sistema (chap-secrets, etc.)
+      try { await vpnMgr.syncAllFromDB(pool); } catch (e) { console.warn('[VPN] sync warning:', e.message); }
       res.json(r.rows[0]);
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) {
+      console.error('[VPN] POST /sectors error:', e);
+      res.status(500).json({ error: e.message });
+    }
   });
 
   router.put('/sectors/:id', authAdmin, async (req, res) => {
     try {
       const { id } = req.params;
       const fields = ['name','description','vpn_username','vpn_password','assigned_ip',
-                      'gre_local_ip','gre_remote_ip','mikrotik_public_ip','plan_id','is_active','notes',
+                      'mikrotik_public_ip','plan_id','is_active','notes',
                       'delivery_mode','udpxy_url'];
       // Campos que NO admiten string vacío (inet/uuid)
-      const nullableFields = new Set(['description','gre_local_ip','gre_remote_ip',
-                                       'mikrotik_public_ip','plan_id','notes','udpxy_url']);
+      const nullableFields = new Set(['description','mikrotik_public_ip','plan_id','notes','udpxy_url']);
       const updates = [];
       const values = [];
       let i = 1;
@@ -95,18 +97,23 @@ module.exports = (pool, authAdmin) => {
         `UPDATE vpn_sectors SET ${updates.join(',')}, updated_at = now() WHERE id = $${i} RETURNING *`,
         values
       );
-      await vpnMgr.syncAllFromDB(pool);
+      try { await vpnMgr.syncAllFromDB(pool); } catch (e) { console.warn('[VPN] sync warning:', e.message); }
       res.json(r.rows[0]);
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) {
+      console.error('[VPN] PUT /sectors error:', e);
+      res.status(500).json({ error: e.message });
+    }
   });
 
   router.delete('/sectors/:id', authAdmin, async (req, res) => {
     try {
-      const r = await pool.query(`DELETE FROM vpn_sectors WHERE id = $1 RETURNING gre_tunnel_name`, [req.params.id]);
-      if (r.rows[0]?.gre_tunnel_name) vpnMgr.deleteGreTunnel(r.rows[0].gre_tunnel_name);
-      await vpnMgr.syncAllFromDB(pool);
+      await pool.query(`DELETE FROM vpn_sectors WHERE id = $1`, [req.params.id]);
+      try { await vpnMgr.syncAllFromDB(pool); } catch (e) { console.warn('[VPN] sync warning:', e.message); }
       res.json({ ok: true });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) {
+      console.error('[VPN] DELETE /sectors error:', e);
+      res.status(500).json({ error: e.message });
+    }
   });
 
   // ----------------------------------------------------------
