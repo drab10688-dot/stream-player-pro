@@ -95,7 +95,8 @@ function renderChapSecrets(sectors) {
 
   sectors.forEach((s) => {
     if (!s.is_active) return;
-    lines.push(`"${s.vpn_username}" * "${s.vpn_password}" *`);
+    const ip = s.assigned_ip ? String(s.assigned_ip).split('/')[0].trim() : '*';
+    lines.push(`"${s.vpn_username}" * "${s.vpn_password}" ${ip || '*'}`);
   });
 
   return `${lines.join('\n')}\n`;
