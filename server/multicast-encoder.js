@@ -81,7 +81,9 @@ function pickCodecMode(probe) {
 }
 
 // ----------------------------------------------------------
-function buildFfmpegArgs(sourceUrl, multicastIp, port, mode) {
+function buildFfmpegArgs(sourceUrl, multicastIp, port, codec) {
+  const mode = (typeof codec === 'string') ? codec : codec.mode;
+  const isH264 = (typeof codec === 'object') && codec.video === 'h264';
   // ============================================================
   // ANTI-MICRO-CORTES para orígenes TS unicast inestables:
   //
