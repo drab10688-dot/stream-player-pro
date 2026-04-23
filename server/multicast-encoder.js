@@ -37,26 +37,25 @@ function ffmpegInstalled() {
 
 function ffprobeCodecs(url) {
   if (!fs.existsSync(FFPROBE_BIN) && !commandExists(FFPROBE_BIN)) return null;
-  try {
-    const out = execSync(
-      `${FFPROBE_BIN} -v error -timeout 5000000 -user_agent "${PROVIDER_UA}" ` +
-      `-show_entries stream=codec_type,codec_name -of default=nw=1 "${url}"`,
-      { timeout: 8000, encoding: 'utf8' }
-    );
-    const result = { video: null, audio: null };
-    let currentType = null;
-    out.split('\n').forEach(line => {
-      const [k, v] = line.split('=');
-      if (k === 'codec_type') currentType = v;
-      else if (k === 'codec_name' && currentType) {
-        if (currentType === 'video' && !result.video) result.video = v;
-        if (currentType === 'audio' && !result.audio) result.audio = v;
-      }
-    });
-    return result;
-  } catch (e) {
-    return null;
-  }
+  // Probe SEPARADO por tipo de stream → evita que el orden de PIDs confunda el parsing
+  const probeOne = (selector) => {
+    try {
+      const out = execSync(
+        `${FFPROBE_BIN} -v error -timeout 5000000 -user_agent "${PROVIDER_UA}" ` +
+        `-select_streams ${selector} -show_entries stream=codec_name ` +
+        `-of default=nw=1:nk=1 "${url}"`,
+        { timeout: 8000, encoding: 'utf8' }
+      );
+      const first = out.split('\n').map(s => s.trim()).filter(Boolean)[0];
+      return first || null;
+    } catch (e) {
+      return null;
+    }
+  };
+  return {
+    video: probeOne('v:0'),
+    audio: probeOne('a:0'),
+  };
 }
 
 function commandExists(cmd) {
@@ -65,11 +64,15 @@ function commandExists(cmd) {
 }
 
 // ----------------------------------------------------------
-// Decide modo: copy si h264+aac, sino transcode
+// Decide modo: copy SOLO si confirmamos h264+aac. Si el probe falla o devuelve
+// algo distinto, transcode (más seguro que un copy roto que cae en exit=8).
 function pickCodecMode(probe) {
-  if (!probe) return { mode: 'copy', video: null, audio: null }; // intentar copy y fallback
+  if (!probe || !probe.video || !probe.audio) {
+    // Probe falló → transcode garantiza compatibilidad
+    return { mode: 'transcode', video: probe?.video || null, audio: probe?.audio || null };
+  }
   const videoOk = probe.video === 'h264';
-  const audioOk = probe.audio === 'aac';
+  const audioOk = probe.audio === 'aac' || probe.audio === 'mp2' || probe.audio === 'ac3';
   return {
     mode: (videoOk && audioOk) ? 'copy' : 'transcode',
     video: probe.video,
