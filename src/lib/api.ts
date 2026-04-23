@@ -2,10 +2,22 @@
 // En producción con túnel HTTPS, siempre usar URLs relativas para evitar mixed-content
 const getApiBase = () => {
   const envBase = import.meta.env.VITE_LOCAL_API_URL || '';
-  // Si estamos en HTTPS (túnel Cloudflare, dominio propio) y la API apunta a HTTP, usar relativa
-  if (typeof window !== 'undefined' && window.location.protocol === 'https:' && envBase.startsWith('http://')) {
+
+  if (typeof window === 'undefined') {
+    return envBase;
+  }
+
+  // En dominio/túnel/VPS publicado conviene usar relativa para que Nginx resuelva /api.
+  const isPublishedPanel = window.location.port !== '8080';
+  if (isPublishedPanel) {
     return '';
   }
+
+  // Si estamos en HTTPS y la API apunta a HTTP, usar relativa para evitar mixed-content.
+  if (window.location.protocol === 'https:' && envBase.startsWith('http://')) {
+    return '';
+  }
+
   return envBase;
 };
 const API_BASE = getApiBase();
