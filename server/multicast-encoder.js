@@ -79,44 +79,78 @@ function pickCodecMode(probe) {
 
 // ----------------------------------------------------------
 function buildFfmpegArgs(sourceUrl, multicastIp, port, mode) {
-  // Parámetros optimizados para L2TP/IPsec (MTU efectiva 1400 en ppp0):
-  //   pkt_size=1316  → 7×188 bytes TS = 1316, +28 UDP/IP = 1344 < 1400 ✅ SIN fragmentar
-  //                    (es el múltiplo de 188 más grande que cabe en MTU 1400 — máxima eficiencia)
-  //   buffer_size=4000000 → 4MB buffer salida, absorbe jitter del túnel
-  //   ttl=8          → suficiente para túneles encadenados
-  //   localaddr      → fuerza salida por ppp0 (sin GRE ni smcroute)
-  //   fifo_size + overrun_nonfatal → evita drops cuando el túnel se congestiona brevemente
-  const dstUrl = `udp://${multicastIp}:${port}?pkt_size=1316&ttl=8&buffer_size=4000000&fifo_size=1000000&overrun_nonfatal=1&localaddr=${VPN_LOCAL_IP}`;
+  // ============================================================
+  // ANTI-MICRO-CORTES para orígenes TS unicast inestables:
+  //
+  // ENTRADA:
+  //   -fflags +genpts+discardcorrupt+igndts → regenera PTS, descarta paquetes
+  //                                            corruptos en lugar de abortar
+  //   -err_detect ignore_err            → continúa ante errores menores TS
+  //   -analyzeduration 5M / -probesize 5M → analiza 5s/5MB para detectar PIDs
+  //                                          correctos (evita "no streams found")
+  //   -thread_queue_size 4096           → cola grande entre demuxer y muxer
+  //   -rw_timeout 30s                   → más tolerante a stalls del origen
+  //   -reconnect_delay_max 2            → reconecta rápido en drops cortos
+  //   -reconnect_at_eof / on_network_error → reintenta ante cualquier corte
+  //
+  // SALIDA UDP (multicast por L2TP MTU 1400):
+  //   pkt_size=1316        → 7×188 bytes TS, sin fragmentar IP
+  //   buffer_size=8000000  → 8MB buffer kernel UDP send (absorbe jitter L2TP)
+  //   fifo_size=2000000    → 2MB FIFO interna ffmpeg → no overflow en ráfagas
+  //   overrun_nonfatal=1   → si FIFO se llena, descarta sin morir
+  //   ttl=8                → varios saltos de túnel
+  //
+  // MUX MPEG-TS:
+  //   muxrate 5000k        → CBR holgado (~25% sobre el bitrate típico SD)
+  //   pcr_period 20        → PCR cada 20ms = sync A/V perfecto
+  //   resend_headers + pat_pmt_at_frames → tablas PAT/PMT cada GOP, joins más rápidos
+  //   muxdelay 0 muxpreload 0 → mínima latencia interna
+  // ============================================================
+  const dstUrl = `udp://${multicastIp}:${port}?pkt_size=1316&ttl=8&buffer_size=8000000&fifo_size=2000000&overrun_nonfatal=1&localaddr=${VPN_LOCAL_IP}`;
   const baseInput = [
     '-nostdin',
     '-hide_banner', '-loglevel', 'warning',
     '-user_agent', PROVIDER_UA,
-    '-rw_timeout', '15000000',          // 15s timeout lectura
+    // Tolerancia a errores del origen
+    '-fflags', '+genpts+discardcorrupt+igndts',
+    '-err_detect', 'ignore_err',
+    '-analyzeduration', '5000000',
+    '-probesize', '5000000',
+    '-thread_queue_size', '4096',
+    // Timeouts y reconexión agresiva
+    '-rw_timeout', '30000000',          // 30s timeout lectura (más tolerante)
     '-reconnect', '1',
     '-reconnect_streamed', '1',
-    '-reconnect_delay_max', '5',
+    '-reconnect_at_eof', '1',
+    '-reconnect_on_network_error', '1',
+    '-reconnect_delay_max', '2',        // reintenta cada 2s máx
     '-i', sourceUrl,
   ];
-  // CBR muxrate 4000k + pcr_period 20ms → A/V sync estable, evita picos
+  // CBR muxrate 5000k + pcr_period 20ms → A/V sync estable, sin picos
+  const muxOut = [
+    '-f', 'mpegts',
+    '-muxrate', '5000k',
+    '-pcr_period', '20',
+    '-mpegts_flags', '+resend_headers+pat_pmt_at_frames',
+    '-mpegts_copyts', '1',
+    '-muxdelay', '0',
+    '-muxpreload', '0',
+    '-max_delay', '500000',             // 500ms max demux delay
+    dstUrl,
+  ];
   const output = (mode === 'copy')
     ? [
         '-c', 'copy',
-        '-f', 'mpegts',
-        '-muxrate', '4000k',
-        '-pcr_period', '20',
-        '-mpegts_flags', '+resend_headers',
-        dstUrl,
+        '-copyts',
+        '-bsf:v', 'h264_mp4toannexb',   // asegura Annex-B en TS (algunos orígenes mandan AVCC)
+        ...muxOut,
       ]
     : [
         '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency',
-        '-b:v', '2500k', '-maxrate', '2800k', '-bufsize', '5000k',
-        '-g', '50', '-keyint_min', '50',
+        '-b:v', '2500k', '-maxrate', '2800k', '-bufsize', '5600k',
+        '-g', '50', '-keyint_min', '50', '-sc_threshold', '0',
         '-c:a', 'aac', '-b:a', '128k', '-ac', '2',
-        '-f', 'mpegts',
-        '-muxrate', '4000k',
-        '-pcr_period', '20',
-        '-mpegts_flags', '+resend_headers',
-        dstUrl,
+        ...muxOut,
       ];
   return [...baseInput, ...output];
 }
