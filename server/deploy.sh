@@ -81,6 +81,22 @@ if [ -f "$VPN_SCHEMA" ] && [ -f "$DB_PASS_FILE" ]; then
   fi
 fi
 
+# 4.7) Tuning sysctl multicast (anti-pixelado, validado producción)
+log "⚙️  Aplicando tuning sysctl multicast..."
+sysctl -w net.core.wmem_max=26214400 >/dev/null 2>&1 || true
+sysctl -w net.core.wmem_default=26214400 >/dev/null 2>&1 || true
+if ! grep -q "wmem_max=26214400" /etc/sysctl.conf 2>/dev/null; then
+  echo "net.core.wmem_max=26214400"     >> /etc/sysctl.conf
+  echo "net.core.wmem_default=26214400" >> /etc/sysctl.conf
+fi
+ok "Tuning sysctl aplicado"
+
+# 4.8) Matar encoders FFmpeg viejos para que tomen los nuevos parámetros
+log "🔪 Reiniciando encoders FFmpeg activos (tomarán nuevos parámetros)..."
+pkill -f "ffmpeg.*udp://239" 2>/dev/null || true
+sleep 1
+ok "Encoders reiniciados (se relanzarán automáticamente bajo demanda)"
+
 # 5) Restart PM2
 log "♻️  Reiniciando streambox-api..."
 pm2 restart streambox-api > /dev/null 2>&1 || pm2 start "$SCRIPT_DIR/index.js" --name streambox-api
