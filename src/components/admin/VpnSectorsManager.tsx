@@ -965,15 +965,6 @@ const EncodersSection = () => {
             </Button>
           </div>
         </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={load}>
-              <RefreshCw className="w-4 h-4 mr-1" /> Refrescar
-            </Button>
-            <Button size="sm" onClick={syncAll} disabled={loading}>
-              <RefreshCw className="w-4 h-4 mr-1" /> Sincronizar con sectores
-            </Button>
-          </div>
-        </div>
         <p className="text-xs text-muted-foreground mt-3">
           Los encoders convierten HTTP/HLS/TS unicast → UDP multicast en tiempo real.
           <strong> Siempre activo</strong> = corre mientras haya sectores asignados (latencia 0 al cambiar canal).
