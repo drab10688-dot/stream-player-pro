@@ -79,12 +79,13 @@ function pickCodecMode(probe) {
 
 // ----------------------------------------------------------
 function buildFfmpegArgs(sourceUrl, multicastIp, port, mode) {
-  // Parámetros validados en producción (ver mem://arquitectura/multicast-l2tp-validado-produccion):
-  //   pkt_size=1316  → 7×188 bytes TS, encaja en MTU 1400 del L2TP
-  //   buffer_size=2000000 → 2MB buffer salida, evita pixelado
+  // Parámetros optimizados para L2TP/IPsec (MTU 1400):
+  //   pkt_size=1128  → 6×188 bytes TS = 1128, +28 UDP/IP +72 L2TP/IPsec = 1228 < 1400 ✅ SIN fragmentar
+  //   buffer_size=4000000 → 4MB buffer salida, absorbe jitter del túnel
   //   ttl=8          → suficiente para túneles encadenados
   //   localaddr      → fuerza salida por ppp0 (sin GRE ni smcroute)
-  const dstUrl = `udp://${multicastIp}:${port}?pkt_size=1316&ttl=8&buffer_size=2000000&localaddr=${VPN_LOCAL_IP}`;
+  //   fifo_size + overrun_nonfatal → evita drops cuando el túnel se congestiona brevemente
+  const dstUrl = `udp://${multicastIp}:${port}?pkt_size=1128&ttl=8&buffer_size=4000000&fifo_size=1000000&overrun_nonfatal=1&localaddr=${VPN_LOCAL_IP}`;
   const baseInput = [
     '-nostdin',
     '-hide_banner', '-loglevel', 'warning',
