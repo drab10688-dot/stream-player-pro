@@ -112,42 +112,32 @@ function buildFfmpegArgs(sourceUrl, multicastIp, port, codec) {
   //   resend_headers + pat_pmt_at_frames → tablas PAT/PMT cada GOP, joins más rápidos
   //   muxdelay 0 muxpreload 0 → mínima latencia interna
   // ============================================================
-  const dstUrl = `udp://${multicastIp}:${port}?pkt_size=1316&ttl=8&buffer_size=8000000&fifo_size=2000000&overrun_nonfatal=1&localaddr=${VPN_LOCAL_IP}`;
+  // Salida UDP simple: pkt_size=1316 (7×188 TS) + localaddr para forzar ppp0.
+  // NO usamos fifo_size ni overrun_nonfatal — causaban descartes excesivos.
+  const dstUrl = `udp://${multicastIp}:${port}?pkt_size=1316&ttl=8&localaddr=${VPN_LOCAL_IP}`;
+  // INPUT MÍNIMO: sin discardcorrupt/igndts (descartaban frames y mataban el stream).
+  // Solo reconnect básico para HLS.
   const baseInput = [
     '-nostdin',
     '-hide_banner', '-loglevel', 'warning',
     '-user_agent', PROVIDER_UA,
-    // Tolerancia a errores del origen
-    '-fflags', '+genpts+discardcorrupt+igndts',
-    '-err_detect', 'ignore_err',
-    '-analyzeduration', '5000000',
-    '-probesize', '5000000',
-    '-thread_queue_size', '4096',
-    // Timeouts y reconexión agresiva
-    '-rw_timeout', '30000000',          // 30s timeout lectura (más tolerante)
+    '-fflags', '+genpts',                // solo regenerar PTS, sin descartar
     '-reconnect', '1',
     '-reconnect_streamed', '1',
-    '-reconnect_at_eof', '1',
-    '-reconnect_on_network_error', '1',
-    '-reconnect_delay_max', '2',        // reintenta cada 2s máx
+    '-reconnect_delay_max', '5',
     '-i', sourceUrl,
   ];
-  // CBR muxrate 5000k + pcr_period 20ms → A/V sync estable, sin picos
+  // Mux MPEG-TS simple: dejar que ffmpeg gestione el bitrate.
+  // Sin -muxrate (forzaba CBR y rompía si origen es VBR).
   const muxOut = [
     '-f', 'mpegts',
-    '-muxrate', '5000k',
-    '-pcr_period', '20',
-    '-mpegts_flags', '+resend_headers+pat_pmt_at_frames',
-    '-muxdelay', '0',
-    '-muxpreload', '0',
-    '-max_delay', '500000',             // 500ms max demux delay
+    '-mpegts_flags', '+resend_headers',
     dstUrl,
   ];
   const output = (mode === 'copy')
     ? [
         '-c', 'copy',
-        '-copyts',
-        // bsf:v h264_mp4toannexb SOLO si confirmamos h264 (sino exit 8)
+        // bsf:v h264_mp4toannexb SOLO si confirmamos h264
         ...(isH264 ? ['-bsf:v', 'h264_mp4toannexb'] : []),
         ...muxOut,
       ]
