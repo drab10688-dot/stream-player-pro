@@ -9,7 +9,7 @@ Sistema de encoders FFmpeg que convierte streams HTTP/HLS/TS en UDP multicast pa
 **EXCEPCIÓN a regla "no FFmpeg":** Aprobada explícitamente para multicast (no aplica a streaming directo a APK ni VOD, que siguen 100% nativos).
 
 **Decisión clave (2026-04-23): SIN GRE, SIN smcroute.**
-- GRE encapsulado dentro de PPP/L2TP causa drops masivos (>1M packets dropped) por loop irresoluble de neighbor discovery cuando el peer GRE está dentro del mismo túnel L2TP.
+- GRE encapsulado dentro de PPP/L2TP causa drops masivos por loop de neighbor discovery cuando el peer GRE está dentro del mismo túnel L2TP.
 - smcroute solo reenvía multicast que ENTRA por una interfaz física, no el generado localmente por FFmpeg.
 - **Solución:** FFmpeg envía directamente por ppp0 usando `localaddr` en la URL UDP.
 
@@ -19,20 +19,30 @@ Sistema de encoders FFmpeg que convierte streams HTTP/HLS/TS en UDP multicast pa
 - Auto-arranque al hacer POST `/api/vpn/sectors/:id/channels` (asignar canales).
 - Loop de mantenimiento (5s): heartbeat + auto-stop si idle > 60s.
 
-**Selección de codec (automática vía ffprobe):**
-- Origen H.264+AAC → `copy` (sin transcoding, ~1-2% CPU)
-- Otro codec → `transcode` libx264+aac veryfast zerolatency (~15-25% CPU/canal SD)
+**Selección de codec (automática vía ffprobe, validado 2026-04-23):**
+- Video válido para `copy`: `h264`, `hevc`, `mpeg2video` (todos soportados por mpegts).
+- Audio válido para `copy`: `aac`, `mp2`, `mp3`, `ac3`.
+- Si codec compatible → `-c copy` puro (CPU 1-2%).
+- Bitstream filter `h264_mp4toannexb` se aplica **SOLO si video=h264**. Aplicarlo a mpeg2video/hevc rompe el encoder con "Codec not supported by the bitstream filter".
+- Si probe falla o codec incompatible → transcode libx264+aac veryfast zerolatency (~15-25% CPU/canal SD).
 
-**Comando FFmpeg actual:**
+**Comando FFmpeg validado en producción:**
 ```
-ffmpeg -nostdin -fflags +genpts+nobuffer -user_agent "VLC/3.0.20 LibVLC/3.0.20" \
+ffmpeg -nostdin -hide_banner -loglevel warning \
+       -user_agent "VLC/3.0.20 LibVLC/3.0.20" \
+       -fflags +genpts \
        -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 \
-       -i <source> -c copy -bsf:v h264_mp4toannexb -f mpegts \
-       'udp://239.10.0.X:1234?pkt_size=1200&ttl=8&localaddr=172.16.50.1'
+       -i <source> \
+       -c copy [-bsf:v h264_mp4toannexb si h264] \
+       -f mpegts -mpegts_flags +resend_headers -mpegts_copyts 1 \
+       -muxdelay 0 -muxpreload 0 \
+       'udp://239.10.0.X:1234?pkt_size=1316&ttl=8&localaddr=172.16.50.1'
 ```
-- `pkt_size=1200` cabe en MTU 1400 de ppp0 sin fragmentar.
-- `localaddr=172.16.50.1` (IP del VPS en VPN) fuerza salida por ppp0 hacia MikroTik vía L2TP.
-- `-nostdin` evita que el proceso quede Stopped si se lanza desde shell con `&`.
+- `pkt_size=1316` (7×188 TS) cabe en MTU 1400 de ppp0 sin fragmentar.
+- `localaddr=172.16.50.1` fuerza salida por ppp0 hacia MikroTik vía L2TP.
+- `-nostdin` evita Stopped si se lanza con `&`.
+- `-mpegts_copyts 1` preserva timestamps originales (mejor sync TS directo).
+- Sin muxrate forzado (deja al origen marcar bitrate).
 
 **Tabla BD `multicast_encoders`:**
 - channel_id (UNIQUE), multicast_group_id, pid, status (stopped/running/error)
@@ -43,4 +53,4 @@ ffmpeg -nostdin -fflags +genpts+nobuffer -user_agent "VLC/3.0.20 LibVLC/3.0.20" 
 
 **MikroTik:** debe tener `igmp-proxy` configurado escuchando en la interfaz L2TP (upstream) y reenviando hacia las interfaces LAN (downstream).
 
-**Instalación:** `install-vpn.sh` instala ffmpeg vía apt. Detección runtime via `ffmpeg -version`.
+**Instalación:** `install-vpn.sh` instala ffmpeg vía apt + sysctl wmem/rmem 25MB anti-pixelado. Detección runtime via `ffmpeg -version`.
