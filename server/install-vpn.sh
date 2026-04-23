@@ -90,59 +90,91 @@ if [ ! -f /etc/ipsec.conf.omnisync-bak ] && [ -f /etc/ipsec.conf ]; then
   cp /etc/ipsec.conf /etc/ipsec.conf.omnisync-bak 2>/dev/null || true
 fi
 
-cat > /etc/ipsec.conf <<'EOF'
-# Omnisync L2TP/IPsec - se completa desde el panel admin
+# Generar/reusar PSK central (una sola para todos los MikroTik)
+PSK_FILE="/etc/omnisync-vpn-psk"
+if [ ! -f "$PSK_FILE" ]; then
+  openssl rand -base64 24 | tr -d '/+=' | cut -c1-24 > "$PSK_FILE"
+  chmod 600 "$PSK_FILE"
+fi
+PSK_VALUE="$(cat "$PSK_FILE")"
+
+# IP central del servidor L2TP (lo que veía el portátil que SÍ funcionó)
+SERVER_VPN_IP="172.16.50.1"
+VPN_POOL="172.16.50.2-172.16.50.100"
+
+cat > /etc/ipsec.conf <<EOF
+# Omnisync L2TP/IPsec - servidor central fijo
 config setup
   charondebug="ike 1, knl 1, cfg 0"
   uniqueids=no
 
-# Las conexiones "conn omnisync-*" las agrega el backend cuando
-# creás un sector en el panel.
+conn omnisync-l2tp
+  authby=secret
+  pfs=no
+  rekey=no
+  keyingtries=3
+  type=transport
+  left=%defaultroute
+  leftprotoport=17/1701
+  right=%any
+  rightprotoport=17/%any
+  ike=aes256-sha1-modp1024,aes128-sha1-modp1024,3des-sha1-modp1024!
+  esp=aes256-sha1,aes128-sha1,3des-sha1!
+  auto=add
 EOF
 
-# ipsec.secrets: solo cabecera, el backend agrega líneas
-if [ ! -f /etc/ipsec.secrets ] || ! grep -q "Omnisync" /etc/ipsec.secrets; then
-  cat > /etc/ipsec.secrets <<'EOF'
-# Omnisync IPsec PSK - administrado por el panel
-# Formato: %any <IP_MIKROTIK> : PSK "<PSK>"
+cat > /etc/ipsec.secrets <<EOF
+# Omnisync IPsec PSK - central
+%any %any : PSK "${PSK_VALUE}"
 EOF
-fi
 chmod 600 /etc/ipsec.secrets
 
-# xl2tpd: estructura base, el backend agrega [lac ...] por sector
-cat > /etc/xl2tpd/xl2tpd.conf <<'EOF'
+cat > /etc/xl2tpd/xl2tpd.conf <<EOF
 [global]
-ipsec saref = yes
+ipsec saref = no
+port = 1701
 
-# Las secciones [lac omnisync-*] las agrega el backend.
+[lns default]
+ip range = ${VPN_POOL}
+local ip = ${SERVER_VPN_IP}
+require chap = yes
+refuse pap = yes
+require authentication = yes
+name = omnisync
+ppp debug = yes
+pppoptfile = /etc/ppp/options.xl2tpd
+length bit = yes
 EOF
 
-# Plantilla de opciones PPP base
-cat > /etc/ppp/options.omnisync <<'EOF'
-ipcp-accept-local
-ipcp-accept-remote
-refuse-eap
+# Opciones PPP que usa xl2tpd como servidor L2TP
+cat > /etc/ppp/options.xl2tpd <<'EOF'
 require-mschap-v2
-noccp
-noauth
+ms-dns 1.1.1.1
+ms-dns 8.8.8.8
+asyncmap 0
+auth
+crtscts
+lock
+hide-password
+modem
+debug
+proxyarp
+lcp-echo-interval 30
+lcp-echo-failure 4
 mtu 1400
 mru 1400
-noipdefault
-defaultroute-metric 9999
-usepeerdns
-debug
-connect-delay 5000
+noccp
 EOF
 
-# chap-secrets: cabecera, el backend agrega usuarios
+# chap-secrets: cabecera, el backend agrega usuarios desde el panel
 if [ ! -f /etc/ppp/chap-secrets ] || ! grep -q "Omnisync" /etc/ppp/chap-secrets; then
   cat > /etc/ppp/chap-secrets <<'EOF'
 # Omnisync L2TP - administrado por el panel
-# user * password *
+# "user" * "password" IP_FIJA
 EOF
 fi
-chmod 600 /etc/ppp/chap-secrets /etc/ppp/options.omnisync
-ok "Plantillas creadas (sin credenciales)"
+chmod 600 /etc/ppp/chap-secrets /etc/ppp/options.xl2tpd
+ok "Configuración central fija aplicada (PSK: ${PSK_VALUE})"
 
 # ----------------------------------------------------------
 # 4) Scripts helper: levantar/bajar túnel
