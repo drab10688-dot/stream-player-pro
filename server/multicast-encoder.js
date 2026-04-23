@@ -79,26 +79,29 @@ function pickCodecMode(probe) {
 
 // ----------------------------------------------------------
 function buildFfmpegArgs(sourceUrl, multicastIp, port, mode) {
-  // pkt_size 1200 para que el paquete UDP+IP+L2TP quepa en MTU 1400 sin fragmentar.
-  // localaddr=VPN_LOCAL_IP fuerza que el multicast salga DIRECTAMENTE por la
-  // interfaz ppp0 hacia los MikroTik remotos, sin necesidad de GRE ni smcroute.
-  const dstUrl = `udp://${multicastIp}:${port}?pkt_size=1200&ttl=8&localaddr=${VPN_LOCAL_IP}`;
+  // Parámetros validados en producción (ver mem://arquitectura/multicast-l2tp-validado-produccion):
+  //   pkt_size=1316  → 7×188 bytes TS, encaja en MTU 1400 del L2TP
+  //   buffer_size=2000000 → 2MB buffer salida, evita pixelado
+  //   ttl=8          → suficiente para túneles encadenados
+  //   localaddr      → fuerza salida por ppp0 (sin GRE ni smcroute)
+  const dstUrl = `udp://${multicastIp}:${port}?pkt_size=1316&ttl=8&buffer_size=2000000&localaddr=${VPN_LOCAL_IP}`;
   const baseInput = [
     '-nostdin',
     '-hide_banner', '-loglevel', 'warning',
-    '-fflags', '+genpts+nobuffer',
     '-user_agent', PROVIDER_UA,
-    '-rw_timeout', '10000000',          // 10s timeout lectura
+    '-rw_timeout', '15000000',          // 15s timeout lectura
     '-reconnect', '1',
     '-reconnect_streamed', '1',
     '-reconnect_delay_max', '5',
     '-i', sourceUrl,
   ];
+  // CBR muxrate 4000k + pcr_period 20ms → A/V sync estable, evita picos
   const output = (mode === 'copy')
     ? [
         '-c', 'copy',
-        '-bsf:v', 'h264_mp4toannexb',    // útil si origen es HLS con MP4
         '-f', 'mpegts',
+        '-muxrate', '4000k',
+        '-pcr_period', '20',
         '-mpegts_flags', '+resend_headers',
         dstUrl,
       ]
@@ -108,6 +111,8 @@ function buildFfmpegArgs(sourceUrl, multicastIp, port, mode) {
         '-g', '50', '-keyint_min', '50',
         '-c:a', 'aac', '-b:a', '128k', '-ac', '2',
         '-f', 'mpegts',
+        '-muxrate', '4000k',
+        '-pcr_period', '20',
         '-mpegts_flags', '+resend_headers',
         dstUrl,
       ];
