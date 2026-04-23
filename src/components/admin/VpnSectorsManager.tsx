@@ -936,7 +936,7 @@ const EncodersSection = () => {
       {/* Header + stats */}
       <div className="glass rounded-xl p-4">
         <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 flex-wrap">
             <div className="flex items-center gap-2">
               <Cpu className="w-5 h-5 text-primary" />
               <span className="font-semibold text-foreground">Encoders FFmpeg</span>
@@ -946,11 +946,25 @@ const EncodersSection = () => {
             </Badge>
             {idle > 0 && (
               <Badge variant="outline" className="gap-1 text-muted-foreground">
-                {idle} idle (auto-stop pronto)
+                {idle} idle
+              </Badge>
+            )}
+            {onDemandCount > 0 && (
+              <Badge variant="outline" className="gap-1 text-primary">
+                {onDemandCount} bajo demanda
               </Badge>
             )}
             <Badge variant="outline">{encoders.length} total</Badge>
           </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={load}>
+              <RefreshCw className="w-4 h-4 mr-1" /> Refrescar
+            </Button>
+            <Button size="sm" onClick={syncAll} disabled={loading}>
+              <RefreshCw className="w-4 h-4 mr-1" /> Sincronizar con sectores
+            </Button>
+          </div>
+        </div>
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={load}>
               <RefreshCw className="w-4 h-4 mr-1" /> Refrescar
