@@ -20,6 +20,10 @@ const HEARTBEAT_INTERVAL_MS = 5_000;     // cada 5s actualiza stats
 const PROVIDER_UA = 'VLC/3.0.20 LibVLC/3.0.20';
 const FFMPEG_BIN = process.env.FFMPEG_PATH || '/usr/bin/ffmpeg';
 const FFPROBE_BIN = process.env.FFPROBE_PATH || '/usr/bin/ffprobe';
+// IP del VPS dentro de la VPN L2TP (interfaz ppp0). Se usa como localaddr en el
+// destino UDP para forzar que el multicast salga directamente por ppp0 hacia los
+// MikroTik remotos, sin necesidad de GRE ni smcroute.
+const VPN_LOCAL_IP = process.env.VPN_LOCAL_IP || '172.16.50.1';
 
 // Estado en memoria de encoders activos
 // key = channel_id, value = { proc, multicastIp, port, codec, startedAt, idleSince, lastBytes, lastTs }
