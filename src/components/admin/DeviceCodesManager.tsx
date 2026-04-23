@@ -159,7 +159,7 @@ const DeviceCodesManager = () => {
 
   const statusBadge = (s: DeviceCode['status'], expired: boolean) => {
     if (expired) return <Badge variant="destructive" className="gap-1"><XCircle className="w-3 h-3" />Expirado</Badge>;
-    if (s === 'active') return <Badge className="bg-emerald-500 hover:bg-emerald-600 gap-1"><CheckCircle2 className="w-3 h-3" />Activo</Badge>;
+    if (s === 'active') return <Badge className="bg-primary hover:bg-primary/90 text-primary-foreground gap-1"><CheckCircle2 className="w-3 h-3" />Activo</Badge>;
     if (s === 'revoked') return <Badge variant="destructive" className="gap-1"><Ban className="w-3 h-3" />Revocado</Badge>;
     return <Badge variant="secondary" className="gap-1"><Clock className="w-3 h-3" />Pendiente</Badge>;
   };
