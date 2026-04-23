@@ -112,32 +112,36 @@ function buildFfmpegArgs(sourceUrl, multicastIp, port, codec) {
   //   resend_headers + pat_pmt_at_frames → tablas PAT/PMT cada GOP, joins más rápidos
   //   muxdelay 0 muxpreload 0 → mínima latencia interna
   // ============================================================
-  // Salida UDP simple: pkt_size=1316 (7×188 TS) + localaddr para forzar ppp0.
-  // NO usamos fifo_size ni overrun_nonfatal — causaban descartes excesivos.
+  // ============================================================
+  // MODO PROBADO EN PRODUCCIÓN (TS directo + HLS):
+  //   - Salida UDP: pkt_size=1316 (7×188 TS) + localaddr=ppp0, sin buffers extra
+  //   - Input: -fflags +genpts (solo PTS) + reconnect básico para HLS
+  //   - Mux: passthrough crudo, sin muxrate forzado (deja al origen marcar bitrate)
+  //   - muxdelay/muxpreload 0 → mínima latencia interna
+  //   - mpegts_copyts 1 → preserva timestamps originales (mejor sync TS directo)
+  // ============================================================
   const dstUrl = `udp://${multicastIp}:${port}?pkt_size=1316&ttl=8&localaddr=${VPN_LOCAL_IP}`;
-  // INPUT MÍNIMO: sin discardcorrupt/igndts (descartaban frames y mataban el stream).
-  // Solo reconnect básico para HLS.
   const baseInput = [
     '-nostdin',
     '-hide_banner', '-loglevel', 'warning',
     '-user_agent', PROVIDER_UA,
-    '-fflags', '+genpts',                // solo regenerar PTS, sin descartar
+    '-fflags', '+genpts',
     '-reconnect', '1',
     '-reconnect_streamed', '1',
     '-reconnect_delay_max', '5',
     '-i', sourceUrl,
   ];
-  // Mux MPEG-TS simple: dejar que ffmpeg gestione el bitrate.
-  // Sin -muxrate (forzaba CBR y rompía si origen es VBR).
   const muxOut = [
     '-f', 'mpegts',
     '-mpegts_flags', '+resend_headers',
+    '-mpegts_copyts', '1',
+    '-muxdelay', '0',
+    '-muxpreload', '0',
     dstUrl,
   ];
   const output = (mode === 'copy')
     ? [
         '-c', 'copy',
-        // bsf:v h264_mp4toannexb SOLO si confirmamos h264
         ...(isH264 ? ['-bsf:v', 'h264_mp4toannexb'] : []),
         ...muxOut,
       ]
