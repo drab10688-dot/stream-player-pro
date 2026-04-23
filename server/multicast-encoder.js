@@ -147,7 +147,7 @@ function buildFfmpegArgs(sourceUrl, multicastIp, port, codec) {
         '-c', 'copy',
         '-copyts',
         // bsf:v h264_mp4toannexb SOLO si confirmamos h264 (sino exit 8)
-        ...(/* h264 confirmado por probe */ true ? ['-bsf:v', 'h264_mp4toannexb'] : []),
+        ...(isH264 ? ['-bsf:v', 'h264_mp4toannexb'] : []),
         ...muxOut,
       ]
     : [
@@ -193,7 +193,7 @@ async function startEncoder(pool, channelId) {
 
   console.log(`[encoder] Iniciando ${name} → ${multicast_ip}:${port} (${codec.mode}, v=${codec.video}, a=${codec.audio})`);
 
-  const args = buildFfmpegArgs(url, multicast_ip, port, codec.mode);
+  const args = buildFfmpegArgs(url, multicast_ip, port, codec);
   const proc = spawn(FFMPEG_BIN, args, { stdio: ['ignore', 'ignore', 'pipe'] });
 
   let lastError = '';
