@@ -135,7 +135,6 @@ function buildFfmpegArgs(sourceUrl, multicastIp, port, mode) {
     '-muxrate', '5000k',
     '-pcr_period', '20',
     '-mpegts_flags', '+resend_headers+pat_pmt_at_frames',
-    '-mpegts_copyts', '1',
     '-muxdelay', '0',
     '-muxpreload', '0',
     '-max_delay', '500000',             // 500ms max demux delay
@@ -145,7 +144,8 @@ function buildFfmpegArgs(sourceUrl, multicastIp, port, mode) {
     ? [
         '-c', 'copy',
         '-copyts',
-        '-bsf:v', 'h264_mp4toannexb',   // asegura Annex-B en TS (algunos orígenes mandan AVCC)
+        // bsf:v h264_mp4toannexb SOLO si confirmamos h264 (sino exit 8)
+        ...(/* h264 confirmado por probe */ true ? ['-bsf:v', 'h264_mp4toannexb'] : []),
         ...muxOut,
       ]
     : [
