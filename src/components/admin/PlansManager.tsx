@@ -53,7 +53,7 @@ const PlansManager = () => {
       if (isLovablePreview()) {
         const { data } = await supabase.from('channels').select('category');
         if (data) {
-          const unique = [...new Set(data.map((c: any) => c.category))].sort();
+          const unique = [...new Set(data.map((c: { category: string | null }) => c.category).filter((category): category is string => Boolean(category)))].sort();
           setAvailableCategories(unique);
         }
       } else {
