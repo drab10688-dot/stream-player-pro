@@ -85,9 +85,7 @@ const getPublicIP = () => {
   }
 };
 
-const getActiveConfiguredSectors = (sectors) => sectors.filter(
-  (s) => s.is_active && s.mikrotik_public_ip && s.ipsec_psk && s.vpn_username && s.vpn_password
-);
+const getActiveConfiguredSectors = () => [];
 
 function renderChapSecrets(sectors) {
   const lines = [
@@ -295,34 +293,18 @@ async function syncAllFromDB(pool) {
   const sectors = sectorsRes.rows;
 
   const chapResult = rewriteChapSecrets(sectors);
-  const ipsecConfResult = rewriteIpsecConf(sectors);
-  const ipsecSecretsResult = rewriteIpsecSecrets(sectors);
-  const xl2tpdResult = rewriteXl2tpdConf(sectors);
-
-  const routesRes = await pool.query(`
-    SELECT scm.is_active, mg.multicast_ip, vs.gre_tunnel_name AS output_iface
-    FROM sector_channel_map scm
-    JOIN multicast_groups mg ON mg.id = scm.multicast_group_id
-    JOIN vpn_sectors vs ON vs.id = scm.sector_id
-    WHERE scm.is_active = true AND vs.is_active = true
-  `);
-  const smcResult = rewriteSmcrouteConf(routesRes.rows);
-
-  const restartIpsec = safeExec('sudo systemctl restart strongswan-starter 2>/dev/null || sudo systemctl restart ipsec 2>/dev/null || sudo ipsec restart 2>/dev/null || true');
-  const restartXl2tpd = safeExec('sudo systemctl restart xl2tpd 2>&1 || true');
-  const restartSmcroute = safeExec('sudo systemctl restart smcroute 2>/dev/null || true');
 
   return {
     chap: chapResult,
-    ipsec_conf: ipsecConfResult,
-    ipsec_secrets: ipsecSecretsResult,
-    xl2tpd: xl2tpdResult,
-    smcroute: smcResult,
-    restart_ipsec: restartIpsec,
-    restart_xl2tpd: restartXl2tpd,
-    restart_smcroute: restartSmcroute,
+    ipsec_conf: { ok: true, skipped: true, reason: 'vpn-central-fija' },
+    ipsec_secrets: { ok: true, skipped: true, reason: 'vpn-central-fija' },
+    xl2tpd: { ok: true, skipped: true, reason: 'vpn-central-fija' },
+    smcroute: { ok: true, skipped: true, reason: 'no-usado-en-arquitectura-validada' },
+    restart_ipsec: { ok: true, skipped: true, reason: 'vpn-central-fija' },
+    restart_xl2tpd: { ok: true, skipped: true, reason: 'vpn-central-fija' },
+    restart_smcroute: { ok: true, skipped: true, reason: 'no-usado-en-arquitectura-validada' },
     sectors_count: sectors.length,
-    active_configured: getActiveConfiguredSectors(sectors).length,
+    active_configured: sectors.filter(s => s.is_active).length,
   };
 }
 

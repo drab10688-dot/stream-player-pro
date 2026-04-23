@@ -50,16 +50,14 @@ module.exports = (pool, authAdmin) => {
     try {
       const { name, description, vpn_username, vpn_password, assigned_ip,
               mikrotik_public_ip, ipsec_psk, plan_id, delivery_mode, udpxy_url } = req.body;
-      if (!name || !vpn_username || !vpn_password || !assigned_ip || !mikrotik_public_ip || !ipsec_psk) {
+      if (!name || !vpn_username || !vpn_password || !assigned_ip) {
         return res.status(400).json({
-          error: 'Faltan campos requeridos: name, vpn_username, vpn_password, assigned_ip, mikrotik_public_ip, ipsec_psk',
+          error: 'Faltan campos requeridos: name, vpn_username, vpn_password, assigned_ip',
           received: {
             name: !!name,
             vpn_username: !!vpn_username,
             vpn_password: !!vpn_password,
             assigned_ip: !!assigned_ip,
-            mikrotik_public_ip: !!mikrotik_public_ip,
-            ipsec_psk: !!ipsec_psk,
           }
         });
       }
@@ -70,7 +68,7 @@ module.exports = (pool, authAdmin) => {
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
         RETURNING *
       `, [name, nz(description), vpn_username, vpn_password, assigned_ip,
-          nz(mikrotik_public_ip), ipsec_psk, nz(plan_id),
+          nz(mikrotik_public_ip), nz(ipsec_psk), nz(plan_id),
           delivery_mode || 'multicast_direct', nz(udpxy_url)]);
       try { await vpnMgr.syncAllFromDB(pool); } catch (e) { console.warn('[VPN] sync warning:', e.message); }
       res.json(r.rows[0]);

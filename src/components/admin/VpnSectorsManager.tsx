@@ -327,14 +327,6 @@ const SectorsSection = () => {
                   <Input value={form.assigned_ip} onChange={e => setForm({ ...form, assigned_ip: e.target.value })} placeholder="172.16.50.10" />
                 </div>
                 <div>
-                  <Label>IP pública MikroTik</Label>
-                  <Input value={form.mikrotik_public_ip} onChange={e => setForm({ ...form, mikrotik_public_ip: e.target.value })} placeholder="181.23.45.67" />
-                </div>
-                <div className="col-span-2">
-                  <Label>PSK IPsec</Label>
-                  <Input value={form.ipsec_psk} onChange={e => setForm({ ...form, ipsec_psk: e.target.value })} placeholder="clave-ipsec-compartida" />
-                </div>
-                <div className="col-span-2">
                   <Label>Plan asociado</Label>
                   <Select value={form.plan_id || undefined} onValueChange={v => setForm({ ...form, plan_id: v })}>
                     <SelectTrigger><SelectValue placeholder="Sin plan" /></SelectTrigger>
