@@ -7,7 +7,12 @@ export function cn(...inputs: ClassValue[]) {
 
 export const isLovablePreview = () => {
   const host = window.location.hostname;
-  // Solo usar Supabase en los dominios de Lovable (preview/dev)
-  // En VPS (localhost, LAN, Cloudflare tunnel, dominio propio) siempre usa API local Node.js
-  return host.includes('lovable.app') || host.includes('lovable.dev') || host.includes('lovableproject.com');
+  const port = window.location.port;
+  const explicitLocalApi = import.meta.env.VITE_LOCAL_API_URL;
+
+  if (explicitLocalApi) return false;
+
+  // En preview interno del editor (vite :8080) usamos backend Cloud.
+  // En panel desplegado detrás de Nginx/túnel/dominio propio siempre usamos la API local del VPS.
+  return (host.includes('lovable.app') || host.includes('lovable.dev') || host.includes('lovableproject.com')) && port === '8080';
 };
