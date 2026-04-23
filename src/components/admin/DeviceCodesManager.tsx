@@ -255,8 +255,18 @@ const DeviceCodesManager = () => {
         </div>
       )}
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-md">
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen} modal={false}>
+        {dialogOpen && (
+          <div
+            className="fixed inset-0 z-50 bg-black/80"
+            onClick={() => setDialogOpen(false)}
+          />
+        )}
+        <DialogContent
+          className="max-w-md z-[60]"
+          onPointerDownOutside={(e) => e.preventDefault()}
+          onInteractOutside={(e) => e.preventDefault()}
+        >
           <DialogHeader>
             <DialogTitle>{editing ? `Editar código ${editing.code}` : 'Nuevo código de activación'}</DialogTitle>
           </DialogHeader>
