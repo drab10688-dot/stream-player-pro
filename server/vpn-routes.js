@@ -298,6 +298,36 @@ module.exports = (pool, authAdmin) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
+  // Configurar mode (always_on / on_demand) e idle_timeout por canal
+  router.put('/encoders/:channelId/config', authAdmin, async (req, res) => {
+    try {
+      const { mode, idle_timeout_seconds } = req.body || {};
+      if (mode && !['always_on', 'on_demand'].includes(mode)) {
+        return res.status(400).json({ error: 'mode debe ser always_on u on_demand' });
+      }
+      const idle = Number.isFinite(+idle_timeout_seconds) ? Math.max(30, Math.min(3600, +idle_timeout_seconds)) : null;
+
+      // Buscar grupo multicast asignado al canal (necesario para upsert)
+      const mg = await pool.query(
+        `SELECT id FROM multicast_groups WHERE channel_id = $1 AND is_assigned = true LIMIT 1`,
+        [req.params.channelId]
+      );
+      if (!mg.rows[0]) return res.status(404).json({ error: 'Canal no tiene grupo multicast asignado' });
+
+      await pool.query(`
+        INSERT INTO multicast_encoders (channel_id, multicast_group_id, mode, idle_timeout_seconds, status)
+        VALUES ($1, $2, COALESCE($3, 'always_on'), COALESCE($4, 300), 'stopped')
+        ON CONFLICT (channel_id) DO UPDATE
+           SET mode = COALESCE($3, multicast_encoders.mode),
+               idle_timeout_seconds = COALESCE($4, multicast_encoders.idle_timeout_seconds)
+      `, [req.params.channelId, mg.rows[0].id, mode || null, idle]);
+
+      // Re-sincroniza para aplicar el cambio inmediatamente
+      const sync = await encoder.syncEncodersFromDB(pool);
+      res.json({ ok: true, sync });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
   // ----------------------------------------------------------
   // RESYNC manual (re-escribe todos los archivos de sistema)
   // ----------------------------------------------------------
