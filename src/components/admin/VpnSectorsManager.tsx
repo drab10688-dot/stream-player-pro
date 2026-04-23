@@ -24,9 +24,6 @@ interface Sector {
   vpn_username: string;
   vpn_password: string;
   assigned_ip: string;
-  gre_local_ip: string | null;
-  gre_remote_ip: string | null;
-  gre_tunnel_name: string | null;
   mikrotik_public_ip: string | null;
   plan_id: string | null;
   plan_name: string | null;
@@ -153,8 +150,7 @@ const SectorsSection = () => {
   const [editing, setEditing] = useState<Sector | null>(null);
   const [form, setForm] = useState({
     name: '', description: '', vpn_username: '', vpn_password: '',
-    assigned_ip: '', gre_local_ip: '172.16.50.1', gre_remote_ip: '',
-    mikrotik_public_ip: '', plan_id: '',
+    assigned_ip: '', mikrotik_public_ip: '', plan_id: '',
     delivery_mode: 'multicast_direct' as DeliveryMode,
     udpxy_url: '',
   });
@@ -182,8 +178,7 @@ const SectorsSection = () => {
     }
     setForm({
       name: '', description: '', vpn_username: '', vpn_password: '',
-      assigned_ip: suggested, gre_local_ip: '172.16.50.1',
-      gre_remote_ip: '', mikrotik_public_ip: '', plan_id: '',
+      assigned_ip: suggested, mikrotik_public_ip: '', plan_id: '',
       delivery_mode: 'multicast_direct', udpxy_url: '',
     });
     setOpen(true);
@@ -195,8 +190,6 @@ const SectorsSection = () => {
       name: s.name, description: s.description || '',
       vpn_username: s.vpn_username, vpn_password: s.vpn_password,
       assigned_ip: s.assigned_ip,
-      gre_local_ip: s.gre_local_ip || '172.16.50.1',
-      gre_remote_ip: s.gre_remote_ip || '',
       mikrotik_public_ip: s.mikrotik_public_ip || '',
       plan_id: s.plan_id || '',
       delivery_mode: s.delivery_mode || 'multicast_direct',
@@ -207,7 +200,12 @@ const SectorsSection = () => {
 
   const save = async () => {
     try {
-      const payload = { ...form, plan_id: form.plan_id || null };
+      const payload = {
+        ...form,
+        plan_id: form.plan_id || null,
+        gre_local_ip: null,
+        gre_remote_ip: null,
+      };
       if (editing) {
         await apiPut(`/api/vpn/sectors/${editing.id}`, payload);
         toast({ title: 'Sector actualizado' });
@@ -299,14 +297,6 @@ const SectorsSection = () => {
                   <Label>IP pública MikroTik (opcional)</Label>
                   <Input value={form.mikrotik_public_ip} onChange={e => setForm({ ...form, mikrotik_public_ip: e.target.value })} />
                 </div>
-                <div>
-                  <Label>GRE local IP</Label>
-                  <Input value={form.gre_local_ip} onChange={e => setForm({ ...form, gre_local_ip: e.target.value })} />
-                </div>
-                <div>
-                  <Label>GRE remote IP (point-to-point)</Label>
-                  <Input value={form.gre_remote_ip} onChange={e => setForm({ ...form, gre_remote_ip: e.target.value })} placeholder="10.99.99.2" />
-                </div>
                 <div className="col-span-2">
                   <Label>Plan asociado</Label>
                   <Select value={form.plan_id} onValueChange={v => setForm({ ...form, plan_id: v })}>
@@ -379,7 +369,6 @@ const SectorsSection = () => {
                 <span>👤 {s.vpn_username}</span>
                 <span>🌐 {s.assigned_ip}</span>
                 <span>📺 {s.channels_count} canales</span>
-                {s.gre_tunnel_name && <span>🔗 {s.gre_tunnel_name}</span>}
               </div>
             </div>
             <div className="flex items-center gap-1 shrink-0">
