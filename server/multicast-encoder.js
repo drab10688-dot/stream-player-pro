@@ -20,6 +20,10 @@ const HEARTBEAT_INTERVAL_MS = 5_000;     // cada 5s actualiza stats
 const PROVIDER_UA = 'VLC/3.0.20 LibVLC/3.0.20';
 const FFMPEG_BIN = process.env.FFMPEG_PATH || '/usr/bin/ffmpeg';
 const FFPROBE_BIN = process.env.FFPROBE_PATH || '/usr/bin/ffprobe';
+// IP del VPS dentro de la VPN L2TP (interfaz ppp0). Se usa como localaddr en el
+// destino UDP para forzar que el multicast salga directamente por ppp0 hacia los
+// MikroTik remotos, sin necesidad de GRE ni smcroute.
+const VPN_LOCAL_IP = process.env.VPN_LOCAL_IP || '172.16.50.1';
 
 // Estado en memoria de encoders activos
 // key = channel_id, value = { proc, multicastIp, port, codec, startedAt, idleSince, lastBytes, lastTs }
@@ -75,9 +79,12 @@ function pickCodecMode(probe) {
 
 // ----------------------------------------------------------
 function buildFfmpegArgs(sourceUrl, multicastIp, port, mode) {
-  // pkt_size 1200 para que (UDP+IP+GRE+L2TP) quepa en MTU 1280 sin fragmentar
-  const dstUrl = `udp://${multicastIp}:${port}?pkt_size=1200&ttl=8`;
+  // pkt_size 1200 para que el paquete UDP+IP+L2TP quepa en MTU 1400 sin fragmentar.
+  // localaddr=VPN_LOCAL_IP fuerza que el multicast salga DIRECTAMENTE por la
+  // interfaz ppp0 hacia los MikroTik remotos, sin necesidad de GRE ni smcroute.
+  const dstUrl = `udp://${multicastIp}:${port}?pkt_size=1200&ttl=8&localaddr=${VPN_LOCAL_IP}`;
   const baseInput = [
+    '-nostdin',
     '-hide_banner', '-loglevel', 'warning',
     '-fflags', '+genpts+nobuffer',
     '-user_agent', PROVIDER_UA,
