@@ -5670,6 +5670,17 @@ try {
   console.error('⚠️  Error cargando módulo VPN:', e.message);
 }
 
+// =============================================
+// MÓDULO CÓDIGOS APK (Activación por código)
+// =============================================
+try {
+  const deviceCodesRoutes = require('./device-codes-routes');
+  app.use('/api/device-codes', deviceCodesRoutes(pool, authAdmin));
+  console.log('🔑 Módulo Códigos APK cargado en /api/device-codes');
+} catch (e) {
+  console.error('⚠️  Error cargando módulo device-codes:', e.message);
+}
+
 //
 // INICIAR SERVIDOR
 // =============================================
