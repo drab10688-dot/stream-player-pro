@@ -23,6 +23,12 @@ interface Channel {
   logo_url: string | null;
 }
 
+type ChannelUpdate = {
+  is_active: boolean;
+  auto_disabled?: boolean;
+  consecutive_failures?: number;
+};
+
 interface CacheStatus {
   id: string;
   transcoder_active: boolean;
@@ -193,7 +199,7 @@ const ChannelsManager = () => {
   const toggleActive = async (ch: Channel) => {
     try {
       const newActive = !ch.is_active;
-      const updates: Record<string, any> = { is_active: newActive };
+      const updates: ChannelUpdate = { is_active: newActive };
       if (newActive) {
         updates.auto_disabled = false;
         updates.consecutive_failures = 0;
