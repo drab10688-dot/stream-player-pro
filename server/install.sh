@@ -352,11 +352,29 @@ if [ $? -ne 0 ]; then
   exit 1
 fi
 
-# Importar schema
+# Importar schema principal
 cp "${SCRIPT_DIR}/database/schema.sql" /tmp/streambox_schema.sql
 chmod 644 /tmp/streambox_schema.sql
 sudo -u postgres psql -d streambox -f /tmp/streambox_schema.sql > /dev/null 2>&1
 rm -f /tmp/streambox_schema.sql
+
+# Importar schema VPN/Multicast (idempotente, seguro reaplicar)
+if [ -f "${SCRIPT_DIR}/database/vpn-schema.sql" ]; then
+  cp "${SCRIPT_DIR}/database/vpn-schema.sql" /tmp/streambox_vpn_schema.sql
+  chmod 644 /tmp/streambox_vpn_schema.sql
+  sudo -u postgres psql -d streambox -f /tmp/streambox_vpn_schema.sql > /dev/null 2>&1 && \
+    log_ok "Schema VPN/Multicast aplicado" || log_warn "Schema VPN no aplicado (continuando)"
+  rm -f /tmp/streambox_vpn_schema.sql
+fi
+
+# Importar schema device_codes para activación de APK por código (idempotente)
+if [ -f "${SCRIPT_DIR}/database/device-codes-schema.sql" ]; then
+  cp "${SCRIPT_DIR}/database/device-codes-schema.sql" /tmp/streambox_device_codes.sql
+  chmod 644 /tmp/streambox_device_codes.sql
+  sudo -u postgres psql -d streambox -f /tmp/streambox_device_codes.sql > /dev/null 2>&1 && \
+    log_ok "Schema device_codes aplicado (activación APK por código)" || log_warn "Schema device_codes no aplicado (continuando)"
+  rm -f /tmp/streambox_device_codes.sql
+fi
 
 # Dar permisos
 sudo -u postgres psql -d streambox -c "GRANT ALL ON ALL TABLES IN SCHEMA public TO streambox_user;" 2>/dev/null
