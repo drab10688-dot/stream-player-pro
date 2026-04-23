@@ -302,21 +302,72 @@ async function listEncoders(pool) {
 }
 
 // ----------------------------------------------------------
-// Sincroniza encoders con BD: arranca los que tienen sectores activos, detiene los huérfanos
-async function syncEncodersFromDB(pool) {
-  // Canales que DEBERÍAN estar activos (al menos un sector los recibe)
-  const needed = await pool.query(`
+// Devuelve set de channel_id que TIENEN al menos un viewer activo en la APK
+// (heartbeat dentro de los últimos 5 min)
+async function getChannelsWithViewers(pool) {
+  const r = await pool.query(`
+    SELECT DISTINCT watching_channel_id AS channel_id
+      FROM active_connections
+     WHERE watching_channel_id IS NOT NULL
+       AND last_heartbeat > now() - INTERVAL '5 minutes'
+  `);
+  return new Set(r.rows.map(x => x.channel_id));
+}
+
+// ----------------------------------------------------------
+// Devuelve set de channel_id que tienen al menos un sector asignado activo
+async function getChannelsAssignedToSectors(pool) {
+  const r = await pool.query(`
     SELECT DISTINCT mg.channel_id
       FROM sector_channel_map scm
       JOIN multicast_groups mg ON mg.id = scm.multicast_group_id
       JOIN vpn_sectors vs ON vs.id = scm.sector_id
      WHERE scm.is_active = true AND vs.is_active = true AND mg.channel_id IS NOT NULL
   `);
-  const neededSet = new Set(needed.rows.map(r => r.channel_id));
+  return new Set(r.rows.map(x => x.channel_id));
+}
+
+// ----------------------------------------------------------
+// Devuelve mapa channel_id -> { mode, idle_timeout_seconds } leyendo BD.
+// Si no hay registro en multicast_encoders aún, asume 'always_on' / 300s.
+async function getChannelEncoderConfig(pool) {
+  const r = await pool.query(`
+    SELECT channel_id, mode, idle_timeout_seconds
+      FROM multicast_encoders
+  `);
+  const map = new Map();
+  for (const row of r.rows) {
+    map.set(row.channel_id, {
+      mode: row.mode || 'always_on',
+      idleTimeoutMs: (row.idle_timeout_seconds || 300) * 1000,
+    });
+  }
+  return map;
+}
+
+// ----------------------------------------------------------
+// Sincroniza encoders con BD respetando mode (always_on / on_demand).
+//   - always_on: arranca si tiene sectores asignados, no se apaga por idle
+//   - on_demand: arranca solo si hay viewer real, se apaga tras idle_timeout
+async function syncEncodersFromDB(pool) {
+  const assigned = await getChannelsAssignedToSectors(pool);
+  const viewers = await getChannelsWithViewers(pool);
+  const config = await getChannelEncoderConfig(pool);
+
+  // Determinar qué canales DEBEN estar activos según su modo
+  const shouldRun = new Set();
+  for (const channelId of assigned) {
+    const cfg = config.get(channelId) || { mode: 'always_on' };
+    if (cfg.mode === 'always_on') {
+      shouldRun.add(channelId);
+    } else if (cfg.mode === 'on_demand' && viewers.has(channelId)) {
+      shouldRun.add(channelId);
+    }
+  }
 
   // Arrancar los que faltan
   const started = [];
-  for (const channelId of neededSet) {
+  for (const channelId of shouldRun) {
     if (!encoders.has(channelId)) {
       try {
         await startEncoder(pool, channelId);
@@ -327,28 +378,53 @@ async function syncEncodersFromDB(pool) {
     }
   }
 
-  // Marcar idle a los que ya no tienen sectores (no parar inmediatamente, dejar IDLE_TIMEOUT)
-  const stopped = [];
+  // Refrescar last_viewer_at en BD para los on_demand con viewers
+  for (const channelId of viewers) {
+    if (assigned.has(channelId)) {
+      try {
+        await pool.query(
+          `UPDATE multicast_encoders SET last_viewer_at = now() WHERE channel_id = $1`,
+          [channelId]
+        );
+      } catch {}
+    }
+  }
+
+  // Marcar idle a los que ya no deberían correr
   for (const [channelId, e] of encoders.entries()) {
-    if (!neededSet.has(channelId) && !e.idleSince) {
-      e.idleSince = Date.now();
-    } else if (neededSet.has(channelId)) {
+    if (!shouldRun.has(channelId)) {
+      if (!e.idleSince) e.idleSince = Date.now();
+    } else {
       e.idleSince = null;
     }
   }
 
-  return { started: started.length, total_active: encoders.size };
+  return { started: started.length, total_active: encoders.size, viewers: viewers.size };
 }
 
 // ----------------------------------------------------------
-// Loop de mantenimiento: chequea idle, actualiza heartbeats
+// Loop de mantenimiento: chequea idle (con timeout por canal), heartbeats, y re-sincroniza
 function startMaintenanceLoop(pool) {
+  // Cada 15s re-sincroniza demanda
+  setInterval(async () => {
+    try { await syncEncodersFromDB(pool); } catch (e) { console.error('[encoder] sync error:', e.message); }
+  }, 15_000);
+
+  // Cada 5s chequea idle y heartbeat
   setInterval(async () => {
     const now = Date.now();
+    const config = await getChannelEncoderConfig(pool).catch(() => new Map());
     for (const [channelId, e] of encoders.entries()) {
-      // Auto-stop por idle
-      if (e.idleSince && (now - e.idleSince) > IDLE_TIMEOUT_MS) {
-        console.log(`[encoder] Auto-stop ${e.name} (idle ${Math.floor((now - e.idleSince)/1000)}s)`);
+      const cfg = config.get(channelId) || { mode: 'always_on', idleTimeoutMs: DEFAULT_IDLE_TIMEOUT_MS };
+      // Solo on_demand se auto-apaga; always_on se mantiene mientras haya sectores
+      if (cfg.mode === 'on_demand' && e.idleSince && (now - e.idleSince) > cfg.idleTimeoutMs) {
+        console.log(`[encoder] Auto-stop ${e.name} on_demand (idle ${Math.floor((now - e.idleSince)/1000)}s)`);
+        await stopEncoder(pool, channelId).catch(() => {});
+        continue;
+      }
+      // Para always_on usamos el default conservador solo si perdió sus sectores
+      if (cfg.mode === 'always_on' && e.idleSince && (now - e.idleSince) > DEFAULT_IDLE_TIMEOUT_MS) {
+        console.log(`[encoder] Auto-stop ${e.name} always_on sin sectores (idle ${Math.floor((now - e.idleSince)/1000)}s)`);
         await stopEncoder(pool, channelId).catch(() => {});
         continue;
       }
