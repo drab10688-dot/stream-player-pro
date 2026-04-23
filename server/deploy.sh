@@ -71,14 +71,29 @@ fi
 
 # 4.5) Aplicar schema VPN (idempotente, crea tablas nuevas si faltan)
 VPN_SCHEMA="$SCRIPT_DIR/database/vpn-schema.sql"
-if [ -f "$VPN_SCHEMA" ] && [ -f "$DB_PASS_FILE" ]; then
+if [ -f "$VPN_SCHEMA" ]; then
   log "🗄️  Aplicando schema VPN (idempotente)..."
-  DB_PASS=$(cat "$DB_PASS_FILE")
-  if PGPASSWORD="$DB_PASS" psql -h localhost -U streambox_user -d streambox_db -f "$VPN_SCHEMA" >/dev/null 2>&1; then
-    ok "Schema VPN aplicado"
-  else
-    warn "No se pudo aplicar vpn-schema.sql automáticamente"
+  APPLIED=false
+  if [ -f "$DB_PASS_FILE" ]; then
+    DB_PASS=$(cat "$DB_PASS_FILE")
+    for DBNAME in streambox streambox_db; do
+      if PGPASSWORD="$DB_PASS" psql -h localhost -U streambox_user -d "$DBNAME" -f "$VPN_SCHEMA" >/dev/null 2>&1; then
+        ok "Schema VPN aplicado en $DBNAME"
+        APPLIED=true
+        break
+      fi
+    done
   fi
+  if [ "$APPLIED" = false ]; then
+    for DBNAME in streambox streambox_db; do
+      if sudo -u postgres psql -d "$DBNAME" -f "$VPN_SCHEMA" >/dev/null 2>&1; then
+        ok "Schema VPN aplicado en $DBNAME (vía postgres)"
+        APPLIED=true
+        break
+      fi
+    done
+  fi
+  [ "$APPLIED" = false ] && warn "No se pudo aplicar vpn-schema.sql automáticamente"
 fi
 
 # 4.7) Tuning sysctl multicast (anti-pixelado, validado producción)
