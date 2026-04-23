@@ -946,8 +946,10 @@ const EncodersSection = () => {
           </div>
         </div>
         <p className="text-xs text-muted-foreground mt-3">
-          Los encoders convierten HTTP/HLS/TS unicast → UDP multicast en tiempo real. Se inician automáticamente cuando un sector recibe un canal y se detienen 60s después de quedar sin uso.
-          Modo <strong>copy</strong> = sin transcoding (CPU mínima, requiere H.264+AAC). Modo <strong>transcode</strong> = recodifica a H.264+AAC (~15-25% CPU/canal).
+          Los encoders convierten HTTP/HLS/TS unicast → UDP multicast en tiempo real.
+          <strong> Siempre activo</strong> = corre mientras haya sectores asignados (latencia 0 al cambiar canal).
+          <strong> Bajo demanda</strong> = arranca solo cuando un cliente está mirando, se apaga tras X minutos sin viewers (ahorra CPU).
+          Modo <strong>copy</strong> = sin transcoding (CPU mínima). Modo <strong>transcode</strong> = recodifica a H.264+AAC (~15-25% CPU/canal).
         </p>
       </div>
 
