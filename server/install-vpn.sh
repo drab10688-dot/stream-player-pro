@@ -1,23 +1,25 @@
 #!/bin/bash
 # ============================================================
-# Omnisync - Cliente L2TP/IPsec → MikroTik central + Multicast UDP
+# Omnisync - Instalación módulo VPN/Multicast (sin credenciales)
 # ============================================================
 # Uso: sudo bash install-vpn.sh
 #
-# Instala y configura el VPS como CLIENTE L2TP/IPsec hacia el
-# MikroTik central del WISP. El VPS recibe una IP en la red interna
-# (típicamente 172.16.50.1) y desde allí emite multicast UDP que
-# el MikroTik reenvía a sus clientes vía IGMP-Proxy.
+# Este script SOLO instala y prepara el sistema:
+#   - Paquetes (strongswan, xl2tpd, ppp, ffmpeg, iptables)
+#   - Kernel (forwarding + buffer UDP 25MB anti-pixelado)
+#   - Plantillas de configuración (sin credenciales)
+#   - Helpers omnisync-vpn-up / omnisync-vpn-down
+#   - Sudoers para que Node controle ipsec/xl2tpd
+#   - Watchdog systemd
+#   - Tablas VPN en PostgreSQL
 #
-# Arquitectura validada en producción (mem://arquitectura/multicast-l2tp-validado-produccion):
-#   [VPS FFmpeg]  →  ppp0 (172.16.50.1)
-#         │  L2TP/IPsec
-#         ▼
-#   [MikroTik central]  →  IGMP-Proxy  →  clientes (LAN/WiFi/L2TP)
+# Las credenciales (IP MikroTik, usuario, pass, PSK) se cargan
+# DESPUÉS desde el panel admin → tab "VPN/Multicast" → Sectores.
+# El backend reescribe ipsec.conf, ipsec.secrets, xl2tpd.conf y
+# chap-secrets cuando creás un sector.
 #
-# - NO usa GRE ni smcroute (descartados, innecesarios)
-# - FFmpeg fuerza salida por ppp0 con localaddr=172.16.50.1
-# - MikroTik hace IGMP-Proxy hacia todos los clientes
+# Arquitectura validada (mem://arquitectura/multicast-l2tp-validado-produccion):
+#   [VPS FFmpeg] → ppp0 (172.16.50.1) → L2TP/IPsec → [MikroTik] → IGMP-Proxy → cliente
 # ============================================================
 
 set -e
@@ -33,72 +35,17 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
-# ----------------------------------------------------------
-# 1) Datos del MikroTik central (lo único que cambia entre instalaciones)
-# ----------------------------------------------------------
 echo ""
 echo "================================================================"
-echo "  Configuración del cliente L2TP hacia MikroTik central"
+echo "  Instalación módulo VPN/Multicast - Omnisync"
+echo "  (sin credenciales: se configuran luego desde el panel)"
 echo "================================================================"
 echo ""
 
-# Permitir reusar configuración previa si ya existe
-CFG_FILE="/etc/omnisync-vpn.conf"
-if [ -f "$CFG_FILE" ]; then
-  log "Detecté configuración previa en $CFG_FILE"
-  # shellcheck disable=SC1090
-  source "$CFG_FILE"
-  read -p "¿Reusar configuración previa? (s/N): " REUSE
-  if [[ ! "$REUSE" =~ ^[sSyY]$ ]]; then
-    MIKROTIK_PUBLIC_IP=""; VPN_USER=""; VPN_PASS=""; IPSEC_PSK=""
-  fi
-fi
-
-while [ -z "$MIKROTIK_PUBLIC_IP" ]; do
-  read -p "IP pública del MikroTik central (ej: 179.189.222.234): " MIKROTIK_PUBLIC_IP
-done
-
-while [ -z "$VPN_USER" ]; do
-  read -p "Usuario L2TP (definido en el MikroTik): " VPN_USER
-done
-
-while [ -z "$VPN_PASS" ]; do
-  read -s -p "Contraseña L2TP: " VPN_PASS
-  echo ""
-done
-
-while [ -z "$IPSEC_PSK" ]; do
-  read -s -p "PSK IPsec compartida con el MikroTik: " IPSEC_PSK
-  echo ""
-done
-
-# IP fija que esperamos recibir dentro del L2TP (debe coincidir con la del MikroTik)
-VPN_LOCAL_IP="${VPN_LOCAL_IP:-172.16.50.1}"
-read -p "IP que el MikroTik te asignará en el túnel [${VPN_LOCAL_IP}]: " IN
-[ -n "$IN" ] && VPN_LOCAL_IP="$IN"
-
-# Detectar interfaz/IP pública (informativo)
-PUB_IF=$(ip route get 1.1.1.1 2>/dev/null | awk '{print $5; exit}')
-PUB_IP=$(curl -s -4 --max-time 4 ifconfig.me || hostname -I | awk '{print $1}')
-log "Interfaz pública detectada:  $PUB_IF  ($PUB_IP)"
-log "MikroTik destino:            $MIKROTIK_PUBLIC_IP"
-log "IP esperada en el túnel:     $VPN_LOCAL_IP"
-
-# Persistir para futuros re-run / deploy.sh
-cat > "$CFG_FILE" <<EOF
-# Omnisync VPN client config - autogenerado
-MIKROTIK_PUBLIC_IP="${MIKROTIK_PUBLIC_IP}"
-VPN_USER="${VPN_USER}"
-VPN_PASS="${VPN_PASS}"
-IPSEC_PSK="${IPSEC_PSK}"
-VPN_LOCAL_IP="${VPN_LOCAL_IP}"
-EOF
-chmod 600 "$CFG_FILE"
-
 # ----------------------------------------------------------
-# 2) Instalar paquetes (cliente L2TP + IPsec + FFmpeg)
+# 1) Paquetes
 # ----------------------------------------------------------
-log "Instalando paquetes (strongswan, xl2tpd, ffmpeg)..."
+log "Instalando paquetes (strongswan, xl2tpd, ppp, ffmpeg)..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq \
@@ -116,9 +63,9 @@ else
 fi
 
 # ----------------------------------------------------------
-# 3) Sysctl: forwarding + buffer UDP (validado en producción)
+# 2) Sysctl: forwarding + buffer UDP (validado en producción)
 # ----------------------------------------------------------
-log "Configurando kernel (forwarding + buffer UDP 25MB)..."
+log "Configurando kernel (forwarding + buffer UDP 25MB anti-pixelado)..."
 cat > /etc/sysctl.d/99-omnisync-vpn.conf <<EOF
 # Omnisync VPN cliente + Multicast — validado producción
 net.ipv4.ip_forward=1
@@ -126,7 +73,7 @@ net.ipv4.conf.all.rp_filter=0
 net.ipv4.conf.default.rp_filter=0
 net.ipv4.conf.all.accept_redirects=0
 net.ipv4.conf.all.send_redirects=0
-# Buffer UDP grande → evita pixelado en multicast por L2TP (mem)
+# Buffer UDP grande → evita pixelado en multicast por L2TP
 net.core.wmem_max=26214400
 net.core.wmem_default=26214400
 net.core.rmem_max=26214400
@@ -136,56 +83,42 @@ sysctl --system >/dev/null
 ok "Kernel configurado (wmem_max=25MB)"
 
 # ----------------------------------------------------------
-# 4) strongSwan (IPsec PSK) — modo cliente transport
+# 3) Plantilla strongSwan vacía (la rellena el backend)
 # ----------------------------------------------------------
-log "Configurando strongSwan (IPsec PSK cliente)..."
-cat > /etc/ipsec.conf <<EOF
-# Omnisync L2TP/IPsec cliente - autogenerado
+log "Creando plantillas de strongSwan/xl2tpd (sin credenciales)..."
+if [ ! -f /etc/ipsec.conf.omnisync-bak ] && [ -f /etc/ipsec.conf ]; then
+  cp /etc/ipsec.conf /etc/ipsec.conf.omnisync-bak 2>/dev/null || true
+fi
+
+cat > /etc/ipsec.conf <<'EOF'
+# Omnisync L2TP/IPsec - se completa desde el panel admin
 config setup
   charondebug="ike 1, knl 1, cfg 0"
   uniqueids=no
 
-conn omnisync
-  authby=secret
-  pfs=no
-  rekey=no
-  keyingtries=3
-  type=transport
-  keyexchange=ikev1
-  left=%defaultroute
-  leftprotoport=17/1701
-  right=${MIKROTIK_PUBLIC_IP}
-  rightprotoport=17/1701
-  ike=aes256-sha1-modp1024,aes128-sha1-modp1024,3des-sha1-modp1024!
-  esp=aes256-sha1,aes128-sha1,3des-sha1!
-  auto=start
+# Las conexiones "conn omnisync-*" las agrega el backend cuando
+# creás un sector en el panel.
 EOF
 
-cat > /etc/ipsec.secrets <<EOF
-%any ${MIKROTIK_PUBLIC_IP} : PSK "${IPSEC_PSK}"
+# ipsec.secrets: solo cabecera, el backend agrega líneas
+if [ ! -f /etc/ipsec.secrets ] || ! grep -q "Omnisync" /etc/ipsec.secrets; then
+  cat > /etc/ipsec.secrets <<'EOF'
+# Omnisync IPsec PSK - administrado por el panel
+# Formato: %any <IP_MIKROTIK> : PSK "<PSK>"
 EOF
+fi
 chmod 600 /etc/ipsec.secrets
-ok "strongSwan configurado (cliente → ${MIKROTIK_PUBLIC_IP})"
 
-# ----------------------------------------------------------
-# 5) xl2tpd cliente
-# ----------------------------------------------------------
-log "Configurando xl2tpd (cliente)..."
-cat > /etc/xl2tpd/xl2tpd.conf <<EOF
+# xl2tpd: estructura base, el backend agrega [lac ...] por sector
+cat > /etc/xl2tpd/xl2tpd.conf <<'EOF'
 [global]
 ipsec saref = yes
 
-[lac omnisync]
-lns = ${MIKROTIK_PUBLIC_IP}
-ppp debug = no
-pppoptfile = /etc/ppp/options.omnisync
-length bit = yes
-require chap = no
-refuse pap = no
-require authentication = yes
+# Las secciones [lac omnisync-*] las agrega el backend.
 EOF
 
-cat > /etc/ppp/options.omnisync <<EOF
+# Plantilla de opciones PPP base
+cat > /etc/ppp/options.omnisync <<'EOF'
 ipcp-accept-local
 ipcp-accept-remote
 refuse-eap
@@ -199,47 +132,52 @@ defaultroute-metric 9999
 usepeerdns
 debug
 connect-delay 5000
-name ${VPN_USER}
 EOF
 
-cat > /etc/ppp/chap-secrets <<EOF
-# Omnisync L2TP cliente - autogenerado
-${VPN_USER} * ${VPN_PASS} *
+# chap-secrets: cabecera, el backend agrega usuarios
+if [ ! -f /etc/ppp/chap-secrets ] || ! grep -q "Omnisync" /etc/ppp/chap-secrets; then
+  cat > /etc/ppp/chap-secrets <<'EOF'
+# Omnisync L2TP - administrado por el panel
+# user * password *
 EOF
+fi
 chmod 600 /etc/ppp/chap-secrets /etc/ppp/options.omnisync
-ok "xl2tpd configurado"
+ok "Plantillas creadas (sin credenciales)"
 
 # ----------------------------------------------------------
-# 6) Script helper: levantar/bajar túnel L2TP
+# 4) Scripts helper: levantar/bajar túnel
 # ----------------------------------------------------------
 cat > /usr/local/sbin/omnisync-vpn-up <<'EOF'
 #!/bin/bash
+# Levanta todas las conexiones IPsec definidas + xl2tpd
 ipsec restart >/dev/null 2>&1
 sleep 2
-ipsec up omnisync >/dev/null 2>&1 || true
+# Levanta cada conn que empiece por "omnisync"
+for c in $(ipsec status 2>/dev/null | awk -F'[ :]' '/omnisync/{print $1}' | sort -u); do
+  ipsec up "$c" >/dev/null 2>&1 || true
+done
 sleep 1
-echo "c omnisync" > /var/run/xl2tpd/l2tp-control 2>/dev/null || \
-  systemctl restart xl2tpd
+systemctl restart xl2tpd 2>/dev/null || true
 sleep 4
 ip -4 addr show ppp0 2>/dev/null | grep -q "inet" \
   && echo "VPN UP: $(ip -4 addr show ppp0 | awk '/inet/{print $2}')" \
-  || echo "VPN DOWN: revisa /var/log/syslog | grep -E 'pppd|xl2tpd|charon'"
+  || echo "VPN DOWN o sin sectores configurados todavía"
 EOF
 chmod +x /usr/local/sbin/omnisync-vpn-up
 
 cat > /usr/local/sbin/omnisync-vpn-down <<'EOF'
 #!/bin/bash
-echo "d omnisync" > /var/run/xl2tpd/l2tp-control 2>/dev/null || true
-sleep 1
-ipsec down omnisync >/dev/null 2>&1 || true
+for c in $(ipsec status 2>/dev/null | awk -F'[ :]' '/omnisync/{print $1}' | sort -u); do
+  ipsec down "$c" >/dev/null 2>&1 || true
+done
 echo "VPN DOWN"
 EOF
 chmod +x /usr/local/sbin/omnisync-vpn-down
 
 # ----------------------------------------------------------
-# 7) Firewall (cliente solo necesita salida; abrir 500/4500/1701 igual)
+# 5) Firewall
 # ----------------------------------------------------------
-log "Reglas iptables..."
+log "Reglas iptables (IPsec + multicast)..."
 iptables -I INPUT -p udp --dport 500  -j ACCEPT 2>/dev/null || true
 iptables -I INPUT -p udp --dport 1701 -j ACCEPT 2>/dev/null || true
 iptables -I INPUT -p udp --dport 4500 -j ACCEPT 2>/dev/null || true
@@ -249,19 +187,19 @@ netfilter-persistent save >/dev/null 2>&1 || iptables-save > /etc/iptables/rules
 ok "Firewall actualizado"
 
 # ----------------------------------------------------------
-# 8) Sudoers para que Node controle ipsec/xl2tpd/ip sin password
+# 6) Sudoers para que Node controle todo sin password
 # ----------------------------------------------------------
-cat > /etc/sudoers.d/omnisync-vpn <<EOF
+cat > /etc/sudoers.d/omnisync-vpn <<'EOF'
 # Omnisync - permite al backend Node.js gestionar VPN sin password
-root ALL=(ALL) NOPASSWD: /usr/sbin/ipsec, /usr/sbin/xl2tpd, /usr/sbin/ip, /bin/systemctl, /usr/local/sbin/omnisync-vpn-up, /usr/local/sbin/omnisync-vpn-down, /usr/bin/tee /etc/ppp/chap-secrets
+root ALL=(ALL) NOPASSWD: /usr/sbin/ipsec, /usr/sbin/xl2tpd, /usr/sbin/ip, /bin/systemctl, /usr/local/sbin/omnisync-vpn-up, /usr/local/sbin/omnisync-vpn-down, /usr/bin/tee /etc/ppp/chap-secrets, /usr/bin/tee /etc/ipsec.conf, /usr/bin/tee /etc/ipsec.secrets, /usr/bin/tee /etc/xl2tpd/xl2tpd.conf
 EOF
 chmod 440 /etc/sudoers.d/omnisync-vpn
 ok "Sudoers configurado"
 
 # ----------------------------------------------------------
-# 9) Auto-reconexión: systemd unit que mantiene la VPN viva
+# 7) Watchdog systemd (re-up si ppp0 cae)
 # ----------------------------------------------------------
-cat > /etc/systemd/system/omnisync-vpn.service <<EOF
+cat > /etc/systemd/system/omnisync-vpn.service <<'EOF'
 [Unit]
 Description=Omnisync L2TP/IPsec client (auto-reconnect)
 After=network-online.target strongswan-starter.service xl2tpd.service
@@ -278,7 +216,6 @@ ExecStop=/usr/local/sbin/omnisync-vpn-down
 WantedBy=multi-user.target
 EOF
 
-# Watchdog: si ppp0 se cae, reconectar
 cat > /etc/systemd/system/omnisync-vpn-watch.service <<'EOF'
 [Unit]
 Description=Omnisync VPN watchdog (re-up if ppp0 dies)
@@ -304,20 +241,18 @@ systemctl daemon-reload
 systemctl enable omnisync-vpn.service omnisync-vpn-watch.timer >/dev/null 2>&1 || true
 
 # ----------------------------------------------------------
-# 10) Iniciar servicios y levantar túnel
+# 8) Habilitar servicios (sin levantar túnel todavía)
 # ----------------------------------------------------------
-log "Iniciando servicios..."
+log "Habilitando servicios..."
 systemctl enable strongswan-starter >/dev/null 2>&1 || systemctl enable ipsec >/dev/null 2>&1 || true
-systemctl restart strongswan-starter 2>/dev/null || systemctl restart ipsec 2>/dev/null || true
 systemctl enable xl2tpd >/dev/null 2>&1
-systemctl restart xl2tpd
-sleep 2
-/usr/local/sbin/omnisync-vpn-up || true
+systemctl restart strongswan-starter 2>/dev/null || systemctl restart ipsec 2>/dev/null || true
+systemctl restart xl2tpd 2>/dev/null || true
 systemctl start omnisync-vpn-watch.timer 2>/dev/null || true
-ok "Servicios activos (xl2tpd + strongswan + watchdog)"
+ok "Servicios habilitados (esperando configuración del panel)"
 
 # ----------------------------------------------------------
-# 11) Crear tablas VPN en PostgreSQL
+# 9) Crear tablas VPN en PostgreSQL
 # ----------------------------------------------------------
 log "Creando tablas VPN en la base de datos..."
 SCHEMA_FILE="$(dirname "$(readlink -f "$0")")/database/vpn-schema.sql"
@@ -343,50 +278,34 @@ else
 fi
 
 # ----------------------------------------------------------
-# 12) Guardar PSK + exportar VPN_LOCAL_IP para multicast-encoder
+# 10) Resumen final
 # ----------------------------------------------------------
-echo "${IPSEC_PSK}" > /etc/omnisync-vpn-psk
-chmod 640 /etc/omnisync-vpn-psk
-
-# Asegurar que el backend (PM2) reciba VPN_LOCAL_IP
-if [ -f /opt/streambox/server/.env ]; then
-  grep -q '^VPN_LOCAL_IP=' /opt/streambox/server/.env \
-    && sed -i "s|^VPN_LOCAL_IP=.*|VPN_LOCAL_IP=${VPN_LOCAL_IP}|" /opt/streambox/server/.env \
-    || echo "VPN_LOCAL_IP=${VPN_LOCAL_IP}" >> /opt/streambox/server/.env
-  ok "VPN_LOCAL_IP=${VPN_LOCAL_IP} agregado a /opt/streambox/server/.env"
-fi
-
-# ----------------------------------------------------------
-# 13) Resumen final
-# ----------------------------------------------------------
-PPP_IP=$(ip -4 addr show ppp0 2>/dev/null | awk '/inet/{print $2}' | head -1)
-
 echo ""
 echo "================================================================"
-echo -e "${GREEN}  ✅ Cliente VPN Omnisync instalado${NC}"
+echo -e "${GREEN}  ✅ Módulo VPN/Multicast instalado${NC}"
 echo "================================================================"
 echo ""
-echo -e "  MikroTik central:     ${CYAN}${MIKROTIK_PUBLIC_IP}${NC}"
-echo -e "  Usuario L2TP:         ${CYAN}${VPN_USER}${NC}"
-echo -e "  IP esperada (ppp0):   ${CYAN}${VPN_LOCAL_IP}${NC}"
-echo -e "  IP actual ppp0:       ${CYAN}${PPP_IP:-no conectada todavía}${NC}"
-echo -e "  PSK guardada en:      ${CYAN}/etc/omnisync-vpn-psk${NC}"
+echo -e "  ${CYAN}Sistema listo. Las credenciales se cargan desde el panel:${NC}"
 echo ""
-echo -e "  ${YELLOW}En el MikroTik debes tener:${NC}"
+echo "    1) Abrí el panel admin → tab 'VPN/Multicast'"
+echo "    2) Sub-tab 'Sectores' → Crear sector con:"
+echo "         - IP pública del MikroTik"
+echo "         - Usuario y contraseña L2TP"
+echo "         - PSK IPsec"
+echo "         - IP asignada en el túnel (ej. 172.16.50.1)"
+echo "    3) Sub-tab 'Multicast' → asigná canales a grupos"
+echo "    4) Probá en VLC del cliente: udp://@239.10.0.X:1234"
+echo ""
+echo -e "  ${YELLOW}En el MikroTik central debés tener:${NC}"
 echo "    /routing igmp-proxy set quick-leave=yes"
 echo "    /routing igmp-proxy interface"
 echo "      add interface=omnisync-l2tp upstream=yes alternative-subnets=239.0.0.0/8"
 echo "      add interface=<bridge-clientes> upstream=no"
-echo "      add interface=<l2tp-tu-cliente> upstream=no   # opcional"
 echo ""
 echo "  Comandos útiles:"
-echo "    sudo omnisync-vpn-up      # levantar túnel"
-echo "    sudo omnisync-vpn-down    # bajar túnel"
-echo "    ip -4 addr show ppp0      # ver IP en el túnel"
+echo "    sudo omnisync-vpn-up      # levantar túneles"
+echo "    sudo omnisync-vpn-down    # bajar túneles"
+echo "    ip -4 addr show ppp0      # ver IP del túnel"
 echo "    ipsec statusall           # estado IPsec"
-echo ""
-echo "  Próximos pasos:"
-echo "    1) pm2 restart streambox-api"
-echo "    2) Panel admin → tab 'VPN Sectores' → asigna canales a multicast"
-echo "    3) Prueba en VLC del cliente:  udp://@239.10.0.X:1234"
+echo "    pm2 logs streambox-api    # logs del backend"
 echo "================================================================"
