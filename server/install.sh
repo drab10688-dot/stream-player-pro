@@ -376,6 +376,15 @@ if [ -f "${SCRIPT_DIR}/database/device-codes-schema.sql" ]; then
   rm -f /tmp/streambox_device_codes.sql
 fi
 
+# Importar schema encoders on-demand (mode/idle_timeout/last_viewer_at, idempotente)
+if [ -f "${SCRIPT_DIR}/database/encoders-on-demand-schema.sql" ]; then
+  cp "${SCRIPT_DIR}/database/encoders-on-demand-schema.sql" /tmp/streambox_encoders_on_demand.sql
+  chmod 644 /tmp/streambox_encoders_on_demand.sql
+  sudo -u postgres psql -d streambox -f /tmp/streambox_encoders_on_demand.sql > /dev/null 2>&1 && \
+    log_ok "Schema encoders on-demand aplicado" || log_warn "Schema encoders on-demand no aplicado (continuando)"
+  rm -f /tmp/streambox_encoders_on_demand.sql
+fi
+
 # Dar permisos
 sudo -u postgres psql -d streambox -c "GRANT ALL ON ALL TABLES IN SCHEMA public TO streambox_user;" 2>/dev/null
 sudo -u postgres psql -d streambox -c "GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO streambox_user;" 2>/dev/null
