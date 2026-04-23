@@ -103,7 +103,7 @@ const VpnSectorsManager = () => {
             </div>
             <div>
               <h2 className="text-lg font-bold text-foreground">VPN Sectores · Multicast</h2>
-              <p className="text-xs text-muted-foreground">L2TP/IPsec + GRE para distribución multicast a MikroTik remotos</p>
+              <p className="text-xs text-muted-foreground">L2TP/IPsec + multicast UDP validado hacia MikroTik remotos</p>
             </div>
           </div>
           <div className="flex items-center gap-3 px-4 py-2 rounded-lg glass-strong border border-border/30">
@@ -146,6 +146,7 @@ const SectorsSection = () => {
   const { toast } = useToast();
   const [sectors, setSectors] = useState<Sector[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
+  const [loadWarning, setLoadWarning] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Sector | null>(null);
   const [form, setForm] = useState({
@@ -156,12 +157,43 @@ const SectorsSection = () => {
   });
 
   const load = useCallback(async () => {
-    try {
-      const [s, p] = await Promise.all([apiGet<Sector[]>('/api/vpn/sectors'), apiGet<Plan[]>('/api/plans')]);
-      setSectors(s);
-      setPlans(p);
-    } catch (e: any) {
-      toast({ title: 'Error', description: e.message, variant: 'destructive' });
+    const [sectorsResult, plansResult] = await Promise.allSettled([
+      apiGet<Sector[]>('/api/vpn/sectors'),
+      apiGet<Plan[]>('/api/plans'),
+    ]);
+
+    let warning: string | null = null;
+
+    if (sectorsResult.status === 'fulfilled') {
+      setSectors(sectorsResult.value);
+    } else {
+      setSectors([]);
+      warning = 'No se pudieron cargar los sectores desde el backend local.';
+    }
+
+    if (plansResult.status === 'fulfilled') {
+      setPlans(plansResult.value);
+    } else {
+      setPlans([]);
+      warning = warning
+        ? `${warning} Los planes no están disponibles y se seguirá sin filtros por plan.`
+        : 'Los planes no están disponibles y se seguirá sin filtros por plan.';
+    }
+
+    if (warning && !getAdminToken()) {
+      warning += ' Cierra sesión y vuelve a entrar con las credenciales del panel del VPS para regenerar el token local.';
+    }
+
+    setLoadWarning(warning);
+
+    if (sectorsResult.status === 'rejected' && plansResult.status === 'rejected') {
+      toast({
+        title: 'Error',
+        description: !getAdminToken()
+          ? 'Falta el token local del VPS o ya no es válido. Vuelve a iniciar sesión en el panel.'
+          : 'No se pudo cargar el módulo VPN desde el backend local.',
+        variant: 'destructive',
+      });
     }
   }, [toast]);
 
@@ -344,6 +376,11 @@ const SectorsSection = () => {
       </div>
 
       <div className="space-y-2">
+        {loadWarning && (
+          <div className="glass rounded-lg border border-border/40 p-3 text-xs text-muted-foreground">
+            {loadWarning}
+          </div>
+        )}
         {sectors.map(s => (
           <motion.div key={s.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="glass rounded-lg p-4 flex items-center gap-4">
             <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
@@ -402,33 +439,95 @@ const MulticastSection = () => {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [sectors, setSectors] = useState<Sector[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
+  const [loadWarning, setLoadWarning] = useState<string | null>(null);
   const [selectedSector, setSelectedSector] = useState<string>('');
   const [sectorChannels, setSectorChannels] = useState<Set<string>>(new Set());
 
-  const load = useCallback(async () => {
+  const loadChannels = useCallback(async (): Promise<{ data: Channel[]; source: 'admin' | 'public' }> => {
     try {
-      const [g, c, s, p] = await Promise.all([
-        apiGet('/api/vpn/multicast'),
-        apiGet('/api/channels'),
-        apiGet('/api/vpn/sectors'),
-        apiGet('/api/plans'),
-      ]);
-      setGroups(g);
-      setChannels(c);
-      setSectors(s);
-      setPlans(p);
-    } catch (e: any) {
-      toast({ title: 'Error', description: e.message, variant: 'destructive' });
+      const data = await apiGet<Channel[]>('/api/channels');
+      return { data, source: 'admin' };
+    } catch {
+      const data = await apiGet<Channel[]>('/api/channels/public');
+      return { data, source: 'public' };
     }
-  }, [toast]);
+  }, []);
+
+  const load = useCallback(async () => {
+    const [groupsResult, channelsResult, sectorsResult, plansResult] = await Promise.allSettled([
+      apiGet<MulticastGroup[]>('/api/vpn/multicast'),
+      loadChannels(),
+      apiGet<Sector[]>('/api/vpn/sectors'),
+      apiGet<Plan[]>('/api/plans'),
+    ]);
+
+    let warning: string | null = null;
+
+    if (groupsResult.status === 'fulfilled') setGroups(groupsResult.value);
+    else {
+      setGroups([]);
+      warning = 'No se pudo cargar el pool multicast.';
+    }
+
+    if (channelsResult.status === 'fulfilled') {
+      setChannels(channelsResult.value.data);
+      if (channelsResult.value.source === 'public') {
+        warning = warning
+          ? `${warning} Los canales se cargaron en modo público; si faltan canales inactivos vuelve a iniciar sesión.`
+          : 'Los canales se cargaron en modo público; si faltan canales inactivos vuelve a iniciar sesión.';
+      }
+    } else {
+      setChannels([]);
+      warning = warning
+        ? `${warning} No fue posible obtener la lista de canales.`
+        : 'No fue posible obtener la lista de canales.';
+    }
+
+    if (sectorsResult.status === 'fulfilled') setSectors(sectorsResult.value);
+    else {
+      setSectors([]);
+      warning = warning
+        ? `${warning} Tampoco se pudieron cargar los sectores.`
+        : 'No se pudieron cargar los sectores.';
+    }
+
+    if (plansResult.status === 'fulfilled') setPlans(plansResult.value);
+    else {
+      setPlans([]);
+      warning = warning
+        ? `${warning} Los planes no están disponibles y no se aplicarán filtros por plan.`
+        : 'Los planes no están disponibles y no se aplicarán filtros por plan.';
+    }
+
+    if (warning && !getAdminToken()) {
+      warning += ' Cierra sesión y vuelve a entrar con las credenciales del panel del VPS.';
+    }
+
+    setLoadWarning(warning);
+
+    if (groupsResult.status === 'rejected' && sectorsResult.status === 'rejected') {
+      toast({
+        title: 'Error',
+        description: !getAdminToken()
+          ? 'El backend local no aceptó el token actual. Vuelve a iniciar sesión.'
+          : 'No se pudo cargar la configuración multicast desde el backend local.',
+        variant: 'destructive',
+      });
+    }
+  }, [loadChannels, toast]);
 
   useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
     if (!selectedSector) { setSectorChannels(new Set()); return; }
-    apiGet(`/api/vpn/sectors/${selectedSector}/channels`).then(rows => {
-      setSectorChannels(new Set(rows.map((r: any) => r.multicast_group_id)));
-    });
+    apiGet(`/api/vpn/sectors/${selectedSector}/channels`)
+      .then(rows => {
+        setSectorChannels(new Set(rows.map((r: any) => r.multicast_group_id)));
+      })
+      .catch(() => {
+        setSectorChannels(new Set());
+        setLoadWarning(prev => prev || 'No se pudo cargar el mapeo actual del sector seleccionado.');
+      });
   }, [selectedSector]);
 
   const assignChannel = async (groupId: string, channelId: string | null) => {
@@ -462,6 +561,11 @@ const MulticastSection = () => {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {loadWarning && (
+        <div className="lg:col-span-2 glass rounded-lg border border-border/40 p-3 text-xs text-muted-foreground">
+          {loadWarning}
+        </div>
+      )}
       {/* Panel 1: Pool multicast → asignar canales */}
       <div className="glass rounded-xl p-4">
         <h3 className="font-semibold text-foreground mb-3 flex items-center gap-2">
@@ -624,7 +728,7 @@ const MonitorSection = () => {
   const resync = async () => {
     try {
       await apiPost('/api/vpn/resync', {});
-      toast({ title: 'Sistema resincronizado', description: 'chap-secrets, GRE y smcroute actualizados' });
+      toast({ title: 'Sistema resincronizado', description: 'Configuración VPN y rutas multicast actualizadas' });
       load();
     } catch (e: any) {
       toast({ title: 'Error', description: e.message, variant: 'destructive' });
