@@ -895,21 +895,20 @@ if command -v ufw &> /dev/null; then
 fi
 
 # =============================================
-# PASO FINAL: Instalar módulo VPN L2TP/IPsec cliente + Multicast
-# Idempotente: solo se ejecuta si no está ya instalado
+# PASO FINAL: Instalar módulo VPN L2TP/IPsec + Multicast base
+# Luego las credenciales/sectores se cargan desde el panel admin
 # =============================================
-log_step "🔐 [9/9] Configurando cliente VPN L2TP/IPsec hacia MikroTik central..."
+log_step "🔐 [9/9] Instalando base VPN L2TP/IPsec + Multicast..."
 
-if [ -f /etc/omnisync-vpn-psk ] && [ -f /etc/omnisync-vpn.conf ] && systemctl is-active --quiet xl2tpd 2>/dev/null; then
-  log_ok "VPN ya configurada (PSK + xl2tpd activos). Saltando."
-  log_info "Para reconfigurar: sudo bash ${SCRIPT_DIR}/install-vpn.sh"
+if [ -f /etc/ipsec.conf ] && [ -f /etc/xl2tpd/xl2tpd.conf ] && command -v xl2tpd >/dev/null 2>&1; then
+  log_ok "Base VPN ya instalada. Saltando."
+  log_info "Las credenciales se cargan después desde el panel admin → VPN/Multicast → Sectores"
 else
   if [ -f "${SCRIPT_DIR}/install-vpn.sh" ]; then
-    log_info "Ejecutando install-vpn.sh — pedirá IP MikroTik, usuario, contraseña y PSK..."
+    log_info "Ejecutando install-vpn.sh — instala paquetes, servicios y plantillas base"
     if bash "${SCRIPT_DIR}/install-vpn.sh"; then
-      log_ok "Cliente VPN instalado y conectado al MikroTik central"
-      log_info "Config persistente:  /etc/omnisync-vpn.conf"
-      log_info "PSK guardada en:      /etc/omnisync-vpn-psk"
+      log_ok "Base VPN instalada"
+      log_info "Siguiente paso: entrar al panel y crear el sector con IP MikroTik + user + pass + PSK"
     else
       log_warn "install-vpn.sh terminó con errores. Revisa logs arriba."
       log_info "Reintenta manualmente: sudo bash ${SCRIPT_DIR}/install-vpn.sh"
