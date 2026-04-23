@@ -51,7 +51,7 @@ apt-get update -qq
 apt-get install -y -qq \
   strongswan strongswan-pki libcharon-extra-plugins \
   xl2tpd ppp \
-  iproute2 iptables-persistent netfilter-persistent \
+  iproute2 iptables-persistent netfilter-persistent tcpdump \
   ffmpeg \
   curl openssl
 ok "Paquetes instalados"
@@ -291,12 +291,13 @@ echo "    1) Abrí el panel admin → tab 'VPN/Multicast'"
 echo "    2) Sub-tab 'Sectores' → Crear sector con:"
 echo "         - IP pública del MikroTik"
 echo "         - Usuario y contraseña L2TP"
-echo "         - PSK IPsec"
-echo "         - IP asignada en el túnel (ej. 172.16.50.1)"
+echo "         - IP asignada en la VPN (ej. 172.16.50.10)"
 echo "    3) Sub-tab 'Multicast' → asigná canales a grupos"
-echo "    4) Probá en VLC del cliente: udp://@239.10.0.X:1234"
+echo "       y luego marcá qué grupos recibe el sector"
+echo "    4) Sub-tab 'Encoders FFmpeg' → 'Sincronizar con sectores'"
+echo "    5) Probá en VLC del portátil/cliente: udp://@239.10.0.X:1234"
 echo ""
-echo -e "  ${YELLOW}En el MikroTik central debés tener:${NC}"
+echo -e "  ${YELLOW}En el MikroTik remoto/central debés tener:${NC}"
 echo "    /routing igmp-proxy set quick-leave=yes"
 echo "    /routing igmp-proxy interface"
 echo "      add interface=omnisync-l2tp upstream=yes alternative-subnets=239.0.0.0/8"
@@ -307,5 +308,6 @@ echo "    sudo omnisync-vpn-up      # levantar túneles"
 echo "    sudo omnisync-vpn-down    # bajar túneles"
 echo "    ip -4 addr show ppp0      # ver IP del túnel"
 echo "    ipsec statusall           # estado IPsec"
+echo "    sudo tcpdump -i any -n 'dst net 239.10.0.0/24' -c 10"
 echo "    pm2 logs streambox-api    # logs del backend"
 echo "================================================================"
