@@ -97,6 +97,37 @@ const pool = new Pool({
   password: 'tu_password_seguro',
 });
 
+const applyVpnSchemaIfMissing = async () => {
+  const schemaPath = path.join(__dirname, 'database', 'vpn-schema.sql');
+
+  try {
+    const existsRes = await pool.query(`
+      SELECT EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = 'vpn_sectors'
+      ) AS exists
+    `);
+
+    if (existsRes.rows[0]?.exists) {
+      console.log('✅ Schema VPN presente');
+      return;
+    }
+
+    if (!fs.existsSync(schemaPath)) {
+      console.warn(`⚠️ Schema VPN no encontrado en ${schemaPath}`);
+      return;
+    }
+
+    console.log('🛠️ Tabla vpn_sectors ausente. Aplicando schema VPN automáticamente...');
+    const sql = fs.readFileSync(schemaPath, 'utf8');
+    await pool.query(sql);
+    console.log('✅ Schema VPN aplicado automáticamente');
+  } catch (err) {
+    console.error('❌ No se pudo aplicar el schema VPN automáticamente:', err.message);
+  }
+};
+
 // =============================================
 // MOTOR DE STREAMING NODE.JS PURO (sin FFmpeg)
 // Segmenta streams TS usando solo http/https/fs - Proxy 1-a-N estricto
@@ -207,7 +238,10 @@ function invalidatePlanCache() {
 
 // Verificar conexión a la base de datos al iniciar
 pool.query('SELECT 1')
-  .then(() => console.log('✅ Conectado a PostgreSQL'))
+  .then(async () => {
+    console.log('✅ Conectado a PostgreSQL');
+    await applyVpnSchemaIfMissing();
+  })
   .catch(err => {
     console.error('❌ ERROR: No se pudo conectar a PostgreSQL:', err.message);
     console.error('   Verifica que PostgreSQL esté corriendo y las credenciales sean correctas');
