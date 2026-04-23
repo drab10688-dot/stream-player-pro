@@ -20,6 +20,13 @@
 #
 # Arquitectura validada (mem://arquitectura/multicast-l2tp-validado-produccion):
 #   [VPS FFmpeg] → ppp0 (172.16.50.1) → L2TP/IPsec → [MikroTik] → IGMP-Proxy → cliente
+#
+# FFmpeg encoder (validado producción 2026-04-23):
+#   - Detección automática de codec vía ffprobe
+#   - Soporta copy: video h264/hevc/mpeg2video + audio aac/mp2/mp3/ac3
+#   - h264_mp4toannexb SOLO si video=h264 (mpeg2video/hevc no lo necesitan)
+#   - Salida UDP: pkt_size=1316 + localaddr=172.16.50.1 (fuerza ppp0)
+#   - Mux: -mpegts_copyts 1, sin muxrate forzado, muxdelay/muxpreload 0
 # ============================================================
 
 set -e
