@@ -10,7 +10,7 @@ const AlertDialogTrigger = AlertDialogPrimitive.Trigger;
 
 const AlertDialogPortal = AlertDialogPrimitive.Portal;
 
-type PrimitiveWithClassName<T> = React.ComponentPropsWithoutRef<T> & {
+type PrimitiveWithClassName<T extends React.ElementType> = React.ComponentPropsWithoutRef<T> & {
   className?: string;
 };
 
