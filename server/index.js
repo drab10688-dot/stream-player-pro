@@ -5676,6 +5676,7 @@ try {
 try {
   const deviceCodesRoutes = require('./device-codes-routes');
   app.use('/api/device-codes', deviceCodesRoutes(pool, authAdmin));
+  app.use('/api/apk', deviceCodesRoutes(pool, authAdmin));
   console.log('🔑 Módulo Códigos APK cargado en /api/device-codes');
 } catch (e) {
   console.error('⚠️  Error cargando módulo device-codes:', e.message);
