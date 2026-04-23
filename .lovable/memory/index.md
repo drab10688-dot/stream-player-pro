@@ -13,9 +13,13 @@ Updated: now
 - Port mappings: Nginx 25461 -> Node 3001 (APK), 80/443 (Admin).
 - Session constraint: `userId:device_id` per device. Do not close session on channel change.
 - Provider requests use User-Agent: `VLC/3.0.20 LibVLC/3.0.20`.
-- VPN L2TP/IPsec + GRE multicast: VPN net 172.16.50.0/24, multicast 239.10.0.0/24, PSK auth. Requires `install-vpn.sh` on VPS.
+- VPN L2TP cliente: VPS xl2tpd → MikroTik. ppp0 con IP 172.16.50.1. NO GRE, NO smcroute.
+- FFmpeg multicast: usar `localaddr=172.16.50.1` para forzar salida por ppp0. MikroTik hace IGMP-Proxy (upstream=l2tp-out, alternative-subnets=239.0.0.0/8).
+- FFmpeg params óptimos: pkt_size=1316, buffer_size=2000000, muxrate 3000-4000k, pcr_period 20, ttl=8.
+- Origen preferido: TS directo (.ts) > HLS (.m3u8) por menor latencia y menos pixelado.
 
 ## Memories
+- [Multicast L2TP validado](mem://arquitectura/multicast-l2tp-validado-produccion) — Stack confirmado funcionando: VPS→L2TP→MikroTik IGMP-Proxy→VLC sin GRE
 - [VPN L2TP+Multicast](mem://arquitectura/vpn-l2tp-ipsec-multicast-sectores) — strongSwan+xl2tpd+smcroute+GRE para sectores MikroTik
 - [Encoder multicast FFmpeg](mem://arquitectura/encoder-multicast-ffmpeg-on-demand) — HTTP→UDP on-demand, auto copy/transcode, auto-stop 60s
 - [Port mappings](mem://arquitectura/mapping-puertos-apk) — Nginx 25461 -> 3001 for APK, 80/443 for Admin
