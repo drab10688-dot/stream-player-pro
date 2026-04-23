@@ -79,16 +79,16 @@ if [ -f "$PROJECT_DIR/package.json" ]; then
   fi
 fi
 
-# 3) Instalar VPN si no estaba
-if [ ! -f /etc/omnisync-vpn-psk ] || ! systemctl is-active --quiet xl2tpd 2>/dev/null; then
-  log "🔐 VPN no detectada. Instalando módulo L2TP/IPsec..."
+# 3) Instalar base VPN si no estaba
+if [ ! -f /etc/ipsec.conf ] || [ ! -f /etc/xl2tpd/xl2tpd.conf ] || ! command -v xl2tpd >/dev/null 2>&1; then
+  log "🔐 Base VPN no detectada. Instalando módulo L2TP/IPsec..."
   if [ -f "$SCRIPT_DIR/install-vpn.sh" ]; then
     bash "$SCRIPT_DIR/install-vpn.sh" || warn "install-vpn.sh tuvo errores"
   else
     warn "install-vpn.sh no existe en $SCRIPT_DIR"
   fi
 else
-  ok "VPN ya está activa"
+  ok "Base VPN ya está instalada"
 fi
 
 # 4) Restaurar password DB si está cacheada (workaround git pull pisa .env)

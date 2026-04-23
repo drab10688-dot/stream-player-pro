@@ -1,180 +1,248 @@
 // ============================================================
-// Omnisync - Módulo VPN L2TP/IPsec + Multicast Routing
-// ============================================================
-// Gestiona:
-//   - Usuarios L2TP (chap-secrets)
-//   - Sectores remotos (MikroTik)
-//   - Túneles GRE
-//   - Rutas multicast (smcroute.conf)
-//   - Estado en tiempo real (ipsec status)
-//   - Generador de configuración .rsc para MikroTik
+// Omnisync - Módulo VPN L2TP/IPsec + Multicast
+// Alineado con install-vpn.sh: el backend reescribe ipsec/xl2tpd/ppp
 // ============================================================
 
 const fs = require('fs');
-const { execSync, exec } = require('child_process');
-const path = require('path');
+const { execSync } = require('child_process');
 
 const CHAP_SECRETS = '/etc/ppp/chap-secrets';
 const SMCROUTE_CONF = '/etc/smcroute.conf';
+const IPSEC_CONF = '/etc/ipsec.conf';
+const IPSEC_SECRETS = '/etc/ipsec.secrets';
+const XL2TPD_CONF = '/etc/xl2tpd/xl2tpd.conf';
 const PSK_FILE = '/etc/omnisync-vpn-psk';
+
 const PUB_IF = (() => {
-  try { return execSync(`ip route get 1.1.1.1 | awk '{print $5; exit}'`).toString().trim(); }
-  catch { return 'eth0'; }
+  try {
+    return execSync(`ip route get 1.1.1.1 | awk '{print $5; exit}'`, { encoding: 'utf8' }).trim();
+  } catch {
+    return 'eth0';
+  }
 })();
 
-// ----------------------------------------------------------
-// Helpers de sistema
-// ----------------------------------------------------------
 const isLinux = process.platform === 'linux';
+
 const safeExec = (cmd) => {
-  try { return { ok: true, output: execSync(cmd, { encoding: 'utf8' }) }; }
-  catch (e) { return { ok: false, error: e.message }; }
-};
-
-const getPSK = () => {
-  try { return fs.readFileSync(PSK_FILE, 'utf8').trim(); }
-  catch { return 'PSK_NO_DISPONIBLE_EJECUTA_install-vpn.sh'; }
-};
-
-const getPublicIP = () => {
   try {
-    return execSync(`curl -s -4 --max-time 3 ifconfig.me || hostname -I | awk '{print $1}'`)
-      .toString().trim();
-  } catch { return '0.0.0.0'; }
+    return {
+      ok: true,
+      output: execSync(cmd, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }),
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      output: e.stdout?.toString?.() || '',
+      error: e.stderr?.toString?.() || e.message,
+    };
+  }
 };
 
-// ----------------------------------------------------------
-// chap-secrets: leer/escribir usuarios L2TP
-// ----------------------------------------------------------
-function rewriteChapSecrets(sectors) {
-  const lines = [
-    '# Omnisync L2TP users - autogenerado, no editar manualmente',
-    '# user  server  password  ip',
-  ];
-  sectors.forEach(s => {
-    if (!s.is_active) return;
-    // formato: "username" * "password" "ip"  -> ip * permite cualquiera
-    const ip = s.assigned_ip || '*';
-    lines.push(`"${s.vpn_username}" * "${s.vpn_password}" ${ip}`);
-  });
-  const content = lines.join('\n') + '\n';
+const writeRootFile = (target, content, mode = null) => {
   if (!isLinux) {
-    console.log('[VPN] (mock) Escribiría chap-secrets:\n' + content);
+    console.log(`[VPN] (mock) Escribiría ${target}:\n${content}`);
     return { ok: true, mock: true };
   }
+
   try {
-    fs.writeFileSync('/tmp/chap-secrets.tmp', content);
-    execSync(`sudo cp /tmp/chap-secrets.tmp ${CHAP_SECRETS} && sudo chmod 600 ${CHAP_SECRETS}`);
-    // Recargar xl2tpd para que tome los cambios
-    safeExec('sudo systemctl reload xl2tpd 2>/dev/null || sudo systemctl restart xl2tpd');
+    const tmp = `/tmp/${target.split('/').pop()}.tmp`;
+    fs.writeFileSync(tmp, content);
+    execSync(`sudo cp ${tmp} ${target}`);
+    if (mode) execSync(`sudo chmod ${mode} ${target}`);
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e.message };
   }
+};
+
+const slug = (value) => String(value || '')
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, '-')
+  .replace(/^-+|-+$/g, '')
+  .slice(0, 24) || 'sector';
+
+const getConnName = (sector) => `omnisync-${slug(sector.name || sector.id).slice(0, 16)}-${String(sector.id).slice(0, 6)}`;
+
+const getPSK = () => {
+  try {
+    const secrets = fs.readFileSync(IPSEC_SECRETS, 'utf8');
+    const match = secrets.match(/PSK\s+"([^"]+)"/);
+    if (match?.[1]) return match[1];
+  } catch {}
+
+  try {
+    return fs.readFileSync(PSK_FILE, 'utf8').trim();
+  } catch {
+    return 'PSK no configurado';
+  }
+};
+
+const getPublicIP = () => {
+  try {
+    return execSync(`curl -s -4 --max-time 3 ifconfig.me || hostname -I | awk '{print $1}'`, { encoding: 'utf8' }).trim();
+  } catch {
+    return '0.0.0.0';
+  }
+};
+
+const getActiveConfiguredSectors = (sectors) => sectors.filter(
+  (s) => s.is_active && s.mikrotik_public_ip && s.ipsec_psk && s.vpn_username && s.vpn_password
+);
+
+function renderChapSecrets(sectors) {
+  const lines = [
+    '# Omnisync L2TP users - autogenerado, no editar manualmente',
+    '# user  server  password  ip',
+  ];
+
+  sectors.forEach((s) => {
+    if (!s.is_active) return;
+    lines.push(`"${s.vpn_username}" * "${s.vpn_password}" *`);
+  });
+
+  return `${lines.join('\n')}\n`;
 }
 
-// ----------------------------------------------------------
-// smcroute.conf: rutas multicast por sector
-// ----------------------------------------------------------
+function rewriteChapSecrets(sectors) {
+  return writeRootFile(CHAP_SECRETS, renderChapSecrets(sectors), '600');
+}
+
+function renderIpsecConf(sectors) {
+  const lines = [
+    '# Omnisync L2TP/IPsec - autogenerado, no editar manualmente',
+    'config setup',
+    '  charondebug="ike 1, knl 1, cfg 0"',
+    '  uniqueids=no',
+    '',
+  ];
+
+  getActiveConfiguredSectors(sectors).forEach((s) => {
+    const conn = getConnName(s);
+    lines.push(`conn ${conn}`);
+    lines.push('  keyexchange=ikev1');
+    lines.push('  type=transport');
+    lines.push('  authby=secret');
+    lines.push('  left=%defaultroute');
+    lines.push('  leftprotoport=17/1701');
+    lines.push(`  right=${s.mikrotik_public_ip}`);
+    lines.push('  rightprotoport=17/1701');
+    lines.push('  ike=aes256-sha1-modp1024,aes128-sha1-modp1024,3des-sha1-modp1024!');
+    lines.push('  esp=aes256-sha1,aes128-sha1,3des-sha1!');
+    lines.push('  forceencaps=yes');
+    lines.push('  dpddelay=30s');
+    lines.push('  dpdtimeout=120s');
+    lines.push('  dpdaction=clear');
+    lines.push('  rekey=no');
+    lines.push('  auto=add');
+    lines.push('');
+  });
+
+  return `${lines.join('\n')}\n`;
+}
+
+function rewriteIpsecConf(sectors) {
+  return writeRootFile(IPSEC_CONF, renderIpsecConf(sectors));
+}
+
+function renderIpsecSecrets(sectors) {
+  const lines = [
+    '# Omnisync IPsec PSK - autogenerado, no editar manualmente',
+    '# Formato: %any <IP_MIKROTIK> : PSK "<PSK>"',
+  ];
+
+  getActiveConfiguredSectors(sectors).forEach((s) => {
+    lines.push(`%any ${s.mikrotik_public_ip} : PSK "${s.ipsec_psk}"`);
+  });
+
+  return `${lines.join('\n')}\n`;
+}
+
+function rewriteIpsecSecrets(sectors) {
+  return writeRootFile(IPSEC_SECRETS, renderIpsecSecrets(sectors), '600');
+}
+
+function renderXl2tpdConf(sectors) {
+  const lines = [
+    '[global]',
+    'ipsec saref = yes',
+    '',
+  ];
+
+  getActiveConfiguredSectors(sectors).forEach((s) => {
+    const conn = getConnName(s);
+    lines.push(`[lac ${conn}]`);
+    lines.push(`lns = ${s.mikrotik_public_ip}`);
+    lines.push(`name = ${s.vpn_username}`);
+    lines.push('ppp debug = yes');
+    lines.push('pppoptfile = /etc/ppp/options.omnisync');
+    lines.push('length bit = yes');
+    lines.push('autodial = yes');
+    lines.push('redial = yes');
+    lines.push('redial timeout = 15');
+    lines.push('max redials = 0');
+    lines.push('');
+  });
+
+  return `${lines.join('\n')}\n`;
+}
+
+function rewriteXl2tpdConf(sectors) {
+  return writeRootFile(XL2TPD_CONF, renderXl2tpdConf(sectors));
+}
+
 function rewriteSmcrouteConf(routes) {
-  // routes: [{ multicast_ip, sector_ppp_iface }]
+  if (!isLinux) {
+    return { ok: true, mock: true };
+  }
+
+  const serviceExists = safeExec('systemctl cat smcroute >/dev/null 2>&1 && echo yes || true');
+  const fileExists = fs.existsSync(SMCROUTE_CONF);
+  if (!fileExists && (serviceExists.output || '').trim() !== 'yes') {
+    return { ok: true, skipped: true };
+  }
+
   const lines = [
     '# Omnisync multicast routing - autogenerado',
     `mgroup from ${PUB_IF} group 239.10.0.0/24`,
     '',
   ];
-  routes.forEach(r => {
-    // mroute from <input_iface> group <mcast_ip> to <output_iface>
+
+  (routes || []).forEach((r) => {
+    if (!r.multicast_ip || !r.output_iface) return;
     lines.push(`mroute from ${PUB_IF} group ${r.multicast_ip} to ${r.output_iface}`);
   });
-  const content = lines.join('\n') + '\n';
-  if (!isLinux) {
-    console.log('[VPN] (mock) Escribiría smcroute.conf:\n' + content);
-    return { ok: true, mock: true };
-  }
-  try {
-    fs.writeFileSync('/tmp/smcroute.tmp', content);
-    execSync(`sudo cp /tmp/smcroute.tmp ${SMCROUTE_CONF}`);
-    safeExec('sudo systemctl restart smcroute');
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, error: e.message };
-  }
+
+  return writeRootFile(SMCROUTE_CONF, `${lines.join('\n')}\n`);
 }
 
-// ----------------------------------------------------------
-// GRE tunnels: crear/eliminar
-// ----------------------------------------------------------
-function stripCIDR(ip) {
-  return String(ip || '').split('/')[0].trim();
-}
-
-function getGreLocalIP(greRemoteIP) {
-  const octets = stripCIDR(greRemoteIP).split('.').map(Number);
-  if (octets.length !== 4 || octets.some(n => Number.isNaN(n) || n < 0 || n > 255)) {
-    return null;
-  }
-  const host = octets[3];
-  if (host < 1) return null;
-  octets[3] = host - 1;
-  return octets.join('.');
-}
-
-function createGreTunnel(name, localIP, remoteIP, sectorIP) {
-  const tunnelLocalIP = stripCIDR(localIP);
-  const tunnelRemoteIP = stripCIDR(remoteIP);
-  const grePeerIP = stripCIDR(sectorIP);
-  const greLocalIP = getGreLocalIP(grePeerIP);
-
-  if (!greLocalIP) {
-    return { ok: false, error: `GRE remote IP inválida: ${sectorIP}` };
-  }
-
-  if (!isLinux) {
-    console.log(`[VPN] (mock) GRE tunnel ${name}: ${tunnelLocalIP} -> ${tunnelRemoteIP}, ${greLocalIP}/30 peer ${grePeerIP}`);
-    return { ok: true, mock: true };
-  }
-  // Borrar si existe
-  safeExec(`sudo ip tunnel del ${name} 2>/dev/null`);
-  const r1 = safeExec(`sudo ip tunnel add ${name} mode gre local ${tunnelLocalIP} remote ${tunnelRemoteIP} ttl 64`);
-  if (!r1.ok) return r1;
-  safeExec(`sudo ip link set ${name} up multicast on`);
-  safeExec(`sudo ip addr add ${greLocalIP}/30 dev ${name}`);
-  return { ok: true };
-}
-
-function deleteGreTunnel(name) {
-  if (!isLinux) return { ok: true, mock: true };
-  return safeExec(`sudo ip tunnel del ${name} 2>/dev/null`);
-}
-
-// ----------------------------------------------------------
-// Estado túneles: parsear ipsec statusall + ip -s tunnel show
-// ----------------------------------------------------------
 function getTunnelStatus() {
   if (!isLinux) {
     return {
       ipsec_running: false,
       xl2tpd_running: false,
-      mock: true,
+      smcroute_running: false,
+      public_ip: '0.0.0.0',
+      psk: getPSK(),
       tunnels: [],
+      mock: true,
     };
   }
-  const ipsec = safeExec('sudo ipsec statusall 2>/dev/null || sudo strongswan statusall 2>/dev/null');
-  const xl2tpd = safeExec('systemctl is-active xl2tpd 2>/dev/null');
-  const smcroute = safeExec('systemctl is-active smcroute 2>/dev/null');
-  const pppList = safeExec(`ip -o addr show | grep ppp | awk '{print $2,$4}'`);
+
+  const charon = safeExec('pgrep -x charon >/dev/null && echo active || true');
+  const ipsec = safeExec('sudo ipsec statusall 2>/dev/null || true');
+  const xl2tpd = safeExec('systemctl is-active xl2tpd 2>/dev/null || true');
+  const smcroute = safeExec('systemctl is-active smcroute 2>/dev/null || true');
+  const pppList = safeExec(`ip -o addr show | awk '/ ppp[0-9]* /{print $2,$4}'`);
 
   const tunnels = [];
-  if (pppList.ok) {
-    pppList.output.split('\n').filter(Boolean).forEach(line => {
-      const [iface, ipcidr] = line.split(' ');
-      tunnels.push({ interface: iface, ip: (ipcidr || '').split('/')[0] });
-    });
-  }
+  (pppList.output || '').split('\n').filter(Boolean).forEach((line) => {
+    const [iface, ipcidr] = line.trim().split(/\s+/);
+    if (!iface) return;
+    tunnels.push({ interface: iface, ip: (ipcidr || '').split('/')[0] });
+  });
 
   return {
-    ipsec_running: ipsec.ok && /Security Associations/i.test(ipsec.output || ''),
+    ipsec_running: (charon.output || '').trim() === 'active' || /Security Associations|INSTALLED|ESTABLISHED/i.test(ipsec.output || ''),
     xl2tpd_running: (xl2tpd.output || '').trim() === 'active',
     smcroute_running: (smcroute.output || '').trim() === 'active',
     public_ip: getPublicIP(),
@@ -184,96 +252,53 @@ function getTunnelStatus() {
   };
 }
 
-// ----------------------------------------------------------
-// Generador de config .rsc para MikroTik
-// ----------------------------------------------------------
 function generateMikrotikConfig(sector, multicastChannels, serverPublicIP, psk) {
   const safe = (s) => String(s || '').replace(/"/g, '');
+  const activePsk = safe(sector.ipsec_psk || psk);
   const lines = [
-    `# ============================================================`,
+    '# ============================================================',
     `# Omnisync - Configuración MikroTik para sector "${safe(sector.name)}"`,
     `# Generado: ${new Date().toISOString()}`,
-    `# Importar con: /import file-name=omnisync-${safe(sector.name)}.rsc`,
-    `# ============================================================`,
-    ``,
-    `# 1) IPsec PSK`,
-    `/ip ipsec peer add name=omnisync address=${serverPublicIP}/32 \\`,
-    `    exchange-mode=main-l2tp send-initial-contact=no`,
-    ``,
-    `/ip ipsec identity add peer=omnisync auth-method=pre-shared-key \\`,
-    `    secret="${safe(psk)}"`,
-    ``,
-    `/ip ipsec proposal add name=omnisync auth-algorithms=sha1 \\`,
-    `    enc-algorithms=aes-256-cbc,aes-128-cbc,3des pfs-group=none`,
-    ``,
-    `/ip ipsec policy add peer=omnisync src-address=0.0.0.0/0 dst-address=${serverPublicIP}/32 \\`,
-    `    protocol=udp src-port=any dst-port=1701 proposal=omnisync \\`,
-    `    tunnel=no level=require`,
-    ``,
-    `# 2) Cliente L2TP`,
-    `/interface l2tp-client add name=omnisync-l2tp connect-to=${serverPublicIP} \\`,
-    `    user="${safe(sector.vpn_username)}" password="${safe(sector.vpn_password)}" \\`,
-    `    use-ipsec=no add-default-route=no disabled=no`,
-    ``,
-    `# 3) Túnel GRE para multicast (sobre L2TP)`,
-    `/interface gre add name=omnisync-gre local-address=${sector.assigned_ip} \\`,
-    `    remote-address=172.16.50.1 keepalive=10s,3 disabled=no`,
-    ``,
-    `/ip address add address=${sector.gre_remote_ip || '10.99.99.2'}/30 \\`,
-    `    interface=omnisync-gre`,
-    ``,
-    `# 4) IGMP proxy (para que los decos LAN reciban multicast)`,
-    `/routing igmp-proxy interface add interface=omnisync-gre upstream=yes`,
-    `/routing igmp-proxy interface add interface=bridge upstream=no alternative-subnets=0.0.0.0/0`,
-    `/routing igmp-proxy set quick-leave=yes`,
-    ``,
-    `# 5) Rutas multicast`,
-    `/ip route add dst-address=239.10.0.0/24 gateway=omnisync-gre`,
-    ``,
-    `# 6) Lista de canales asignados a este sector:`,
+    '# Arquitectura: VPS -> L2TP/IPsec -> MikroTik -> IGMP Proxy -> Cliente',
+    '# ============================================================',
+    '',
+    '/interface l2tp-client',
+    `add name=omnisync-l2tp connect-to=${serverPublicIP} user="${safe(sector.vpn_username)}" password="${safe(sector.vpn_password)}" use-ipsec=yes ipsec-secret="${activePsk}" allow=mschap2 disabled=no add-default-route=no use-peer-dns=no max-mru=1400 max-mtu=1400`,
+    '',
+    '/routing igmp-proxy',
+    'set quick-leave=yes',
+    '',
+    '/routing igmp-proxy interface',
+    'add interface=omnisync-l2tp upstream=yes alternative-subnets=239.0.0.0/8',
+    'add interface=bridge upstream=no',
+    '',
+    '# Canales asignados',
   ];
 
-  multicastChannels.forEach(ch => {
-    lines.push(`#   ${ch.channel_name || 'Canal'} → udp://@${ch.multicast_ip}:${ch.port}`);
+  (multicastChannels || []).forEach((ch) => {
+    lines.push(`# ${ch.channel_name || 'Canal'} -> udp://@${ch.multicast_ip}:${ch.port}`);
   });
 
   lines.push('');
   lines.push('# ============================================================');
-  lines.push('# Fin de configuración. Reinicia interfaces si es necesario.');
-  lines.push('# ============================================================');
-
   return lines.join('\n');
 }
 
-// ----------------------------------------------------------
-// Sincronización completa: re-genera todos los archivos del sistema
-// ----------------------------------------------------------
 async function syncAllFromDB(pool) {
   const sectorsRes = await pool.query(`
     SELECT id, name, vpn_username, vpn_password, assigned_ip,
-           gre_local_ip, gre_remote_ip, gre_tunnel_name, is_active
+           mikrotik_public_ip, ipsec_psk, is_active,
+           gre_local_ip, gre_remote_ip, gre_tunnel_name
     FROM vpn_sectors
     ORDER BY created_at
   `);
   const sectors = sectorsRes.rows;
 
-  // 1) Reescribir chap-secrets
   const chapResult = rewriteChapSecrets(sectors);
+  const ipsecConfResult = rewriteIpsecConf(sectors);
+  const ipsecSecretsResult = rewriteIpsecSecrets(sectors);
+  const xl2tpdResult = rewriteXl2tpdConf(sectors);
 
-  // 2) Recrear túneles GRE
-  const greResults = [];
-  for (const s of sectors) {
-    if (!s.is_active) {
-      deleteGreTunnel(s.gre_tunnel_name || `gre-${s.id.slice(0,8)}`);
-      continue;
-    }
-    if (s.gre_local_ip && s.gre_remote_ip && s.gre_tunnel_name) {
-      const r = createGreTunnel(s.gre_tunnel_name, s.gre_local_ip, s.assigned_ip, s.gre_remote_ip);
-      greResults.push({ sector: s.name, ...r });
-    }
-  }
-
-  // 3) Reescribir smcroute.conf
   const routesRes = await pool.query(`
     SELECT scm.is_active, mg.multicast_ip, vs.gre_tunnel_name AS output_iface
     FROM sector_channel_map scm
@@ -283,31 +308,31 @@ async function syncAllFromDB(pool) {
   `);
   const smcResult = rewriteSmcrouteConf(routesRes.rows);
 
+  const restartIpsec = safeExec('sudo systemctl restart strongswan-starter 2>/dev/null || sudo systemctl restart ipsec 2>/dev/null || sudo ipsec restart 2>/dev/null || true');
+  const restartXl2tpd = safeExec('sudo systemctl restart xl2tpd 2>&1 || true');
+  const restartSmcroute = safeExec('sudo systemctl restart smcroute 2>/dev/null || true');
+
   return {
     chap: chapResult,
-    gre: greResults,
+    ipsec_conf: ipsecConfResult,
+    ipsec_secrets: ipsecSecretsResult,
+    xl2tpd: xl2tpdResult,
     smcroute: smcResult,
+    restart_ipsec: restartIpsec,
+    restart_xl2tpd: restartXl2tpd,
+    restart_smcroute: restartSmcroute,
     sectors_count: sectors.length,
+    active_configured: getActiveConfiguredSectors(sectors).length,
   };
 }
 
-// ----------------------------------------------------------
-// RESOLVE: dado el IP del cliente (req.ip), detecta a qué sector
-// pertenece y devuelve un mapa { channel_id -> stream_url } según
-// el delivery_mode del sector. Si no pertenece a ningún sector
-// activo, devuelve { sector: null, urls: {} } y el caller debe
-// usar las URLs HTTPS del VPS por defecto.
-// ----------------------------------------------------------
 async function resolveChannelUrlsForIp(pool, clientIp) {
-  // Normaliza IPv6-mapped (::ffff:172.16.50.x)
   const ip = (clientIp || '').replace(/^::ffff:/, '');
 
-  // Solo IPs del rango VPN entran al lookup
   if (!ip.startsWith('172.16.50.')) {
     return { sector: null, urls: {} };
   }
 
-  // Toggle global: si multicast_enabled = false, no sustituir nada
   try {
     const tRes = await pool.query(
       `SELECT value FROM system_settings WHERE key = 'multicast_enabled' LIMIT 1`
@@ -315,10 +340,10 @@ async function resolveChannelUrlsForIp(pool, clientIp) {
     if (tRes.rows[0]?.value?.enabled === false) {
       return { sector: null, urls: {}, disabled: true };
     }
-  } catch { /* tabla puede no existir aún */ }
+  } catch {}
 
   const sRes = await pool.query(
-    `SELECT id, name, delivery_mode, udpxy_url, gre_remote_ip, assigned_ip
+    `SELECT id, name, delivery_mode, udpxy_url, assigned_ip
        FROM vpn_sectors
       WHERE assigned_ip = $1 AND is_active = true
       LIMIT 1`,
@@ -327,7 +352,6 @@ async function resolveChannelUrlsForIp(pool, clientIp) {
   if (!sRes.rows[0]) return { sector: null, urls: {} };
   const sector = sRes.rows[0];
 
-  // Canales asignados a este sector via multicast_groups
   const cRes = await pool.query(
     `SELECT mg.channel_id, mg.multicast_ip::text AS multicast_ip, mg.port
        FROM sector_channel_map scm
@@ -341,13 +365,12 @@ async function resolveChannelUrlsForIp(pool, clientIp) {
     let url;
     switch (sector.delivery_mode) {
       case 'multicast_direct':
-        // LibVLC nativo: udp://@239.x.x.x:1234
         url = `udp://@${row.multicast_ip}:${row.port}`;
         break;
       case 'udpxy_rbldf':
       case 'udpxy_central': {
         const base = (sector.udpxy_url || '').replace(/\/+$/, '');
-        if (!base) continue; // sin URL configurada -> deja fallback
+        if (!base) continue;
         url = `${base}/udp/${row.multicast_ip}:${row.port}`;
         break;
       }
@@ -365,9 +388,10 @@ async function resolveChannelUrlsForIp(pool, clientIp) {
 
 module.exports = {
   rewriteChapSecrets,
+  rewriteIpsecConf,
+  rewriteIpsecSecrets,
+  rewriteXl2tpdConf,
   rewriteSmcrouteConf,
-  createGreTunnel,
-  deleteGreTunnel,
   getTunnelStatus,
   generateMikrotikConfig,
   syncAllFromDB,
