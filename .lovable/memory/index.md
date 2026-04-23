@@ -67,4 +67,5 @@ Updated: now
 - [Removed DVR architecture](mem://proyecto/limpieza-total-arquitectura-dvr) — DVR removed for efficiency
 - [Native ABR](mem://arquitectura/abr-buffer-adaptativo-netflix-nativo) — Adjust chunk size dynamically
 - [Pipe proxy reconnect](mem://tecnico/resiliencia-reconexion-pipe-proxy) — Auto-reconnect with 2s-15s backoff
+- [Multicast PIM+IGMP-Proxy SOTOMAYOR↔TAMBO](mem://arquitectura/multicast-pim-sm-igmp-proxy-sotomayor-tambo) — L2TP+PIM-SM origen + IGMP-Proxy remoto, solo canal pedido cruza WAN (3.9 Mbps vs 96 Mbps EoIP)
 - [VPN L2TP multicast sectors](mem://arquitectura/vpn-l2tp-ipsec-multicast-sectores) — L2TP/IPsec + GRE for multicast distribution to remote MikroTik sectors
