@@ -5,10 +5,11 @@
 #
 # Hace en orden:
 #   1) git pull (baja cambios de Lovable/GitHub)
-#   2) npm install --production (si package.json cambió)
-#   3) Instala VPN si no estaba (idempotente)
-#   4) pm2 restart streambox-api
-#   5) Verifica health endpoint
+#   2) npm install backend
+#   3) npm install + build frontend y copia a /var/www/streambox
+#   4) Instala VPN si no estaba (idempotente)
+#   5) pm2 restart streambox-api
+#   6) Verifica health endpoint
 # ============================================================
 
 set -e
@@ -43,12 +44,39 @@ else
   warn "No es repo Git. Saltando pull."
 fi
 
-# 2) npm install si hace falta
+# 2) npm install backend
 cd "$SCRIPT_DIR"
 if [ -f package.json ]; then
   log "📦 Verificando dependencias npm..."
   npm install --production --silent 2>&1 | tail -3 || true
   ok "Dependencias OK"
+fi
+
+# 2.5) Recompilar y publicar frontend del panel
+if [ -f "$PROJECT_DIR/package.json" ]; then
+  FRONT_NPM_LOG="/tmp/omnisync-frontend-npm.log"
+  FRONT_BUILD_LOG="/tmp/omnisync-frontend-build.log"
+
+  log "🧱 Actualizando dependencias del panel..."
+  if npm --prefix "$PROJECT_DIR" install --legacy-peer-deps --silent > "$FRONT_NPM_LOG" 2>&1; then
+    ok "Dependencias del panel OK"
+  else
+    tail -20 "$FRONT_NPM_LOG" 2>/dev/null || true
+    err "Falló npm install del panel"
+    exit 1
+  fi
+
+  log "🎛️ Compilando y publicando panel web..."
+  if npm --prefix "$PROJECT_DIR" run build > "$FRONT_BUILD_LOG" 2>&1; then
+    mkdir -p /var/www/streambox
+    rm -rf /var/www/streambox/*
+    cp -r "$PROJECT_DIR"/dist/* /var/www/streambox/
+    ok "Panel actualizado en /var/www/streambox"
+  else
+    tail -20 "$FRONT_BUILD_LOG" 2>/dev/null || true
+    err "Falló la compilación del panel"
+    exit 1
+  fi
 fi
 
 # 3) Instalar VPN si no estaba
