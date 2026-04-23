@@ -156,13 +156,68 @@ const SectorsSection = () => {
     delivery_mode: 'multicast_direct' as DeliveryMode,
     udpxy_url: '',
   });
-...
+
+  const load = useCallback(async () => {
+    const [sectorsResult, plansResult] = await Promise.allSettled([
+      apiGet<Sector[]>('/api/vpn/sectors'),
+      apiGet<Plan[]>('/api/plans'),
+    ]);
+
+    let warning: string | null = null;
+
+    if (sectorsResult.status === 'fulfilled') {
+      setSectors(sectorsResult.value);
+    } else {
+      setSectors([]);
+      warning = 'No se pudieron cargar los sectores desde el backend local.';
+    }
+
+    if (plansResult.status === 'fulfilled') {
+      setPlans(plansResult.value);
+    } else {
+      setPlans([]);
+      warning = warning
+        ? `${warning} Los planes no están disponibles y se seguirá sin filtros por plan.`
+        : 'Los planes no están disponibles y se seguirá sin filtros por plan.';
+    }
+
+    if (warning && !getAdminToken()) {
+      warning += ' Cierra sesión y vuelve a entrar con las credenciales del panel del VPS para regenerar el token local.';
+    }
+
+    setLoadWarning(warning);
+
+    if (sectorsResult.status === 'rejected' && plansResult.status === 'rejected') {
+      toast({
+        title: 'Error',
+        description: !getAdminToken()
+          ? 'Falta el token local del VPS o ya no es válido. Vuelve a iniciar sesión en el panel.'
+          : 'No se pudo cargar el módulo VPN desde el backend local.',
+        variant: 'destructive',
+      });
+    }
+  }, [toast]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const openCreate = () => {
+    setEditing(null);
+    const used = new Set(sectors.map(s => s.assigned_ip));
+    let suggested = '';
+    for (let i = 10; i <= 250; i++) {
+      const ip = `172.16.50.${i}`;
+      if (!used.has(ip)) { suggested = ip; break; }
+    }
     setForm({
       name: '', description: '', vpn_username: '', vpn_password: '',
       assigned_ip: suggested, mikrotik_public_ip: '', ipsec_psk: '', plan_id: '',
       delivery_mode: 'multicast_direct', udpxy_url: '',
     });
-...
+    setOpen(true);
+  };
+
+  const openEdit = (s: Sector) => {
+    setEditing(s);
     setForm({
       name: s.name, description: s.description || '',
       vpn_username: s.vpn_username, vpn_password: s.vpn_password,
@@ -272,12 +327,16 @@ const SectorsSection = () => {
                   <Input value={form.assigned_ip} onChange={e => setForm({ ...form, assigned_ip: e.target.value })} placeholder="172.16.50.10" />
                 </div>
                 <div>
-                  <Label>IP pública MikroTik (opcional)</Label>
-                  <Input value={form.mikrotik_public_ip} onChange={e => setForm({ ...form, mikrotik_public_ip: e.target.value })} />
+                  <Label>IP pública MikroTik</Label>
+                  <Input value={form.mikrotik_public_ip} onChange={e => setForm({ ...form, mikrotik_public_ip: e.target.value })} placeholder="181.23.45.67" />
+                </div>
+                <div className="col-span-2">
+                  <Label>PSK IPsec</Label>
+                  <Input value={form.ipsec_psk} onChange={e => setForm({ ...form, ipsec_psk: e.target.value })} placeholder="clave-ipsec-compartida" />
                 </div>
                 <div className="col-span-2">
                   <Label>Plan asociado</Label>
-                  <Select value={form.plan_id} onValueChange={v => setForm({ ...form, plan_id: v })}>
+                  <Select value={form.plan_id || undefined} onValueChange={v => setForm({ ...form, plan_id: v })}>
                     <SelectTrigger><SelectValue placeholder="Sin plan" /></SelectTrigger>
                     <SelectContent>
                       {plans.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
