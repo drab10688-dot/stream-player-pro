@@ -31,13 +31,13 @@ const App = () => (
     <TooltipProvider>
       <Toaster />
       <Sonner />
-      <AuthProvider>
-        <AdminAuthProvider>
-          <BrowserRouter>
+      <BrowserRouter>
+        <AuthProvider>
+          <AdminAuthProvider>
             <AppRoutes />
-          </BrowserRouter>
-        </AdminAuthProvider>
-      </AuthProvider>
+          </AdminAuthProvider>
+        </AuthProvider>
+      </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>
 );
