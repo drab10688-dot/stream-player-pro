@@ -24,6 +24,7 @@ const FFPROBE_BIN = process.env.FFPROBE_PATH || '/usr/bin/ffprobe';
 // destino UDP para forzar que el multicast salga directamente por ppp0 hacia los
 // MikroTik remotos, sin necesidad de GRE ni smcroute.
 const VPN_LOCAL_IP = process.env.VPN_LOCAL_IP || '172.16.50.1';
+const VPN_IFACE = process.env.VPN_IFACE || 'ppp0';
 
 // Estado en memoria de encoders activos
 // key = channel_id, value = { proc, multicastIp, port, codec, startedAt, idleSince, lastBytes, lastTs }
@@ -161,10 +162,24 @@ function buildFfmpegArgs(sourceUrl, multicastIp, port, codec) {
 }
 
 // ----------------------------------------------------------
+function ensureMulticastRoute() {
+  try {
+    execSync(`ip route replace 224.0.0.0/4 dev ${VPN_IFACE}`, { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ----------------------------------------------------------
 // Arranca encoder para un canal. Si ya está corriendo, refresca idleSince.
 async function startEncoder(pool, channelId) {
   if (!ffmpegInstalled()) {
     throw new Error('FFmpeg no está instalado en el VPS. Ejecuta install-vpn.sh.');
+  }
+
+  if (!ensureMulticastRoute()) {
+    throw new Error(`No se pudo configurar la ruta multicast IPv4 por ${VPN_IFACE}`);
   }
 
   // Si ya está activo: solo resetear idleSince
