@@ -49,23 +49,29 @@ module.exports = (pool, authAdmin) => {
   router.post('/sectors', authAdmin, async (req, res) => {
     try {
       const { name, description, vpn_username, vpn_password, assigned_ip,
-              mikrotik_public_ip, plan_id, delivery_mode, udpxy_url } = req.body;
-      if (!name || !vpn_username || !vpn_password || !assigned_ip) {
+              mikrotik_public_ip, ipsec_psk, plan_id, delivery_mode, udpxy_url } = req.body;
+      if (!name || !vpn_username || !vpn_password || !assigned_ip || !mikrotik_public_ip || !ipsec_psk) {
         return res.status(400).json({
-          error: 'Faltan campos requeridos: name, vpn_username, vpn_password, assigned_ip',
-          received: { name: !!name, vpn_username: !!vpn_username, vpn_password: !!vpn_password, assigned_ip: !!assigned_ip }
+          error: 'Faltan campos requeridos: name, vpn_username, vpn_password, assigned_ip, mikrotik_public_ip, ipsec_psk',
+          received: {
+            name: !!name,
+            vpn_username: !!vpn_username,
+            vpn_password: !!vpn_password,
+            assigned_ip: !!assigned_ip,
+            mikrotik_public_ip: !!mikrotik_public_ip,
+            ipsec_psk: !!ipsec_psk,
+          }
         });
       }
       const r = await pool.query(`
         INSERT INTO vpn_sectors
           (name, description, vpn_username, vpn_password, assigned_ip,
-           mikrotik_public_ip, plan_id, delivery_mode, udpxy_url)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+           mikrotik_public_ip, ipsec_psk, plan_id, delivery_mode, udpxy_url)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
         RETURNING *
       `, [name, nz(description), vpn_username, vpn_password, assigned_ip,
-          nz(mikrotik_public_ip), nz(plan_id),
+          nz(mikrotik_public_ip), ipsec_psk, nz(plan_id),
           delivery_mode || 'multicast_direct', nz(udpxy_url)]);
-      // Sincronizar archivos sistema (chap-secrets, etc.)
       try { await vpnMgr.syncAllFromDB(pool); } catch (e) { console.warn('[VPN] sync warning:', e.message); }
       res.json(r.rows[0]);
     } catch (e) {
@@ -78,9 +84,8 @@ module.exports = (pool, authAdmin) => {
     try {
       const { id } = req.params;
       const fields = ['name','description','vpn_username','vpn_password','assigned_ip',
-                      'mikrotik_public_ip','plan_id','is_active','notes',
+                      'mikrotik_public_ip','ipsec_psk','plan_id','is_active','notes',
                       'delivery_mode','udpxy_url'];
-      // Campos que NO admiten string vacío (inet/uuid)
       const nullableFields = new Set(['description','mikrotik_public_ip','plan_id','notes','udpxy_url']);
       const updates = [];
       const values = [];

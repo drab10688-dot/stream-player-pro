@@ -25,6 +25,7 @@ interface Sector {
   vpn_password: string;
   assigned_ip: string;
   mikrotik_public_ip: string | null;
+  ipsec_psk: string | null;
   plan_id: string | null;
   plan_name: string | null;
   is_active: boolean;
@@ -151,78 +152,23 @@ const SectorsSection = () => {
   const [editing, setEditing] = useState<Sector | null>(null);
   const [form, setForm] = useState({
     name: '', description: '', vpn_username: '', vpn_password: '',
-    assigned_ip: '', mikrotik_public_ip: '', plan_id: '',
+    assigned_ip: '', mikrotik_public_ip: '', ipsec_psk: '', plan_id: '',
     delivery_mode: 'multicast_direct' as DeliveryMode,
     udpxy_url: '',
   });
-
-  const load = useCallback(async () => {
-    const [sectorsResult, plansResult] = await Promise.allSettled([
-      apiGet<Sector[]>('/api/vpn/sectors'),
-      apiGet<Plan[]>('/api/plans'),
-    ]);
-
-    let warning: string | null = null;
-
-    if (sectorsResult.status === 'fulfilled') {
-      setSectors(sectorsResult.value);
-    } else {
-      setSectors([]);
-      warning = 'No se pudieron cargar los sectores desde el backend local.';
-    }
-
-    if (plansResult.status === 'fulfilled') {
-      setPlans(plansResult.value);
-    } else {
-      setPlans([]);
-      warning = warning
-        ? `${warning} Los planes no están disponibles y se seguirá sin filtros por plan.`
-        : 'Los planes no están disponibles y se seguirá sin filtros por plan.';
-    }
-
-    if (warning && !getAdminToken()) {
-      warning += ' Cierra sesión y vuelve a entrar con las credenciales del panel del VPS para regenerar el token local.';
-    }
-
-    setLoadWarning(warning);
-
-    if (sectorsResult.status === 'rejected' && plansResult.status === 'rejected') {
-      toast({
-        title: 'Error',
-        description: !getAdminToken()
-          ? 'Falta el token local del VPS o ya no es válido. Vuelve a iniciar sesión en el panel.'
-          : 'No se pudo cargar el módulo VPN desde el backend local.',
-        variant: 'destructive',
-      });
-    }
-  }, [toast]);
-
-  useEffect(() => { load(); }, [load]);
-
-  const openCreate = () => {
-    setEditing(null);
-    // Sugerir IP libre del pool 172.16.50.10-250
-    const used = new Set(sectors.map(s => s.assigned_ip));
-    let suggested = '';
-    for (let i = 10; i <= 250; i++) {
-      const ip = `172.16.50.${i}`;
-      if (!used.has(ip)) { suggested = ip; break; }
-    }
+...
     setForm({
       name: '', description: '', vpn_username: '', vpn_password: '',
-      assigned_ip: suggested, mikrotik_public_ip: '', plan_id: '',
+      assigned_ip: suggested, mikrotik_public_ip: '', ipsec_psk: '', plan_id: '',
       delivery_mode: 'multicast_direct', udpxy_url: '',
     });
-    setOpen(true);
-  };
-
-  const openEdit = (s: Sector) => {
-    setEditing(s);
+...
     setForm({
       name: s.name, description: s.description || '',
       vpn_username: s.vpn_username, vpn_password: s.vpn_password,
       assigned_ip: s.assigned_ip,
       mikrotik_public_ip: s.mikrotik_public_ip || '',
+      ipsec_psk: s.ipsec_psk || '',
       plan_id: s.plan_id || '',
       delivery_mode: s.delivery_mode || 'multicast_direct',
       udpxy_url: s.udpxy_url || '',
