@@ -15,8 +15,9 @@
 const { spawn, execSync } = require('child_process');
 const fs = require('fs');
 
-const IDLE_TIMEOUT_MS = 60_000;          // 60s sin sectores activos → stop
+const DEFAULT_IDLE_TIMEOUT_MS = 300_000; // 5min default si encoder no define idle_timeout_seconds
 const HEARTBEAT_INTERVAL_MS = 5_000;     // cada 5s actualiza stats
+const VIEWER_HEARTBEAT_WINDOW_MS = 5 * 60_000; // 5min: ventana para considerar viewer activo
 const PROVIDER_UA = 'VLC/3.0.20 LibVLC/3.0.20';
 const FFMPEG_BIN = process.env.FFMPEG_PATH || '/usr/bin/ffmpeg';
 const FFPROBE_BIN = process.env.FFPROBE_PATH || '/usr/bin/ffprobe';
