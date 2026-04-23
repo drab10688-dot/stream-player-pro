@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS vpn_sectors (
   vpn_password TEXT NOT NULL,
   assigned_ip INET NOT NULL UNIQUE,
   mikrotik_public_ip INET,
+  ipsec_psk TEXT,
   gre_local_ip INET,
   gre_remote_ip INET,
   gre_tunnel_name TEXT,
@@ -26,6 +27,9 @@ CREATE TABLE IF NOT EXISTS vpn_sectors (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE vpn_sectors
+  ADD COLUMN IF NOT EXISTS ipsec_psk TEXT;
 
 -- 2) Grupos multicast (pool 239.10.0.1-100)
 CREATE TABLE IF NOT EXISTS multicast_groups (

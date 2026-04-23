@@ -25,6 +25,7 @@ interface Sector {
   vpn_password: string;
   assigned_ip: string;
   mikrotik_public_ip: string | null;
+  ipsec_psk: string | null;
   plan_id: string | null;
   plan_name: string | null;
   is_active: boolean;
@@ -151,7 +152,7 @@ const SectorsSection = () => {
   const [editing, setEditing] = useState<Sector | null>(null);
   const [form, setForm] = useState({
     name: '', description: '', vpn_username: '', vpn_password: '',
-    assigned_ip: '', mikrotik_public_ip: '', plan_id: '',
+    assigned_ip: '', mikrotik_public_ip: '', ipsec_psk: '', plan_id: '',
     delivery_mode: 'multicast_direct' as DeliveryMode,
     udpxy_url: '',
   });
@@ -201,7 +202,6 @@ const SectorsSection = () => {
 
   const openCreate = () => {
     setEditing(null);
-    // Sugerir IP libre del pool 172.16.50.10-250
     const used = new Set(sectors.map(s => s.assigned_ip));
     let suggested = '';
     for (let i = 10; i <= 250; i++) {
@@ -210,7 +210,7 @@ const SectorsSection = () => {
     }
     setForm({
       name: '', description: '', vpn_username: '', vpn_password: '',
-      assigned_ip: suggested, mikrotik_public_ip: '', plan_id: '',
+      assigned_ip: suggested, mikrotik_public_ip: '', ipsec_psk: '', plan_id: '',
       delivery_mode: 'multicast_direct', udpxy_url: '',
     });
     setOpen(true);
@@ -223,6 +223,7 @@ const SectorsSection = () => {
       vpn_username: s.vpn_username, vpn_password: s.vpn_password,
       assigned_ip: s.assigned_ip,
       mikrotik_public_ip: s.mikrotik_public_ip || '',
+      ipsec_psk: s.ipsec_psk || '',
       plan_id: s.plan_id || '',
       delivery_mode: s.delivery_mode || 'multicast_direct',
       udpxy_url: s.udpxy_url || '',
@@ -326,12 +327,16 @@ const SectorsSection = () => {
                   <Input value={form.assigned_ip} onChange={e => setForm({ ...form, assigned_ip: e.target.value })} placeholder="172.16.50.10" />
                 </div>
                 <div>
-                  <Label>IP pública MikroTik (opcional)</Label>
-                  <Input value={form.mikrotik_public_ip} onChange={e => setForm({ ...form, mikrotik_public_ip: e.target.value })} />
+                  <Label>IP pública MikroTik</Label>
+                  <Input value={form.mikrotik_public_ip} onChange={e => setForm({ ...form, mikrotik_public_ip: e.target.value })} placeholder="181.23.45.67" />
+                </div>
+                <div className="col-span-2">
+                  <Label>PSK IPsec</Label>
+                  <Input value={form.ipsec_psk} onChange={e => setForm({ ...form, ipsec_psk: e.target.value })} placeholder="clave-ipsec-compartida" />
                 </div>
                 <div className="col-span-2">
                   <Label>Plan asociado</Label>
-                  <Select value={form.plan_id} onValueChange={v => setForm({ ...form, plan_id: v })}>
+                  <Select value={form.plan_id || undefined} onValueChange={v => setForm({ ...form, plan_id: v })}>
                     <SelectTrigger><SelectValue placeholder="Sin plan" /></SelectTrigger>
                     <SelectContent>
                       {plans.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
