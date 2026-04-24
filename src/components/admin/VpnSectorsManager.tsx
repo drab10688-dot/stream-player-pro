@@ -373,6 +373,68 @@ const SectorsSection = () => {
                   </div>
                 )}
                 <div className="col-span-2">
+                  <Label>IP pública del MikroTik (opcional)</Label>
+                  <Input
+                    value={form.mikrotik_public_ip}
+                    onChange={e => setForm({ ...form, mikrotik_public_ip: e.target.value })}
+                    placeholder="190.0.0.123 — útil para ATAR la PSK al peer en el VPS"
+                  />
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    Si lo dejas vacío, el VPS aceptará IPSec desde cualquier IP usando la PSK central.
+                  </p>
+                </div>
+
+                <div className="col-span-2 rounded-lg border border-border/40 p-3 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label className="text-sm font-semibold">🔐 IPSec (cifrado L2TP)</Label>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">
+                        Recomendado. El MikroTik debe activar <code>use-ipsec=yes</code> con esta PSK.
+                      </p>
+                    </div>
+                    <Switch checked={useIpsec} onCheckedChange={setUseIpsec} />
+                  </div>
+                  {useIpsec && (
+                    <div>
+                      <Label className="text-xs">Pre-Shared Key (PSK)</Label>
+                      <div className="flex gap-2">
+                        <Input
+                          value={form.ipsec_psk}
+                          onChange={e => setForm({ ...form, ipsec_psk: e.target.value })}
+                          placeholder={centralPsk || 'Cargando PSK central...'}
+                          className="font-mono text-xs"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setForm({ ...form, ipsec_psk: centralPsk })}
+                          disabled={!centralPsk}
+                          title="Usar PSK central del VPS"
+                        >
+                          <Key className="w-3 h-3" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            navigator.clipboard.writeText(form.ipsec_psk);
+                            toast({ title: 'PSK copiada' });
+                          }}
+                          disabled={!form.ipsec_psk}
+                        >
+                          <Copy className="w-3 h-3" />
+                        </Button>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground mt-1">
+                        Por defecto se usa la PSK central del VPS. Cambia solo si necesitas una PSK específica para este sector.
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="col-span-2">
                   <Label>Descripción</Label>
                   <Input value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} />
                 </div>
