@@ -181,6 +181,29 @@ mru 1400
 noccp
 EOF
 
+mkdir -p /etc/ppp/ip-up.d /etc/ppp/ip-down.d
+cat > /etc/ppp/ip-up.d/99-omnisync-multicast-route <<'EOF'
+#!/bin/sh
+case "$PPP_IFACE" in
+  ppp*)
+    ip route replace 224.0.0.0/4 dev "$PPP_IFACE" >/dev/null 2>&1 || true
+    ;;
+esac
+exit 0
+EOF
+chmod +x /etc/ppp/ip-up.d/99-omnisync-multicast-route
+
+cat > /etc/ppp/ip-down.d/99-omnisync-multicast-route <<'EOF'
+#!/bin/sh
+case "$PPP_IFACE" in
+  ppp*)
+    ip route del 224.0.0.0/4 dev "$PPP_IFACE" >/dev/null 2>&1 || true
+    ;;
+esac
+exit 0
+EOF
+chmod +x /etc/ppp/ip-down.d/99-omnisync-multicast-route
+
 # chap-secrets: cabecera, el backend agrega usuarios desde el panel
 if [ ! -f /etc/ppp/chap-secrets ] || ! grep -q "Omnisync" /etc/ppp/chap-secrets; then
   cat > /etc/ppp/chap-secrets <<'EOF'
@@ -323,6 +346,22 @@ if [ -f "$SCHEMA_FILE" ]; then
   fi
 else
   warn "vpn-schema.sql no encontrado en $SCHEMA_FILE"
+fi
+
+ENCODERS_SCHEMA_FILE="$(dirname "$(readlink -f "$0")")/database/encoders-on-demand-schema.sql"
+if [ -f "$ENCODERS_SCHEMA_FILE" ]; then
+  if [ -f "$DB_PASS_FILE" ]; then
+    PGPASSWORD="$(cat "$DB_PASS_FILE")" psql -h localhost -U streambox_user -d streambox -f "$ENCODERS_SCHEMA_FILE" >/dev/null 2>&1 \
+      || PGPASSWORD="$(cat "$DB_PASS_FILE")" psql -h localhost -U streambox_user -d streambox_db -f "$ENCODERS_SCHEMA_FILE" >/dev/null 2>&1 \
+      || sudo -u postgres psql -d streambox -f "$ENCODERS_SCHEMA_FILE" >/dev/null 2>&1 \
+      || sudo -u postgres psql -d streambox_db -f "$ENCODERS_SCHEMA_FILE" >/dev/null 2>&1 \
+      || warn "No pude aplicar schema encoders on-demand automáticamente"
+  else
+    sudo -u postgres psql -d streambox -f "$ENCODERS_SCHEMA_FILE" >/dev/null 2>&1 \
+      || sudo -u postgres psql -d streambox_db -f "$ENCODERS_SCHEMA_FILE" >/dev/null 2>&1 \
+      || warn "No pude aplicar schema encoders on-demand automáticamente"
+  fi
+  ok "Schema encoders on-demand verificado"
 fi
 
 # ----------------------------------------------------------
