@@ -111,23 +111,31 @@ VPN_POOL="172.16.50.2-172.16.50.100"
 
 cat > /etc/ipsec.conf <<EOF
 # Omnisync L2TP/IPsec - servidor central fijo
+# Validado producción 2026-04-24 con MikroTik (PFS habilitado en cliente):
+#   - IKE fase 1: AES-128/SHA1/MODP1024 (negociado con MikroTik)
+#   - ESP fase 2: AES-256/SHA1/MODP1024 (PFS DH2) - clave: incluir -modp1024
+#     en la lista esp= sino strongSwan rechaza con NO_PROPOSAL_CHOSEN cuando
+#     el peer manda KE en QUICK_MODE (PFS)
 config setup
-  charondebug="ike 1, knl 1, cfg 0"
+  charondebug="ike 2, knl 2, cfg 0"
   uniqueids=no
 
 conn omnisync-l2tp
   authby=secret
-  pfs=no
-  rekey=no
-  keyingtries=3
+  auto=add
+  keyexchange=ikev1
   type=transport
   left=%defaultroute
   leftprotoport=17/1701
   right=%any
   rightprotoport=17/%any
-  ike=aes256-sha1-modp1024,aes128-sha1-modp1024,3des-sha1-modp1024!
-  esp=aes256-sha1,aes128-sha1,3des-sha1!
-  auto=add
+  ike=aes256-sha1-modp1024,aes256-sha256-modp1024,aes128-sha1-modp1024,3des-sha1-modp1024,aes256-sha1-modp2048,aes128-sha1-modp2048!
+  esp=aes256-sha1-modp1024,aes256-sha256-modp1024,aes128-sha1-modp1024,3des-sha1-modp1024,aes256-sha1,aes128-sha1,3des-sha1!
+  forceencaps=yes
+  dpddelay=30s
+  dpdtimeout=120s
+  dpdaction=clear
+  rekey=no
 EOF
 
 cat > /etc/ipsec.secrets <<EOF
