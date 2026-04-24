@@ -245,6 +245,7 @@ const SectorsSection = () => {
     try {
       const payload = {
         ...form,
+        ipsec_psk: useIpsec ? (form.ipsec_psk || centralPsk || '') : '',
         plan_id: form.plan_id || null,
         gre_local_ip: null,
         gre_remote_ip: null,
