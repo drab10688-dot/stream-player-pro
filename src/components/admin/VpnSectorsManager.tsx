@@ -159,7 +159,7 @@ const SectorsSection = ({ mode = 'vpn' }: SectorsSectionProps) => {
   const [form, setForm] = useState({
     name: '', description: '', vpn_username: '', vpn_password: '',
     assigned_ip: '', mikrotik_public_ip: '', ipsec_psk: '', plan_id: '',
-    delivery_mode: 'multicast_direct' as DeliveryMode,
+    delivery_mode: (isLanTab ? 'lan_direct' : 'multicast_direct') as DeliveryMode,
     udpxy_url: '',
   });
 
