@@ -136,6 +136,31 @@ conn omnisync-l2tp
   dpdtimeout=120s
   dpdaction=clear
   rekey=no
+
+# IKEv2 EAP-MSCHAPv2 para celulares Android/iOS modernos.
+# Usa los MISMOS chap-secrets del MikroTik (mismo user/pass por sector).
+# Pool aparte 172.16.51.0/24 para no chocar con MikroTik.
+# El "Identificador IPsec" del celu = leftid del server (omnisync.vpn).
+conn omnisync-ikev2-eap
+  auto=add
+  keyexchange=ikev2
+  ike=aes256-sha256-modp2048,aes256-sha1-modp1024,aes128-sha256-modp2048,aes128-sha1-modp1024!
+  esp=aes256-sha256,aes256-sha1,aes128-sha256,aes128-sha1!
+  dpdaction=clear
+  dpddelay=300s
+  rekey=no
+  left=%any
+  leftid=omnisync.vpn
+  leftauth=psk
+  leftsubnet=0.0.0.0/0
+  right=%any
+  rightauth=eap-mschapv2
+  rightsourceip=172.16.51.0/24
+  rightdns=1.1.1.1,8.8.8.8
+  rightsendcert=never
+  eap_identity=%identity
+  fragmentation=yes
+  forceencaps=yes
 EOF
 
 cat > /etc/ipsec.secrets <<EOF
