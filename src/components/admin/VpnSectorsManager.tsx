@@ -471,6 +471,11 @@ const SectorsSection = () => {
                   {s.delivery_mode === 'udpxy_rbldf' && '🏠 udpxy RB LDF'}
                   {s.delivery_mode === 'udpxy_central' && '🗼 udpxy central'}
                 </Badge>
+                {s.ipsec_psk ? (
+                  <Badge variant="outline" className="text-[10px] border-emerald-400/30 text-emerald-400">🔐 IPSec</Badge>
+                ) : (
+                  <Badge variant="outline" className="text-[10px] border-amber-400/30 text-amber-400">🔓 Sin IPSec</Badge>
+                )}
               </div>
               <div className="text-xs text-muted-foreground flex flex-wrap gap-x-4 gap-y-1">
                 <span>👤 {s.vpn_username}</span>
