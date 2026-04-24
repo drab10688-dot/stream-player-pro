@@ -124,14 +124,16 @@ const VpnSectorsManager = () => {
       </motion.div>
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="glass-strong border border-border/30 p-1">
-          <TabsTrigger value="sectors" className="gap-2"><Server className="w-4 h-4" /> Sectores</TabsTrigger>
+        <TabsList className="glass-strong border border-border/30 p-1 flex-wrap h-auto">
+          <TabsTrigger value="sectors" className="gap-2"><Server className="w-4 h-4" /> Sectores VPN</TabsTrigger>
+          <TabsTrigger value="lan" className="gap-2"><Home className="w-4 h-4" /> LAN Local</TabsTrigger>
           <TabsTrigger value="multicast" className="gap-2"><Radio className="w-4 h-4" /> Canales Multicast</TabsTrigger>
           <TabsTrigger value="encoders" className="gap-2"><Cpu className="w-4 h-4" /> Encoders FFmpeg</TabsTrigger>
           <TabsTrigger value="monitor" className="gap-2"><Activity className="w-4 h-4" /> Monitor</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="sectors" className="mt-4"><SectorsSection /></TabsContent>
+        <TabsContent value="sectors" className="mt-4"><SectorsSection mode="vpn" /></TabsContent>
+        <TabsContent value="lan" className="mt-4"><SectorsSection mode="lan" /></TabsContent>
         <TabsContent value="multicast" className="mt-4"><MulticastSection /></TabsContent>
         <TabsContent value="encoders" className="mt-4"><EncodersSection /></TabsContent>
         <TabsContent value="monitor" className="mt-4"><MonitorSection /></TabsContent>
