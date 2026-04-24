@@ -10,12 +10,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Plus, Download, RefreshCw, Trash2, Edit, Network, Radio, Activity, Server, Key, Copy, CheckCircle2, XCircle, Cpu, Play, Square, AlertCircle } from 'lucide-react';
+import { Plus, Download, RefreshCw, Trash2, Edit, Network, Radio, Activity, Server, Key, Copy, CheckCircle2, XCircle, Cpu, Play, Square, AlertCircle, Wifi, Home } from 'lucide-react';
 
 // ============================================================
 // Tipos
 // ============================================================
-type DeliveryMode = 'multicast_direct' | 'udpxy_rbldf' | 'udpxy_central';
+type DeliveryMode = 'multicast_direct' | 'udpxy_rbldf' | 'udpxy_central' | 'lan_direct';
 
 interface Sector {
   id: string;
@@ -124,14 +124,16 @@ const VpnSectorsManager = () => {
       </motion.div>
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="glass-strong border border-border/30 p-1">
-          <TabsTrigger value="sectors" className="gap-2"><Server className="w-4 h-4" /> Sectores</TabsTrigger>
+        <TabsList className="glass-strong border border-border/30 p-1 flex-wrap h-auto">
+          <TabsTrigger value="sectors" className="gap-2"><Server className="w-4 h-4" /> Sectores VPN</TabsTrigger>
+          <TabsTrigger value="lan" className="gap-2"><Home className="w-4 h-4" /> LAN Local</TabsTrigger>
           <TabsTrigger value="multicast" className="gap-2"><Radio className="w-4 h-4" /> Canales Multicast</TabsTrigger>
           <TabsTrigger value="encoders" className="gap-2"><Cpu className="w-4 h-4" /> Encoders FFmpeg</TabsTrigger>
           <TabsTrigger value="monitor" className="gap-2"><Activity className="w-4 h-4" /> Monitor</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="sectors" className="mt-4"><SectorsSection /></TabsContent>
+        <TabsContent value="sectors" className="mt-4"><SectorsSection mode="vpn" /></TabsContent>
+        <TabsContent value="lan" className="mt-4"><SectorsSection mode="lan" /></TabsContent>
         <TabsContent value="multicast" className="mt-4"><MulticastSection /></TabsContent>
         <TabsContent value="encoders" className="mt-4"><EncodersSection /></TabsContent>
         <TabsContent value="monitor" className="mt-4"><MonitorSection /></TabsContent>
@@ -143,7 +145,9 @@ const VpnSectorsManager = () => {
 // ============================================================
 // SECCIÓN 1: SECTORES (CRUD + descarga config MikroTik)
 // ============================================================
-const SectorsSection = () => {
+interface SectorsSectionProps { mode?: 'vpn' | 'lan' }
+const SectorsSection = ({ mode = 'vpn' }: SectorsSectionProps) => {
+  const isLanTab = mode === 'lan';
   const { toast } = useToast();
   const [sectors, setSectors] = useState<Sector[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
@@ -155,7 +159,7 @@ const SectorsSection = () => {
   const [form, setForm] = useState({
     name: '', description: '', vpn_username: '', vpn_password: '',
     assigned_ip: '', mikrotik_public_ip: '', ipsec_psk: '', plan_id: '',
-    delivery_mode: 'multicast_direct' as DeliveryMode,
+    delivery_mode: (isLanTab ? 'lan_direct' : 'multicast_direct') as DeliveryMode,
     udpxy_url: '',
   });
 
@@ -207,6 +211,11 @@ const SectorsSection = () => {
 
   useEffect(() => { load(); }, [load]);
 
+  // Filtra los sectores según la pestaña activa (VPN vs LAN local)
+  const visibleSectors = sectors.filter(s =>
+    isLanTab ? s.delivery_mode === 'lan_direct' : s.delivery_mode !== 'lan_direct'
+  );
+
   const openCreate = () => {
     setEditing(null);
     const used = new Set(sectors.map(s => s.assigned_ip));
@@ -215,12 +224,18 @@ const SectorsSection = () => {
       const ip = `172.16.50.${i}`;
       if (!used.has(ip)) { suggested = ip; break; }
     }
-    setUseIpsec(true);
+    setUseIpsec(!isLanTab);
     setForm({
-      name: '', description: '', vpn_username: '', vpn_password: '',
-      assigned_ip: suggested, mikrotik_public_ip: '',
-      ipsec_psk: centralPsk, plan_id: '',
-      delivery_mode: 'multicast_direct', udpxy_url: '',
+      name: '',
+      description: '',
+      vpn_username: '',
+      vpn_password: '',
+      assigned_ip: isLanTab ? '' : suggested,
+      mikrotik_public_ip: '',
+      ipsec_psk: isLanTab ? '' : centralPsk,
+      plan_id: '',
+      delivery_mode: isLanTab ? 'lan_direct' : 'multicast_direct',
+      udpxy_url: '',
     });
     setOpen(true);
   };
@@ -307,24 +322,25 @@ const SectorsSection = () => {
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
-        <p className="text-sm text-muted-foreground">{sectors.length} sectores configurados</p>
+        <p className="text-sm text-muted-foreground">{visibleSectors.length} sector(es) {isLanTab ? "LAN local" : "VPN"} configurados</p>
         <div className="flex gap-2">
           <Button variant="ghost" size="icon" onClick={load}><RefreshCw className="w-4 h-4" /></Button>
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
               <Button onClick={openCreate} className="gradient-primary gap-2">
-                <Plus className="w-4 h-4" /> Nuevo Sector
+                <Plus className="w-4 h-4" /> {isLanTab ? 'Nuevo sector LAN' : 'Nuevo Sector VPN'}
               </Button>
             </DialogTrigger>
             <DialogContent className="max-w-2xl">
               <DialogHeader>
-                <DialogTitle>{editing ? 'Editar Sector' : 'Nuevo Sector'}</DialogTitle>
+                <DialogTitle>{editing ? 'Editar Sector' : (isLanTab ? 'Nuevo sector LAN local' : 'Nuevo Sector VPN')}</DialogTitle>
               </DialogHeader>
               <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-2">
                   <Label>Nombre del sector</Label>
                   <Input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Sector Norte" />
                 </div>
+                {form.delivery_mode !== 'lan_direct' && (<>
                 <div>
                   <Label>Usuario L2TP</Label>
                   <Input value={form.vpn_username} onChange={e => setForm({ ...form, vpn_username: e.target.value })} placeholder="sector_norte" />
@@ -337,6 +353,7 @@ const SectorsSection = () => {
                   <Label>IP asignada en VPN</Label>
                   <Input value={form.assigned_ip} onChange={e => setForm({ ...form, assigned_ip: e.target.value })} placeholder="172.16.50.10" />
                 </div>
+                </>)}
                 <div>
                   <Label>Plan asociado</Label>
                   <Select value={form.plan_id || undefined} onValueChange={v => setForm({ ...form, plan_id: v })}>
@@ -351,17 +368,27 @@ const SectorsSection = () => {
                   <Select value={form.delivery_mode} onValueChange={v => setForm({ ...form, delivery_mode: v as DeliveryMode })}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="multicast_direct">📡 Multicast directo al TV Box (recomendado · ahorra aire WISP)</SelectItem>
+                      <SelectItem value="multicast_direct">📡 Multicast directo al TV Box (vía VPN · ahorra aire WISP)</SelectItem>
                       <SelectItem value="udpxy_rbldf">🏠 udpxy en RB LDF del cliente (HTTP local)</SelectItem>
                       <SelectItem value="udpxy_central">🗼 udpxy en MikroTik central (HTTP por aire)</SelectItem>
+                      <SelectItem value="lan_direct">🏡 LAN local (sin VPN · APK en la misma red del MikroTik)</SelectItem>
                     </SelectContent>
                   </Select>
                   <p className="text-[11px] text-muted-foreground mt-1">
                     {form.delivery_mode === 'multicast_direct' && 'APK reproducirá udp://@239.x.x.x:1234. Requiere router cliente en bridge + IGMP en RB LDF.'}
                     {form.delivery_mode === 'udpxy_rbldf' && 'APK pedirá http://{udpxy_url}/udp/239.x.x.x:1234 al RB LDF. Requiere container en RB LDF.'}
                     {form.delivery_mode === 'udpxy_central' && 'APK pedirá HTTP al MikroTik central. Saturará aire WISP con N streams por cliente.'}
+                    {form.delivery_mode === 'lan_direct' && 'Sin VPN. La APK consume udp://@239.x.x.x:1234 directamente desde el gateway MikroTik en LAN. Requiere IGMP snooping en el bridge.'}
                   </p>
                 </div>
+                {form.delivery_mode === 'lan_direct' && (
+                  <div className="col-span-2 rounded-lg border border-primary/30 bg-primary/5 p-3">
+                    <p className="text-xs text-foreground font-semibold mb-1">🏡 Sector LAN local</p>
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">
+                      Este sector NO usa VPN. La APK debe estar conectada a la misma LAN que el gateway MikroTik que recibe los canales UDP. Asigná los canales multicast desde la pestaña <strong>Canales Multicast</strong> y entregá un código de activación al cliente desde <strong>Códigos APK</strong>.
+                    </p>
+                  </div>
+                )}
                 {form.delivery_mode !== 'multicast_direct' && (
                   <div className="col-span-2">
                     <Label>URL base udpxy</Label>
@@ -372,6 +399,7 @@ const SectorsSection = () => {
                     />
                   </div>
                 )}
+                {form.delivery_mode !== 'lan_direct' && (<>
                 <div className="col-span-2">
                   <Label>IP pública del MikroTik (opcional)</Label>
                   <Input
@@ -433,6 +461,7 @@ const SectorsSection = () => {
                     </div>
                   )}
                 </div>
+                </>)}
 
                 <div className="col-span-2">
                   <Label>Descripción</Label>
@@ -451,7 +480,7 @@ const SectorsSection = () => {
             {loadWarning}
           </div>
         )}
-        {sectors.map(s => (
+        {visibleSectors.map(s => (
           <motion.div key={s.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="glass rounded-lg p-4 flex items-center gap-4">
             <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
               <Server className="w-5 h-5 text-primary" />
@@ -470,6 +499,7 @@ const SectorsSection = () => {
                   {s.delivery_mode === 'multicast_direct' && '📡 Multicast directo'}
                   {s.delivery_mode === 'udpxy_rbldf' && '🏠 udpxy RB LDF'}
                   {s.delivery_mode === 'udpxy_central' && '🗼 udpxy central'}
+                  {s.delivery_mode === 'lan_direct' && '🏡 LAN local (sin VPN)'}
                 </Badge>
                 {s.ipsec_psk ? (
                   <Badge variant="outline" className="text-[10px] border-emerald-400/30 text-emerald-400">🔐 IPSec</Badge>
@@ -495,9 +525,11 @@ const SectorsSection = () => {
             </div>
           </motion.div>
         ))}
-        {sectors.length === 0 && (
+        {visibleSectors.length === 0 && (
           <div className="text-center py-12 text-muted-foreground text-sm">
-            No hay sectores configurados. Crea uno para distribuir canales por VPN.
+            {isLanTab
+              ? "No hay sectores LAN locales. Crea uno para distribuir canales UDP en tu red local sin VPN."
+              : "No hay sectores VPN configurados. Crea uno para distribuir canales por VPN."}
           </div>
         )}
       </div>
