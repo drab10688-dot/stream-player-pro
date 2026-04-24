@@ -136,13 +136,56 @@ conn omnisync-l2tp
   dpdtimeout=120s
   dpdaction=clear
   rekey=no
+
+# IKEv2 EAP-MSCHAPv2 para celulares Android/iOS modernos.
+# Usa los MISMOS chap-secrets del MikroTik (mismo user/pass por sector).
+# Pool aparte 172.16.51.0/24 para no chocar con MikroTik.
+# El "Identificador IPsec" del celu = leftid del server (omnisync.vpn).
+conn omnisync-ikev2-eap
+  auto=add
+  keyexchange=ikev2
+  ike=aes256-sha256-modp2048,aes256-sha1-modp1024,aes128-sha256-modp2048,aes128-sha1-modp1024!
+  esp=aes256-sha256,aes256-sha1,aes128-sha256,aes128-sha1!
+  dpdaction=clear
+  dpddelay=300s
+  rekey=no
+  left=%any
+  leftid=omnisync.vpn
+  leftauth=psk
+  leftsubnet=0.0.0.0/0
+  right=%any
+  rightauth=eap-mschapv2
+  rightsourceip=172.16.51.0/24
+  rightdns=1.1.1.1,8.8.8.8
+  rightsendcert=never
+  eap_identity=%identity
+  fragmentation=yes
+  forceencaps=yes
 EOF
 
 cat > /etc/ipsec.secrets <<EOF
-# Omnisync IPsec PSK - central
+# Omnisync IPsec PSK - central (compartido por L2TP-IKEv1 e IKEv2 PSK)
 %any %any : PSK "${PSK_VALUE}"
+
+# IKEv2 EAP-MSCHAPv2 incluido vía chap-secrets
+include /var/lib/strongswan/ipsec.secrets.inc
 EOF
 chmod 600 /etc/ipsec.secrets
+
+# Genera ipsec.secrets.inc con los mismos usuarios del chap-secrets
+mkdir -p /var/lib/strongswan
+cat > /usr/local/sbin/omnisync-sync-eap-secrets <<'EOF'
+#!/bin/sh
+# Lee /etc/ppp/chap-secrets y genera credenciales EAP para strongSwan IKEv2
+OUT=/var/lib/strongswan/ipsec.secrets.inc
+echo "# Omnisync EAP - autogenerado, no editar" > "$OUT"
+awk '/^"/ && !/^#/ { gsub(/"/,"",$1); gsub(/"/,"",$3); print $1 " : EAP \"" $3 "\"" }' /etc/ppp/chap-secrets >> "$OUT"
+chmod 600 "$OUT"
+ipsec rereadsecrets >/dev/null 2>&1 || true
+EOF
+chmod +x /usr/local/sbin/omnisync-sync-eap-secrets
+/usr/local/sbin/omnisync-sync-eap-secrets || true
+
 
 cat > /etc/xl2tpd/xl2tpd.conf <<EOF
 [global]
@@ -254,15 +297,26 @@ iptables -I INPUT -p udp --dport 1701 -j ACCEPT 2>/dev/null || true
 iptables -I INPUT -p udp --dport 4500 -j ACCEPT 2>/dev/null || true
 iptables -I INPUT -p esp -j ACCEPT 2>/dev/null || true
 iptables -A FORWARD -d 239.0.0.0/8 -j ACCEPT 2>/dev/null || true
+
+# NAT + forward para celulares IKEv2 (pool 172.16.51.0/24 → internet)
+PUB_IF_DETECT="$(ip route get 1.1.1.1 2>/dev/null | awk '{print $5; exit}')"
+[ -z "$PUB_IF_DETECT" ] && PUB_IF_DETECT="eth0"
+iptables -t nat -C POSTROUTING -s 172.16.51.0/24 -o "$PUB_IF_DETECT" -j MASQUERADE 2>/dev/null \
+  || iptables -t nat -A POSTROUTING -s 172.16.51.0/24 -o "$PUB_IF_DETECT" -j MASQUERADE
+iptables -C FORWARD -s 172.16.51.0/24 -j ACCEPT 2>/dev/null \
+  || iptables -A FORWARD -s 172.16.51.0/24 -j ACCEPT
+iptables -C FORWARD -d 172.16.51.0/24 -j ACCEPT 2>/dev/null \
+  || iptables -A FORWARD -d 172.16.51.0/24 -j ACCEPT
+
 netfilter-persistent save >/dev/null 2>&1 || iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
-ok "Firewall actualizado"
+ok "Firewall actualizado (incluye NAT pool celulares 172.16.51.0/24)"
 
 # ----------------------------------------------------------
 # 6) Sudoers para que Node controle todo sin password
 # ----------------------------------------------------------
 cat > /etc/sudoers.d/omnisync-vpn <<'EOF'
 # Omnisync - permite al backend Node.js gestionar VPN sin password
-root ALL=(ALL) NOPASSWD: /usr/sbin/ipsec, /usr/sbin/xl2tpd, /usr/sbin/ip, /bin/systemctl, /usr/local/sbin/omnisync-vpn-up, /usr/local/sbin/omnisync-vpn-down, /usr/bin/tee /etc/ppp/chap-secrets, /usr/bin/tee /etc/ipsec.conf, /usr/bin/tee /etc/ipsec.secrets, /usr/bin/tee /etc/xl2tpd/xl2tpd.conf
+root ALL=(ALL) NOPASSWD: /usr/sbin/ipsec, /usr/sbin/xl2tpd, /usr/sbin/ip, /bin/systemctl, /usr/local/sbin/omnisync-vpn-up, /usr/local/sbin/omnisync-vpn-down, /usr/local/sbin/omnisync-sync-eap-secrets, /usr/bin/tee /etc/ppp/chap-secrets, /usr/bin/tee /etc/ipsec.conf, /usr/bin/tee /etc/ipsec.secrets, /usr/bin/tee /etc/xl2tpd/xl2tpd.conf
 EOF
 chmod 440 /etc/sudoers.d/omnisync-vpn
 ok "Sudoers configurado"

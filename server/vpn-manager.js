@@ -105,7 +105,12 @@ function renderChapSecrets(sectors) {
 }
 
 function rewriteChapSecrets(sectors) {
-  return writeRootFile(CHAP_SECRETS, renderChapSecrets(sectors), '600');
+  const result = writeRootFile(CHAP_SECRETS, renderChapSecrets(sectors), '600');
+  // Sincroniza credenciales EAP (IKEv2 para celulares) desde chap-secrets
+  if (isLinux) {
+    safeExec('sudo /usr/local/sbin/omnisync-sync-eap-secrets >/dev/null 2>&1 || true');
+  }
+  return result;
 }
 
 function renderIpsecConf(sectors) {
