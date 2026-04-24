@@ -85,7 +85,9 @@ const getPublicIP = () => {
   }
 };
 
-const getActiveConfiguredSectors = () => [];
+const getActiveConfiguredSectors = (sectors = []) => sectors.filter(
+  (s) => s?.is_active && s?.mikrotik_public_ip && s?.vpn_username && s?.vpn_password
+);
 
 function renderChapSecrets(sectors) {
   const lines = [
@@ -328,7 +330,7 @@ async function resolveChannelUrlsForIp(pool, clientIp) {
   const sRes = await pool.query(
     `SELECT id, name, delivery_mode, udpxy_url, assigned_ip
        FROM vpn_sectors
-      WHERE assigned_ip = $1 AND is_active = true
+      WHERE assigned_ip >>= $1::inet AND is_active = true
       LIMIT 1`,
     [ip]
   );
