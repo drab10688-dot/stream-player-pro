@@ -44,12 +44,38 @@ else
   warn "No es repo Git. Saltando pull."
 fi
 
-# 2) npm install backend
-cd "$SCRIPT_DIR"
+# 2) Sincronizar backend vivo + instalar dependencias en runtime real
+LIVE_SERVER_DIR="/opt/streambox/server"
+LIVE_ENV_TMP=""
+
+if [ -d "$LIVE_SERVER_DIR" ]; then
+  log "🗂️  Sincronizando backend en $LIVE_SERVER_DIR..."
+  if [ -f "$LIVE_SERVER_DIR/.env" ]; then
+    LIVE_ENV_TMP="$(mktemp)"
+    cp "$LIVE_SERVER_DIR/.env" "$LIVE_ENV_TMP"
+  fi
+
+  mkdir -p "$LIVE_SERVER_DIR"
+  rm -rf "$LIVE_SERVER_DIR"/*
+  cp -r "$SCRIPT_DIR"/* "$LIVE_SERVER_DIR"/
+
+  if [ -n "$LIVE_ENV_TMP" ] && [ -f "$LIVE_ENV_TMP" ]; then
+    cp "$LIVE_ENV_TMP" "$LIVE_SERVER_DIR/.env"
+    rm -f "$LIVE_ENV_TMP"
+  fi
+  ok "Backend sincronizado"
+else
+  log "📦 Instalando backend desde el repo local..."
+  mkdir -p "$LIVE_SERVER_DIR"
+  cp -r "$SCRIPT_DIR"/* "$LIVE_SERVER_DIR"/
+  ok "Backend copiado a $LIVE_SERVER_DIR"
+fi
+
+cd "$LIVE_SERVER_DIR"
 if [ -f package.json ]; then
-  log "📦 Verificando dependencias npm..."
+  log "📦 Verificando dependencias npm del backend..."
   npm install --production --silent 2>&1 | tail -3 || true
-  ok "Dependencias OK"
+  ok "Dependencias backend OK"
 fi
 
 # 2.5) Recompilar y publicar frontend del panel
@@ -142,7 +168,7 @@ ok "Encoders reiniciados (se relanzarán automáticamente bajo demanda)"
 
 # 5) Restart PM2
 log "♻️  Reiniciando streambox-api..."
-pm2 restart streambox-api > /dev/null 2>&1 || pm2 start "$SCRIPT_DIR/index.js" --name streambox-api
+pm2 restart streambox-api > /dev/null 2>&1 || pm2 start "$LIVE_SERVER_DIR/index.js" --name streambox-api
 sleep 2
 
 # 6) Health check
