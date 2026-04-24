@@ -147,9 +147,11 @@ const SectorsSection = () => {
   const { toast } = useToast();
   const [sectors, setSectors] = useState<Sector[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
+  const [centralPsk, setCentralPsk] = useState<string>('');
   const [loadWarning, setLoadWarning] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Sector | null>(null);
+  const [useIpsec, setUseIpsec] = useState(true);
   const [form, setForm] = useState({
     name: '', description: '', vpn_username: '', vpn_password: '',
     assigned_ip: '', mikrotik_public_ip: '', ipsec_psk: '', plan_id: '',
@@ -158,10 +160,15 @@ const SectorsSection = () => {
   });
 
   const load = useCallback(async () => {
-    const [sectorsResult, plansResult] = await Promise.allSettled([
+    const [sectorsResult, plansResult, statusResult] = await Promise.allSettled([
       apiGet<Sector[]>('/api/vpn/sectors'),
       apiGet<Plan[]>('/api/plans'),
+      apiGet<VpnStatus>('/api/vpn/status'),
     ]);
+
+    if (statusResult.status === 'fulfilled' && statusResult.value?.psk) {
+      setCentralPsk(statusResult.value.psk);
+    }
 
     let warning: string | null = null;
 
