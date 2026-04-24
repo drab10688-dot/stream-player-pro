@@ -328,18 +328,19 @@ const SectorsSection = ({ mode = 'vpn' }: SectorsSectionProps) => {
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
               <Button onClick={openCreate} className="gradient-primary gap-2">
-                <Plus className="w-4 h-4" /> Nuevo Sector
+                <Plus className="w-4 h-4" /> {isLanTab ? 'Nuevo sector LAN' : 'Nuevo Sector VPN'}
               </Button>
             </DialogTrigger>
             <DialogContent className="max-w-2xl">
               <DialogHeader>
-                <DialogTitle>{editing ? 'Editar Sector' : 'Nuevo Sector'}</DialogTitle>
+                <DialogTitle>{editing ? 'Editar Sector' : (isLanTab ? 'Nuevo sector LAN local' : 'Nuevo Sector VPN')}</DialogTitle>
               </DialogHeader>
               <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-2">
                   <Label>Nombre del sector</Label>
                   <Input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Sector Norte" />
                 </div>
+                {form.delivery_mode !== 'lan_direct' && (<>
                 <div>
                   <Label>Usuario L2TP</Label>
                   <Input value={form.vpn_username} onChange={e => setForm({ ...form, vpn_username: e.target.value })} placeholder="sector_norte" />
@@ -352,6 +353,7 @@ const SectorsSection = ({ mode = 'vpn' }: SectorsSectionProps) => {
                   <Label>IP asignada en VPN</Label>
                   <Input value={form.assigned_ip} onChange={e => setForm({ ...form, assigned_ip: e.target.value })} placeholder="172.16.50.10" />
                 </div>
+                </>)}
                 <div>
                   <Label>Plan asociado</Label>
                   <Select value={form.plan_id || undefined} onValueChange={v => setForm({ ...form, plan_id: v })}>
@@ -379,6 +381,14 @@ const SectorsSection = ({ mode = 'vpn' }: SectorsSectionProps) => {
                     {form.delivery_mode === 'lan_direct' && 'Sin VPN. La APK consume udp://@239.x.x.x:1234 directamente desde el gateway MikroTik en LAN. Requiere IGMP snooping en el bridge.'}
                   </p>
                 </div>
+                {form.delivery_mode === 'lan_direct' && (
+                  <div className="col-span-2 rounded-lg border border-primary/30 bg-primary/5 p-3">
+                    <p className="text-xs text-foreground font-semibold mb-1">🏡 Sector LAN local</p>
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">
+                      Este sector NO usa VPN. La APK debe estar conectada a la misma LAN que el gateway MikroTik que recibe los canales UDP. Asigná los canales multicast desde la pestaña <strong>Canales Multicast</strong> y entregá un código de activación al cliente desde <strong>Códigos APK</strong>.
+                    </p>
+                  </div>
+                )}
                 {form.delivery_mode !== 'multicast_direct' && (
                   <div className="col-span-2">
                     <Label>URL base udpxy</Label>
@@ -389,6 +399,7 @@ const SectorsSection = ({ mode = 'vpn' }: SectorsSectionProps) => {
                     />
                   </div>
                 )}
+                {form.delivery_mode !== 'lan_direct' && (<>
                 <div className="col-span-2">
                   <Label>IP pública del MikroTik (opcional)</Label>
                   <Input
@@ -450,6 +461,7 @@ const SectorsSection = ({ mode = 'vpn' }: SectorsSectionProps) => {
                     </div>
                   )}
                 </div>
+                </>)}
 
                 <div className="col-span-2">
                   <Label>Descripción</Label>
