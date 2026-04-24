@@ -297,8 +297,19 @@ iptables -I INPUT -p udp --dport 1701 -j ACCEPT 2>/dev/null || true
 iptables -I INPUT -p udp --dport 4500 -j ACCEPT 2>/dev/null || true
 iptables -I INPUT -p esp -j ACCEPT 2>/dev/null || true
 iptables -A FORWARD -d 239.0.0.0/8 -j ACCEPT 2>/dev/null || true
+
+# NAT + forward para celulares IKEv2 (pool 172.16.51.0/24 → internet)
+PUB_IF_DETECT="$(ip route get 1.1.1.1 2>/dev/null | awk '{print $5; exit}')"
+[ -z "$PUB_IF_DETECT" ] && PUB_IF_DETECT="eth0"
+iptables -t nat -C POSTROUTING -s 172.16.51.0/24 -o "$PUB_IF_DETECT" -j MASQUERADE 2>/dev/null \
+  || iptables -t nat -A POSTROUTING -s 172.16.51.0/24 -o "$PUB_IF_DETECT" -j MASQUERADE
+iptables -C FORWARD -s 172.16.51.0/24 -j ACCEPT 2>/dev/null \
+  || iptables -A FORWARD -s 172.16.51.0/24 -j ACCEPT
+iptables -C FORWARD -d 172.16.51.0/24 -j ACCEPT 2>/dev/null \
+  || iptables -A FORWARD -d 172.16.51.0/24 -j ACCEPT
+
 netfilter-persistent save >/dev/null 2>&1 || iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
-ok "Firewall actualizado"
+ok "Firewall actualizado (incluye NAT pool celulares 172.16.51.0/24)"
 
 # ----------------------------------------------------------
 # 6) Sudoers para que Node controle todo sin password
