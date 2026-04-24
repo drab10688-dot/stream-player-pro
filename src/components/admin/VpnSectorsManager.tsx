@@ -10,12 +10,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Plus, Download, RefreshCw, Trash2, Edit, Network, Radio, Activity, Server, Key, Copy, CheckCircle2, XCircle, Cpu, Play, Square, AlertCircle } from 'lucide-react';
+import { Plus, Download, RefreshCw, Trash2, Edit, Network, Radio, Activity, Server, Key, Copy, CheckCircle2, XCircle, Cpu, Play, Square, AlertCircle, Wifi, Home } from 'lucide-react';
 
 // ============================================================
 // Tipos
 // ============================================================
-type DeliveryMode = 'multicast_direct' | 'udpxy_rbldf' | 'udpxy_central';
+type DeliveryMode = 'multicast_direct' | 'udpxy_rbldf' | 'udpxy_central' | 'lan_direct';
 
 interface Sector {
   id: string;
