@@ -219,12 +219,18 @@ const SectorsSection = ({ mode = 'vpn' }: SectorsSectionProps) => {
       const ip = `172.16.50.${i}`;
       if (!used.has(ip)) { suggested = ip; break; }
     }
-    setUseIpsec(true);
+    setUseIpsec(!isLanTab);
     setForm({
-      name: '', description: '', vpn_username: '', vpn_password: '',
-      assigned_ip: suggested, mikrotik_public_ip: '',
-      ipsec_psk: centralPsk, plan_id: '',
-      delivery_mode: 'multicast_direct', udpxy_url: '',
+      name: '',
+      description: '',
+      vpn_username: '',
+      vpn_password: '',
+      assigned_ip: isLanTab ? '' : suggested,
+      mikrotik_public_ip: '',
+      ipsec_psk: isLanTab ? '' : centralPsk,
+      plan_id: '',
+      delivery_mode: isLanTab ? 'lan_direct' : 'multicast_direct',
+      udpxy_url: '',
     });
     setOpen(true);
   };
