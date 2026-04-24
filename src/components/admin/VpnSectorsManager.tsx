@@ -215,9 +215,11 @@ const SectorsSection = () => {
       const ip = `172.16.50.${i}`;
       if (!used.has(ip)) { suggested = ip; break; }
     }
+    setUseIpsec(true);
     setForm({
       name: '', description: '', vpn_username: '', vpn_password: '',
-      assigned_ip: suggested, mikrotik_public_ip: '', ipsec_psk: '', plan_id: '',
+      assigned_ip: suggested, mikrotik_public_ip: '',
+      ipsec_psk: centralPsk, plan_id: '',
       delivery_mode: 'multicast_direct', udpxy_url: '',
     });
     setOpen(true);
@@ -225,12 +227,13 @@ const SectorsSection = () => {
 
   const openEdit = (s: Sector) => {
     setEditing(s);
+    setUseIpsec(!!s.ipsec_psk);
     setForm({
       name: s.name, description: s.description || '',
       vpn_username: s.vpn_username, vpn_password: s.vpn_password,
       assigned_ip: s.assigned_ip,
       mikrotik_public_ip: s.mikrotik_public_ip || '',
-      ipsec_psk: s.ipsec_psk || '',
+      ipsec_psk: s.ipsec_psk || centralPsk,
       plan_id: s.plan_id || '',
       delivery_mode: s.delivery_mode || 'multicast_direct',
       udpxy_url: s.udpxy_url || '',
