@@ -145,7 +145,9 @@ const VpnSectorsManager = () => {
 // ============================================================
 // SECCIÓN 1: SECTORES (CRUD + descarga config MikroTik)
 // ============================================================
-const SectorsSection = () => {
+interface SectorsSectionProps { mode?: 'vpn' | 'lan' }
+const SectorsSection = ({ mode = 'vpn' }: SectorsSectionProps) => {
+  const isLanTab = mode === 'lan';
   const { toast } = useToast();
   const [sectors, setSectors] = useState<Sector[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
