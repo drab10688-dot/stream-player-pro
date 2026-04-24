@@ -29,7 +29,17 @@ CREATE TABLE IF NOT EXISTS vpn_sectors (
 );
 
 ALTER TABLE vpn_sectors
-  ADD COLUMN IF NOT EXISTS ipsec_psk TEXT;
+  ADD COLUMN IF NOT EXISTS ipsec_psk TEXT,
+  ADD COLUMN IF NOT EXISTS delivery_mode TEXT NOT NULL DEFAULT 'multicast_direct',
+  ADD COLUMN IF NOT EXISTS udpxy_url TEXT,
+  ADD COLUMN IF NOT EXISTS mikrotik_public_ip INET,
+  ADD COLUMN IF NOT EXISTS gre_local_ip INET,
+  ADD COLUMN IF NOT EXISTS gre_remote_ip INET,
+  ADD COLUMN IF NOT EXISTS gre_tunnel_name TEXT;
+
+-- Permitir credenciales vacías para modo lan_direct
+ALTER TABLE vpn_sectors ALTER COLUMN vpn_username DROP NOT NULL;
+ALTER TABLE vpn_sectors ALTER COLUMN vpn_password DROP NOT NULL;
 
 -- 2) Grupos multicast (pool 239.10.0.1-100)
 CREATE TABLE IF NOT EXISTS multicast_groups (
