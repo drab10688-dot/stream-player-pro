@@ -147,9 +147,11 @@ const SectorsSection = () => {
   const { toast } = useToast();
   const [sectors, setSectors] = useState<Sector[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
+  const [centralPsk, setCentralPsk] = useState<string>('');
   const [loadWarning, setLoadWarning] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Sector | null>(null);
+  const [useIpsec, setUseIpsec] = useState(true);
   const [form, setForm] = useState({
     name: '', description: '', vpn_username: '', vpn_password: '',
     assigned_ip: '', mikrotik_public_ip: '', ipsec_psk: '', plan_id: '',
@@ -158,10 +160,15 @@ const SectorsSection = () => {
   });
 
   const load = useCallback(async () => {
-    const [sectorsResult, plansResult] = await Promise.allSettled([
+    const [sectorsResult, plansResult, statusResult] = await Promise.allSettled([
       apiGet<Sector[]>('/api/vpn/sectors'),
       apiGet<Plan[]>('/api/plans'),
+      apiGet<VpnStatus>('/api/vpn/status'),
     ]);
+
+    if (statusResult.status === 'fulfilled' && statusResult.value?.psk) {
+      setCentralPsk(statusResult.value.psk);
+    }
 
     let warning: string | null = null;
 
@@ -208,9 +215,11 @@ const SectorsSection = () => {
       const ip = `172.16.50.${i}`;
       if (!used.has(ip)) { suggested = ip; break; }
     }
+    setUseIpsec(true);
     setForm({
       name: '', description: '', vpn_username: '', vpn_password: '',
-      assigned_ip: suggested, mikrotik_public_ip: '', ipsec_psk: '', plan_id: '',
+      assigned_ip: suggested, mikrotik_public_ip: '',
+      ipsec_psk: centralPsk, plan_id: '',
       delivery_mode: 'multicast_direct', udpxy_url: '',
     });
     setOpen(true);
@@ -218,12 +227,13 @@ const SectorsSection = () => {
 
   const openEdit = (s: Sector) => {
     setEditing(s);
+    setUseIpsec(!!s.ipsec_psk);
     setForm({
       name: s.name, description: s.description || '',
       vpn_username: s.vpn_username, vpn_password: s.vpn_password,
       assigned_ip: s.assigned_ip,
       mikrotik_public_ip: s.mikrotik_public_ip || '',
-      ipsec_psk: s.ipsec_psk || '',
+      ipsec_psk: s.ipsec_psk || centralPsk,
       plan_id: s.plan_id || '',
       delivery_mode: s.delivery_mode || 'multicast_direct',
       udpxy_url: s.udpxy_url || '',
@@ -235,6 +245,7 @@ const SectorsSection = () => {
     try {
       const payload = {
         ...form,
+        ipsec_psk: useIpsec ? (form.ipsec_psk || centralPsk || '') : '',
         plan_id: form.plan_id || null,
         gre_local_ip: null,
         gre_remote_ip: null,
@@ -362,6 +373,68 @@ const SectorsSection = () => {
                   </div>
                 )}
                 <div className="col-span-2">
+                  <Label>IP pública del MikroTik (opcional)</Label>
+                  <Input
+                    value={form.mikrotik_public_ip}
+                    onChange={e => setForm({ ...form, mikrotik_public_ip: e.target.value })}
+                    placeholder="190.0.0.123 — útil para ATAR la PSK al peer en el VPS"
+                  />
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    Si lo dejas vacío, el VPS aceptará IPSec desde cualquier IP usando la PSK central.
+                  </p>
+                </div>
+
+                <div className="col-span-2 rounded-lg border border-border/40 p-3 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label className="text-sm font-semibold">🔐 IPSec (cifrado L2TP)</Label>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">
+                        Recomendado. El MikroTik debe activar <code>use-ipsec=yes</code> con esta PSK.
+                      </p>
+                    </div>
+                    <Switch checked={useIpsec} onCheckedChange={setUseIpsec} />
+                  </div>
+                  {useIpsec && (
+                    <div>
+                      <Label className="text-xs">Pre-Shared Key (PSK)</Label>
+                      <div className="flex gap-2">
+                        <Input
+                          value={form.ipsec_psk}
+                          onChange={e => setForm({ ...form, ipsec_psk: e.target.value })}
+                          placeholder={centralPsk || 'Cargando PSK central...'}
+                          className="font-mono text-xs"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setForm({ ...form, ipsec_psk: centralPsk })}
+                          disabled={!centralPsk}
+                          title="Usar PSK central del VPS"
+                        >
+                          <Key className="w-3 h-3" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            navigator.clipboard.writeText(form.ipsec_psk);
+                            toast({ title: 'PSK copiada' });
+                          }}
+                          disabled={!form.ipsec_psk}
+                        >
+                          <Copy className="w-3 h-3" />
+                        </Button>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground mt-1">
+                        Por defecto se usa la PSK central del VPS. Cambia solo si necesitas una PSK específica para este sector.
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="col-span-2">
                   <Label>Descripción</Label>
                   <Input value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} />
                 </div>
@@ -398,6 +471,11 @@ const SectorsSection = () => {
                   {s.delivery_mode === 'udpxy_rbldf' && '🏠 udpxy RB LDF'}
                   {s.delivery_mode === 'udpxy_central' && '🗼 udpxy central'}
                 </Badge>
+                {s.ipsec_psk ? (
+                  <Badge variant="outline" className="text-[10px] border-emerald-400/30 text-emerald-400">🔐 IPSec</Badge>
+                ) : (
+                  <Badge variant="outline" className="text-[10px] border-amber-400/30 text-amber-400">🔓 Sin IPSec</Badge>
+                )}
               </div>
               <div className="text-xs text-muted-foreground flex flex-wrap gap-x-4 gap-y-1">
                 <span>👤 {s.vpn_username}</span>
