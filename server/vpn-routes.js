@@ -48,9 +48,21 @@ module.exports = (pool, authAdmin) => {
 
   router.post('/sectors', authAdmin, async (req, res) => {
     try {
-      const { name, description, vpn_username, vpn_password, assigned_ip,
-              mikrotik_public_ip, ipsec_psk, plan_id, delivery_mode, udpxy_url } = req.body;
-      if (!name || !vpn_username || !vpn_password || !assigned_ip) {
+      let { name, description, vpn_username, vpn_password, assigned_ip,
+            mikrotik_public_ip, ipsec_psk, plan_id, delivery_mode, udpxy_url } = req.body;
+
+      if (!name) return res.status(400).json({ error: 'name es requerido' });
+
+      const mode = delivery_mode || 'multicast_direct';
+      const isLan = mode === 'lan_direct';
+
+      // Modo LAN: no requiere credenciales VPN. Autocompletamos placeholders
+      // para satisfacer NOT NULL del schema sin afectar la VPN real.
+      if (isLan) {
+        vpn_username = vpn_username || `lan-${Date.now().toString(36)}`;
+        vpn_password = vpn_password || 'n/a';
+        assigned_ip  = assigned_ip  || '127.0.0.1';
+      } else if (!vpn_username || !vpn_password || !assigned_ip) {
         return res.status(400).json({
           error: 'Faltan campos requeridos: name, vpn_username, vpn_password, assigned_ip',
           received: {
@@ -61,6 +73,7 @@ module.exports = (pool, authAdmin) => {
           }
         });
       }
+
       const r = await pool.query(`
         INSERT INTO vpn_sectors
           (name, description, vpn_username, vpn_password, assigned_ip,
@@ -69,14 +82,19 @@ module.exports = (pool, authAdmin) => {
         RETURNING *
       `, [name, nz(description), vpn_username, vpn_password, assigned_ip,
           nz(mikrotik_public_ip), nz(ipsec_psk), nz(plan_id),
-          delivery_mode || 'multicast_direct', nz(udpxy_url)]);
-      try { await vpnMgr.syncAllFromDB(pool); } catch (e) { console.warn('[VPN] sync warning:', e.message); }
+          mode, nz(udpxy_url)]);
+
+      // Solo re-sincroniza configs del sistema VPN si el sector usa VPN real.
+      if (!isLan) {
+        try { await vpnMgr.syncAllFromDB(pool); } catch (e) { console.warn('[VPN] sync warning:', e.message); }
+      }
       res.json(r.rows[0]);
     } catch (e) {
       console.error('[VPN] POST /sectors error:', e);
       res.status(500).json({ error: e.message });
     }
-  });
+  });</parameter>
+</invoke>
 
   router.put('/sectors/:id', authAdmin, async (req, res) => {
     try {
