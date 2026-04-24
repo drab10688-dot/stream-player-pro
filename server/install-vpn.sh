@@ -164,10 +164,28 @@ conn omnisync-ikev2-eap
 EOF
 
 cat > /etc/ipsec.secrets <<EOF
-# Omnisync IPsec PSK - central
+# Omnisync IPsec PSK - central (compartido por L2TP-IKEv1 e IKEv2 PSK)
 %any %any : PSK "${PSK_VALUE}"
+
+# IKEv2 EAP-MSCHAPv2 incluido vía chap-secrets
+include /var/lib/strongswan/ipsec.secrets.inc
 EOF
 chmod 600 /etc/ipsec.secrets
+
+# Genera ipsec.secrets.inc con los mismos usuarios del chap-secrets
+mkdir -p /var/lib/strongswan
+cat > /usr/local/sbin/omnisync-sync-eap-secrets <<'EOF'
+#!/bin/sh
+# Lee /etc/ppp/chap-secrets y genera credenciales EAP para strongSwan IKEv2
+OUT=/var/lib/strongswan/ipsec.secrets.inc
+echo "# Omnisync EAP - autogenerado, no editar" > "$OUT"
+awk '/^"/ && !/^#/ { gsub(/"/,"",$1); gsub(/"/,"",$3); print $1 " : EAP \"" $3 "\"" }' /etc/ppp/chap-secrets >> "$OUT"
+chmod 600 "$OUT"
+ipsec rereadsecrets >/dev/null 2>&1 || true
+EOF
+chmod +x /usr/local/sbin/omnisync-sync-eap-secrets
+/usr/local/sbin/omnisync-sync-eap-secrets || true
+
 
 cat > /etc/xl2tpd/xl2tpd.conf <<EOF
 [global]
