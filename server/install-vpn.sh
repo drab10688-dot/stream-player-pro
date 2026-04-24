@@ -316,7 +316,7 @@ ok "Firewall actualizado (incluye NAT pool celulares 172.16.51.0/24)"
 # ----------------------------------------------------------
 cat > /etc/sudoers.d/omnisync-vpn <<'EOF'
 # Omnisync - permite al backend Node.js gestionar VPN sin password
-root ALL=(ALL) NOPASSWD: /usr/sbin/ipsec, /usr/sbin/xl2tpd, /usr/sbin/ip, /bin/systemctl, /usr/local/sbin/omnisync-vpn-up, /usr/local/sbin/omnisync-vpn-down, /usr/bin/tee /etc/ppp/chap-secrets, /usr/bin/tee /etc/ipsec.conf, /usr/bin/tee /etc/ipsec.secrets, /usr/bin/tee /etc/xl2tpd/xl2tpd.conf
+root ALL=(ALL) NOPASSWD: /usr/sbin/ipsec, /usr/sbin/xl2tpd, /usr/sbin/ip, /bin/systemctl, /usr/local/sbin/omnisync-vpn-up, /usr/local/sbin/omnisync-vpn-down, /usr/local/sbin/omnisync-sync-eap-secrets, /usr/bin/tee /etc/ppp/chap-secrets, /usr/bin/tee /etc/ipsec.conf, /usr/bin/tee /etc/ipsec.secrets, /usr/bin/tee /etc/xl2tpd/xl2tpd.conf
 EOF
 chmod 440 /etc/sudoers.d/omnisync-vpn
 ok "Sudoers configurado"
