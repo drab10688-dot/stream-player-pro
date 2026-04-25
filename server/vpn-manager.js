@@ -318,10 +318,7 @@ async function syncAllFromDB(pool) {
 
 async function resolveChannelUrlsForIp(pool, clientIp) {
   const ip = (clientIp || '').replace(/^::ffff:/, '');
-
-  if (!ip.startsWith('172.16.50.')) {
-    return { sector: null, urls: {} };
-  }
+  if (!ip) return { sector: null, urls: {} };
 
   try {
     const tRes = await pool.query(
@@ -333,9 +330,10 @@ async function resolveChannelUrlsForIp(pool, clientIp) {
   } catch {}
 
   const sRes = await pool.query(
-    `SELECT id, name, delivery_mode, udpxy_url, assigned_ip
+    `SELECT id, name, delivery_mode, udpxy_url, assigned_ip::text AS assigned_ip
        FROM vpn_sectors
       WHERE assigned_ip >>= $1::inet AND is_active = true
+      ORDER BY masklen(assigned_ip) DESC, created_at ASC
       LIMIT 1`,
     [ip]
   );
@@ -355,6 +353,7 @@ async function resolveChannelUrlsForIp(pool, clientIp) {
     let url;
     switch (sector.delivery_mode) {
       case 'multicast_direct':
+      case 'lan_direct':
         url = `udp://@${row.multicast_ip}:${row.port}`;
         break;
       case 'udpxy_rbldf':
@@ -371,7 +370,12 @@ async function resolveChannelUrlsForIp(pool, clientIp) {
   }
 
   return {
-    sector: { id: sector.id, name: sector.name, delivery_mode: sector.delivery_mode },
+    sector: {
+      id: sector.id,
+      name: sector.name,
+      delivery_mode: sector.delivery_mode,
+      assigned_ip: sector.assigned_ip,
+    },
     urls,
   };
 }
