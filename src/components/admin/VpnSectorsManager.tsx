@@ -151,6 +151,130 @@ const VpnSectorsManager = () => {
 // ============================================================
 // SECCIÓN 1: SECTORES (CRUD + descarga config MikroTik)
 // ============================================================
+// ============================================================
+// LanNetworkConfig: selector de interfaz/IP para multicast LAN local
+// ============================================================
+interface NetIfaceAddr { address: string; netmask: string; mac: string }
+interface NetIface { name: string; addresses: NetIfaceAddr[] }
+
+const LanNetworkConfig = () => {
+  const { toast } = useToast();
+  const [ifaces, setIfaces] = useState<NetIface[]>([]);
+  const [iface, setIface] = useState<string>('');
+  const [localIp, setLocalIp] = useState<string>('');
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [ifResp, cfgResp] = await Promise.all([
+        apiGet<{ interfaces: NetIface[] }>('/api/vpn/network-interfaces'),
+        apiGet<{ iface: string; local_ip: string }>('/api/vpn/lan-config'),
+      ]);
+      setIfaces(ifResp.interfaces || []);
+      setIface(cfgResp.iface || '');
+      setLocalIp(cfgResp.local_ip || '');
+    } catch (e: any) {
+      toast({ title: 'Error', description: e.message, variant: 'destructive' });
+    } finally {
+      setLoading(false);
+    }
+  }, [toast]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const onSelectIface = (name: string) => {
+    setIface(name);
+    const found = ifaces.find(i => i.name === name);
+    if (found && found.addresses.length > 0) {
+      setLocalIp(found.addresses[0].address);
+    }
+  };
+
+  const save = async () => {
+    if (!iface || !localIp) {
+      toast({ title: 'Faltan datos', description: 'Selecciona interfaz e IP.', variant: 'destructive' });
+      return;
+    }
+    setSaving(true);
+    try {
+      await apiPut('/api/vpn/lan-config', { iface, local_ip: localIp });
+      toast({
+        title: 'Configuración guardada',
+        description: 'Reinicia los encoders activos para aplicar la nueva interfaz.',
+      });
+    } catch (e: any) {
+      toast({ title: 'Error', description: e.message, variant: 'destructive' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const selectedIface = ifaces.find(i => i.name === iface);
+
+  return (
+    <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <Network className="w-4 h-4 text-primary" />
+        <h3 className="text-sm font-semibold">Interfaz de red para multicast LAN</h3>
+        <Button variant="ghost" size="icon" onClick={load} disabled={loading}>
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+        </Button>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Elige por qué interfaz del VPS debe salir el tráfico UDP multicast (FFmpeg <code>localaddr</code> + ruta 224.0.0.0/4).
+        Solo aplica a sectores LAN local. Por defecto usa el túnel L2TP (<code>ppp0 / 172.16.50.1</code>).
+      </p>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div>
+          <Label className="text-xs">Interfaz</Label>
+          <Select value={iface} onValueChange={onSelectIface}>
+            <SelectTrigger><SelectValue placeholder="Selecciona interfaz" /></SelectTrigger>
+            <SelectContent>
+              {ifaces.map(i => (
+                <SelectItem key={i.name} value={i.name}>
+                  {i.name} ({i.addresses[0]?.address || 'sin IPv4'})
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div>
+          <Label className="text-xs">IP local (localaddr)</Label>
+          {selectedIface && selectedIface.addresses.length > 1 ? (
+            <Select value={localIp} onValueChange={setLocalIp}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {selectedIface.addresses.map(a => (
+                  <SelectItem key={a.address} value={a.address}>{a.address}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            <Input value={localIp} onChange={e => setLocalIp(e.target.value)} placeholder="192.168.1.50" />
+          )}
+        </div>
+
+        <div className="flex items-end">
+          <Button onClick={save} disabled={saving} className="gradient-primary w-full">
+            {saving ? 'Guardando...' : 'Guardar configuración'}
+          </Button>
+        </div>
+      </div>
+
+      {ifaces.length === 0 && !loading && (
+        <p className="text-xs text-destructive">
+          No se detectaron interfaces. Verifica el backend del VPS.
+        </p>
+      )}
+    </div>
+  );
+};
+
+
 interface SectorsSectionProps { mode?: 'vpn' | 'lan' }
 const SectorsSection = ({ mode = 'vpn' }: SectorsSectionProps) => {
   const isLanTab = mode === 'lan';
@@ -367,6 +491,7 @@ const SectorsSection = ({ mode = 'vpn' }: SectorsSectionProps) => {
 
   return (
     <div className="space-y-4">
+      {isLanTab && <LanNetworkConfig />}
       <div className="flex justify-between items-center">
         <p className="text-sm text-muted-foreground">{visibleSectors.length} sector(es) {isLanTab ? "LAN local" : "VPN"} configurados</p>
         <div className="flex gap-2">
