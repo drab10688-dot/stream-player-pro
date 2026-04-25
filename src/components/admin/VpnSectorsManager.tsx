@@ -367,6 +367,7 @@ const SectorsSection = ({ mode = 'vpn' }: SectorsSectionProps) => {
 
   return (
     <div className="space-y-4">
+      {isLanTab && <LanNetworkConfig />}
       <div className="flex justify-between items-center">
         <p className="text-sm text-muted-foreground">{visibleSectors.length} sector(es) {isLanTab ? "LAN local" : "VPN"} configurados</p>
         <div className="flex gap-2">
