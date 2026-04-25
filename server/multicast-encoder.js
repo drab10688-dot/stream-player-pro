@@ -101,45 +101,11 @@ function pickCodecMode(probe) {
 }
 
 // ----------------------------------------------------------
-function buildFfmpegArgs(sourceUrl, multicastIp, port, codec) {
+function buildFfmpegArgs(sourceUrl, multicastIp, port, codec, netCfg) {
   const mode = (typeof codec === 'string') ? codec : codec.mode;
   const isH264 = (typeof codec === 'object') && codec.video === 'h264';
-  // ============================================================
-  // ANTI-MICRO-CORTES para orígenes TS unicast inestables:
-  //
-  // ENTRADA:
-  //   -fflags +genpts+discardcorrupt+igndts → regenera PTS, descarta paquetes
-  //                                            corruptos en lugar de abortar
-  //   -err_detect ignore_err            → continúa ante errores menores TS
-  //   -analyzeduration 5M / -probesize 5M → analiza 5s/5MB para detectar PIDs
-  //                                          correctos (evita "no streams found")
-  //   -thread_queue_size 4096           → cola grande entre demuxer y muxer
-  //   -rw_timeout 30s                   → más tolerante a stalls del origen
-  //   -reconnect_delay_max 2            → reconecta rápido en drops cortos
-  //   -reconnect_at_eof / on_network_error → reintenta ante cualquier corte
-  //
-  // SALIDA UDP (multicast por L2TP MTU 1400):
-  //   pkt_size=1316        → 7×188 bytes TS, sin fragmentar IP
-  //   buffer_size=8000000  → 8MB buffer kernel UDP send (absorbe jitter L2TP)
-  //   fifo_size=2000000    → 2MB FIFO interna ffmpeg → no overflow en ráfagas
-  //   overrun_nonfatal=1   → si FIFO se llena, descarta sin morir
-  //   ttl=8                → varios saltos de túnel
-  //
-  // MUX MPEG-TS:
-  //   muxrate 5000k        → CBR holgado (~25% sobre el bitrate típico SD)
-  //   pcr_period 20        → PCR cada 20ms = sync A/V perfecto
-  //   resend_headers + pat_pmt_at_frames → tablas PAT/PMT cada GOP, joins más rápidos
-  //   muxdelay 0 muxpreload 0 → mínima latencia interna
-  // ============================================================
-  // ============================================================
-  // MODO PROBADO EN PRODUCCIÓN (TS directo + HLS):
-  //   - Salida UDP: pkt_size=1316 (7×188 TS) + localaddr=ppp0, sin buffers extra
-  //   - Input: -fflags +genpts (solo PTS) + reconnect básico para HLS
-  //   - Mux: passthrough crudo, sin muxrate forzado (deja al origen marcar bitrate)
-  //   - muxdelay/muxpreload 0 → mínima latencia interna
-  //   - mpegts_copyts 1 → preserva timestamps originales (mejor sync TS directo)
-  // ============================================================
-  const dstUrl = `udp://${multicastIp}:${port}?pkt_size=1316&ttl=8&localaddr=${VPN_LOCAL_IP}`;
+  const localIp = netCfg?.localIp || DEFAULT_VPN_LOCAL_IP;
+  const dstUrl = `udp://${multicastIp}:${port}?pkt_size=1316&ttl=8&localaddr=${localIp}`;
   const baseInput = [
     '-nostdin',
     '-hide_banner', '-loglevel', 'warning',
