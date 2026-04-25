@@ -93,8 +93,7 @@ module.exports = (pool, authAdmin) => {
       console.error('[VPN] POST /sectors error:', e);
       res.status(500).json({ error: e.message });
     }
-  });</parameter>
-</invoke>
+  });
 
   router.put('/sectors/:id', authAdmin, async (req, res) => {
     try {
