@@ -275,6 +275,7 @@ const LanNetworkConfig = () => {
 };
 
 
+interface SectorsSectionProps { mode?: 'vpn' | 'lan' }
 const SectorsSection = ({ mode = 'vpn' }: SectorsSectionProps) => {
   const isLanTab = mode === 'lan';
   const { toast } = useToast();
