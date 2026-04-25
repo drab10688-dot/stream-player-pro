@@ -21,11 +21,27 @@ const VIEWER_HEARTBEAT_WINDOW_MS = 5 * 60_000; // 5min: ventana para considerar 
 const PROVIDER_UA = 'VLC/3.0.20 LibVLC/3.0.20';
 const FFMPEG_BIN = process.env.FFMPEG_PATH || '/usr/bin/ffmpeg';
 const FFPROBE_BIN = process.env.FFPROBE_PATH || '/usr/bin/ffprobe';
-// IP del VPS dentro de la VPN L2TP (interfaz ppp0). Se usa como localaddr en el
-// destino UDP para forzar que el multicast salga directamente por ppp0 hacia los
-// MikroTik remotos, sin necesidad de GRE ni smcroute.
-const VPN_LOCAL_IP = process.env.VPN_LOCAL_IP || '172.16.50.1';
-const VPN_IFACE = process.env.VPN_IFACE || 'ppp0';
+// IP/interfaz por la que sale el multicast UDP. Por defecto apunta al túnel L2TP
+// (ppp0 / 172.16.50.1). Para sectores LAN local el admin puede sobreescribir
+// estos valores desde el panel (PUT /api/vpn/lan-config), que se persisten en
+// system_settings.lan_network_config y se leen en cada arranque de encoder.
+const DEFAULT_VPN_LOCAL_IP = process.env.VPN_LOCAL_IP || '172.16.50.1';
+const DEFAULT_VPN_IFACE = process.env.VPN_IFACE || 'ppp0';
+
+async function getNetworkConfig(pool) {
+  try {
+    const r = await pool.query(
+      `SELECT value FROM system_settings WHERE key = 'lan_network_config'`
+    );
+    const cfg = r.rows[0]?.value || {};
+    return {
+      localIp: cfg.local_ip || DEFAULT_VPN_LOCAL_IP,
+      iface: cfg.iface || DEFAULT_VPN_IFACE,
+    };
+  } catch {
+    return { localIp: DEFAULT_VPN_LOCAL_IP, iface: DEFAULT_VPN_IFACE };
+  }
+}
 
 // Estado en memoria de encoders activos
 // key = channel_id, value = { proc, multicastIp, port, codec, startedAt, idleSince, lastBytes, lastTs }
