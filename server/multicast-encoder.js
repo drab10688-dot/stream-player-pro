@@ -141,9 +141,9 @@ function buildFfmpegArgs(sourceUrl, multicastIp, port, codec, netCfg) {
 }
 
 // ----------------------------------------------------------
-function ensureMulticastRoute() {
+function ensureMulticastRoute(iface) {
   try {
-    execSync(`ip route replace 224.0.0.0/4 dev ${VPN_IFACE}`, { stdio: 'ignore' });
+    execSync(`ip route replace 224.0.0.0/4 dev ${iface}`, { stdio: 'ignore' });
     return true;
   } catch {
     return false;
@@ -157,8 +157,10 @@ async function startEncoder(pool, channelId) {
     throw new Error('FFmpeg no está instalado en el VPS. Ejecuta install-vpn.sh.');
   }
 
-  if (!ensureMulticastRoute()) {
-    throw new Error(`No se pudo configurar la ruta multicast IPv4 por ${VPN_IFACE}`);
+  const netCfg = await getNetworkConfig(pool);
+
+  if (!ensureMulticastRoute(netCfg.iface)) {
+    throw new Error(`No se pudo configurar la ruta multicast IPv4 por ${netCfg.iface}`);
   }
 
   // Si ya está activo: solo resetear idleSince
@@ -185,9 +187,9 @@ async function startEncoder(pool, channelId) {
   const probe = ffprobeCodecs(url);
   const codec = pickCodecMode(probe);
 
-  console.log(`[encoder] Iniciando ${name} → ${multicast_ip}:${port} (${codec.mode}, v=${codec.video}, a=${codec.audio})`);
+  console.log(`[encoder] Iniciando ${name} → ${multicast_ip}:${port} (${codec.mode}, v=${codec.video}, a=${codec.audio}) iface=${netCfg.iface} src=${netCfg.localIp}`);
 
-  const args = buildFfmpegArgs(url, multicast_ip, port, codec);
+  const args = buildFfmpegArgs(url, multicast_ip, port, codec, netCfg);
   const proc = spawn(FFMPEG_BIN, args, { stdio: ['ignore', 'ignore', 'pipe'] });
 
   let lastError = '';
