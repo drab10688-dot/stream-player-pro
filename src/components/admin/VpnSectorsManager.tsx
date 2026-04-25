@@ -50,6 +50,12 @@ interface MulticastGroup {
 
 interface Channel { id: string; name: string; category: string; }
 interface Plan { id: string; name: string; categories?: string[]; }
+interface SectorPreviewChannel {
+  multicast_group_id: string;
+  multicast_ip: string;
+  port: number;
+  channel_name: string | null;
+}
 
 interface VpnStatus {
   ipsec_running: boolean;
@@ -156,6 +162,9 @@ const SectorsSection = ({ mode = 'vpn' }: SectorsSectionProps) => {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Sector | null>(null);
   const [useIpsec, setUseIpsec] = useState(true);
+  const [lanPreviewSectorId, setLanPreviewSectorId] = useState<string | null>(null);
+  const [lanPreviewUrls, setLanPreviewUrls] = useState<Record<string, SectorPreviewChannel[]>>({});
+  const [loadingPreviewId, setLoadingPreviewId] = useState<string | null>(null);
   const [form, setForm] = useState({
     name: '', description: '', vpn_username: '', vpn_password: '',
     assigned_ip: '', mikrotik_public_ip: '', ipsec_psk: '', plan_id: '',
@@ -319,6 +328,43 @@ const SectorsSection = ({ mode = 'vpn' }: SectorsSectionProps) => {
     }
   };
 
+  const copyToClipboard = async (value: string, message = 'Copiado al portapapeles') => {
+    try {
+      await navigator.clipboard.writeText(value);
+      toast({ title: message });
+    } catch {
+      toast({ title: 'Error', description: 'No se pudo copiar el texto', variant: 'destructive' });
+    }
+  };
+
+  const toggleLanPreview = async (sectorId: string) => {
+    if (lanPreviewSectorId === sectorId) {
+      setLanPreviewSectorId(null);
+      return;
+    }
+
+    setLanPreviewSectorId(sectorId);
+    if (lanPreviewUrls[sectorId]) return;
+
+    setLoadingPreviewId(sectorId);
+    try {
+      const rows = await apiGet<SectorPreviewChannel[]>(`/api/vpn/sectors/${sectorId}/channels`);
+      setLanPreviewUrls(prev => ({
+        ...prev,
+        [sectorId]: rows.filter(row => !!row.multicast_ip),
+      }));
+    } catch (e: any) {
+      toast({
+        title: 'Error',
+        description: e.message || 'No se pudieron cargar las URLs UDP de prueba.',
+        variant: 'destructive',
+      });
+      setLanPreviewSectorId(null);
+    } finally {
+      setLoadingPreviewId(null);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
@@ -382,14 +428,25 @@ const SectorsSection = ({ mode = 'vpn' }: SectorsSectionProps) => {
                   </p>
                 </div>
                 {form.delivery_mode === 'lan_direct' && (
-                  <div className="col-span-2 rounded-lg border border-primary/30 bg-primary/5 p-3">
-                    <p className="text-xs text-foreground font-semibold mb-1">🏡 Sector LAN local</p>
+                  <div className="col-span-2 rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-2">
+                    <p className="text-xs text-foreground font-semibold">🏡 Sector LAN local</p>
                     <p className="text-[11px] text-muted-foreground leading-relaxed">
-                      Este sector NO usa VPN. La APK debe estar conectada a la misma LAN que el gateway MikroTik que recibe los canales UDP. Asigná los canales multicast desde la pestaña <strong>Canales Multicast</strong> y entregá un código de activación al cliente desde <strong>Códigos APK</strong>.
+                      Este sector NO usa VPN. La APK o VLC deben estar dentro del rango IP local del sector para recibir los UDP. Luego asigna los canales desde <strong>Canales Multicast</strong>.
                     </p>
+                    <div>
+                      <Label>Rango IP local / CIDR</Label>
+                      <Input
+                        value={form.assigned_ip}
+                        onChange={e => setForm({ ...form, assigned_ip: e.target.value })}
+                        placeholder="192.168.1.0/24"
+                      />
+                      <p className="text-[11px] text-muted-foreground mt-1">
+                        Usa un rango CIDR para que el backend detecte qué clientes pertenecen a este sector LAN.
+                      </p>
+                    </div>
                   </div>
                 )}
-                {form.delivery_mode !== 'multicast_direct' && (
+                {form.delivery_mode !== 'multicast_direct' && form.delivery_mode !== 'lan_direct' && (
                   <div className="col-span-2">
                     <Label>URL base udpxy</Label>
                     <Input
@@ -480,51 +537,119 @@ const SectorsSection = ({ mode = 'vpn' }: SectorsSectionProps) => {
             {loadWarning}
           </div>
         )}
-        {visibleSectors.map(s => (
-          <motion.div key={s.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="glass rounded-lg p-4 flex items-center gap-4">
-            <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-              <Server className="w-5 h-5 text-primary" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-1 flex-wrap">
-                <span className="font-semibold text-foreground truncate">{s.name}</span>
-                <Badge variant={s.is_active ? 'default' : 'secondary'} className="text-[10px]">
-                  {s.is_active ? 'Activo' : 'Inactivo'}
-                </Badge>
-                {s.tunnel_status === 'connected' && (
-                  <Badge variant="outline" className="text-emerald-400 border-emerald-400/30 text-[10px]">Conectado</Badge>
-                )}
-                {s.plan_name && <Badge variant="outline" className="text-[10px]">{s.plan_name}</Badge>}
-                <Badge variant="outline" className="text-[10px] border-primary/30 text-primary">
-                  {s.delivery_mode === 'multicast_direct' && '📡 Multicast directo'}
-                  {s.delivery_mode === 'udpxy_rbldf' && '🏠 udpxy RB LDF'}
-                  {s.delivery_mode === 'udpxy_central' && '🗼 udpxy central'}
-                  {s.delivery_mode === 'lan_direct' && '🏡 LAN local (sin VPN)'}
-                </Badge>
-                {s.ipsec_psk ? (
-                  <Badge variant="outline" className="text-[10px] border-emerald-400/30 text-emerald-400">🔐 IPSec</Badge>
-                ) : (
-                  <Badge variant="outline" className="text-[10px] border-amber-400/30 text-amber-400">🔓 Sin IPSec</Badge>
-                )}
+        {visibleSectors.map(s => {
+          const previewRows = lanPreviewUrls[s.id] || [];
+          const previewOpen = lanPreviewSectorId === s.id;
+
+          return (
+            <motion.div key={s.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="glass rounded-lg p-4 space-y-3">
+              <div className="flex items-start gap-4">
+                <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                  <Server className="w-5 h-5 text-primary" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
+                    <span className="font-semibold text-foreground truncate">{s.name}</span>
+                    <Badge variant={s.is_active ? 'default' : 'secondary'} className="text-[10px]">
+                      {s.is_active ? 'Activo' : 'Inactivo'}
+                    </Badge>
+                    {s.tunnel_status === 'connected' && (
+                      <Badge variant="outline" className="text-emerald-400 border-emerald-400/30 text-[10px]">Conectado</Badge>
+                    )}
+                    {s.plan_name && <Badge variant="outline" className="text-[10px]">{s.plan_name}</Badge>}
+                    <Badge variant="outline" className="text-[10px] border-primary/30 text-primary">
+                      {s.delivery_mode === 'multicast_direct' && '📡 Multicast directo'}
+                      {s.delivery_mode === 'udpxy_rbldf' && '🏠 udpxy RB LDF'}
+                      {s.delivery_mode === 'udpxy_central' && '🗼 udpxy central'}
+                      {s.delivery_mode === 'lan_direct' && '🏡 LAN local (sin VPN)'}
+                    </Badge>
+                    {s.ipsec_psk ? (
+                      <Badge variant="outline" className="text-[10px] border-emerald-400/30 text-emerald-400">🔐 IPSec</Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-[10px] border-amber-400/30 text-amber-400">🔓 Sin IPSec</Badge>
+                    )}
+                  </div>
+                  <div className="text-xs text-muted-foreground flex flex-wrap gap-x-4 gap-y-1">
+                    <span>👤 {s.vpn_username}</span>
+                    <span>🌐 {s.assigned_ip}</span>
+                    <span>📺 {s.channels_count} canales</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0 flex-wrap justify-end">
+                  <Switch checked={s.is_active} onCheckedChange={() => toggle(s)} />
+                  {isLanTab && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-2"
+                      onClick={() => toggleLanPreview(s.id)}
+                      disabled={!s.is_active || loadingPreviewId === s.id}
+                      title={s.is_active ? 'Ver URLs UDP para probar en VLC' : 'Activa el sector LAN para ver las URLs UDP'}
+                    >
+                      <Wifi className="w-4 h-4" />
+                      {loadingPreviewId === s.id ? 'Cargando...' : previewOpen ? 'Ocultar UDP' : 'Ver UDP'}
+                    </Button>
+                  )}
+                  {!isLanTab && (
+                    <Button variant="ghost" size="icon" onClick={() => downloadConfig(s)} title="Descargar config MikroTik (.rsc)">
+                      <Download className="w-4 h-4" />
+                    </Button>
+                  )}
+                  <Button variant="ghost" size="icon" onClick={() => openEdit(s)}><Edit className="w-4 h-4" /></Button>
+                  <Button variant="ghost" size="icon" onClick={() => remove(s.id)} className="text-destructive">
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </div>
               </div>
-              <div className="text-xs text-muted-foreground flex flex-wrap gap-x-4 gap-y-1">
-                <span>👤 {s.vpn_username}</span>
-                <span>🌐 {s.assigned_ip}</span>
-                <span>📺 {s.channels_count} canales</span>
-              </div>
-            </div>
-            <div className="flex items-center gap-1 shrink-0">
-              <Switch checked={s.is_active} onCheckedChange={() => toggle(s)} />
-              <Button variant="ghost" size="icon" onClick={() => downloadConfig(s)} title="Descargar config MikroTik (.rsc)">
-                <Download className="w-4 h-4" />
-              </Button>
-              <Button variant="ghost" size="icon" onClick={() => openEdit(s)}><Edit className="w-4 h-4" /></Button>
-              <Button variant="ghost" size="icon" onClick={() => remove(s.id)} className="text-destructive">
-                <Trash2 className="w-4 h-4" />
-              </Button>
-            </div>
-          </motion.div>
-        ))}
+
+              {isLanTab && previewOpen && s.is_active && (
+                <div className="rounded-lg border border-border/40 bg-background/60 p-3 space-y-3">
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <div>
+                      <p className="text-sm font-semibold text-foreground">Prueba UDP en VLC</p>
+                      <p className="text-[11px] text-muted-foreground">
+                        Estas son las URLs multicast del sector LAN. Si VLC no abre ninguna, ya puedes descartar que el problema sea solo del panel.
+                      </p>
+                    </div>
+                    {previewRows.length > 0 && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-2"
+                        onClick={() => copyToClipboard(previewRows.map(row => `udp://@${row.multicast_ip}:${row.port}`).join('\n'), 'Lista UDP copiada')}
+                      >
+                        <Copy className="w-4 h-4" /> Copiar lista
+                      </Button>
+                    )}
+                  </div>
+
+                  {previewRows.length > 0 ? (
+                    <div className="space-y-2">
+                      {previewRows.map((row) => {
+                        const udpUrl = `udp://@${row.multicast_ip}:${row.port}`;
+                        return (
+                          <div key={`${s.id}-${row.multicast_group_id}`} className="flex items-center gap-2 rounded-lg border border-border/30 px-3 py-2 flex-wrap">
+                            <div className="min-w-0 flex-1">
+                              <div className="text-xs font-medium text-foreground truncate">{row.channel_name || 'Canal sin nombre'}</div>
+                              <code className="text-[11px] text-primary break-all">{udpUrl}</code>
+                            </div>
+                            <Button variant="outline" size="sm" className="gap-2" onClick={() => copyToClipboard(udpUrl, 'URL UDP copiada')}>
+                              <Copy className="w-4 h-4" /> Copiar
+                            </Button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-dashed border-border/40 px-3 py-4 text-xs text-muted-foreground">
+                      Este sector no tiene canales multicast asignados todavía. Ve a <strong>Canales Multicast</strong> y asígnale canales al sector para ver sus URLs UDP aquí.
+                    </div>
+                  )}
+                </div>
+              )}
+            </motion.div>
+          );
+        })}
         {visibleSectors.length === 0 && (
           <div className="text-center py-12 text-muted-foreground text-sm">
             {isLanTab
