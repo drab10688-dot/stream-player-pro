@@ -392,5 +392,55 @@ module.exports = (pool, authAdmin) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
+  // ----------------------------------------------------------
+  // INTERFACES DE RED (para sectores LAN local)
+  // GET /api/vpn/network-interfaces → lista interfaces con sus IPv4
+  // GET /api/vpn/lan-config         → devuelve la interfaz/IP guardada
+  // PUT /api/vpn/lan-config         → guarda interfaz/IP elegida
+  // ----------------------------------------------------------
+  router.get('/network-interfaces', authAdmin, (req, res) => {
+    try {
+      const os = require('os');
+      const ifaces = os.networkInterfaces();
+      const result = [];
+      for (const [name, addrs] of Object.entries(ifaces)) {
+        const ipv4 = (addrs || []).filter(a => a.family === 'IPv4' && !a.internal);
+        if (ipv4.length === 0) continue;
+        result.push({
+          name,
+          addresses: ipv4.map(a => ({ address: a.address, netmask: a.netmask, mac: a.mac })),
+        });
+      }
+      res.json({ interfaces: result });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  router.get('/lan-config', authAdmin, async (req, res) => {
+    try {
+      const r = await pool.query(`SELECT value FROM system_settings WHERE key = 'lan_network_config'`);
+      const cfg = r.rows[0]?.value || {};
+      res.json({
+        iface: cfg.iface || '',
+        local_ip: cfg.local_ip || '',
+      });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  router.put('/lan-config', authAdmin, async (req, res) => {
+    try {
+      const iface = String(req.body.iface || '').trim();
+      const local_ip = String(req.body.local_ip || '').trim();
+      if (!iface || !local_ip) {
+        return res.status(400).json({ error: 'iface y local_ip son obligatorios' });
+      }
+      await pool.query(`
+        INSERT INTO system_settings (key, value, updated_at)
+        VALUES ('lan_network_config', $1::jsonb, now())
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
+      `, [JSON.stringify({ iface, local_ip })]);
+      res.json({ iface, local_ip, restart_required: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
   return router;
 };
