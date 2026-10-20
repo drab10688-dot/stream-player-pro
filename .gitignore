@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Listas de canales: las carga cada usuario, no se versionan
+*.m3u
+*.m3u8
